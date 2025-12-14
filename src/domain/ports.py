@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List
-from src.domain.models import Chat
+from typing import List, Optional
+from src.domain.models import Chat, Message
 
 class ChatRepository(ABC):
     @abstractmethod
@@ -13,4 +13,12 @@ class ChatRepository(ABC):
 
     @abstractmethod
     async def get_chats(self, limit: int) -> List[Chat]:
+        pass
+
+    @abstractmethod
+    async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None) -> List[Message]:
+        pass
+
+    @abstractmethod
+    async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         pass
