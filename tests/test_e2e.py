@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from dataclasses import dataclass, field
 from src.domain.models import ChatType
 from src.adapters.telegram import TelethonAdapter
-from src.services import ChatService
+from src.application.interactors import ChatInteractor # Updated import
 
 @dataclass
 class MockDialog:
@@ -55,11 +55,11 @@ async def test_end_to_end_mocked_mtproto():
         mock_instance.__call__ = AsyncMock(side_effect=mock_call)
 
         adapter = TelethonAdapter("sess", 123, "hash")
-        service = ChatService(adapter)
+        interactor = ChatInteractor(adapter) # Updated class name
 
-        await service.initialize()
-        chats = await service.get_recent_chats(limit=5)
-        await service.shutdown()
+        await interactor.initialize()
+        chats = await interactor.get_recent_chats(limit=5)
+        await interactor.shutdown()
 
         mock_instance.connect.assert_called_once()
         mock_instance.get_dialogs.assert_called_once_with(limit=5)

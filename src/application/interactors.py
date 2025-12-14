@@ -2,7 +2,7 @@ from typing import List, Optional
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, Message
 
-class ChatService:
+class ChatInteractor:
     def __init__(self, repository: ChatRepository):
         self.repository = repository
 
