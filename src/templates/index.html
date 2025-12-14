@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Telegram Manager</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .chat-card {
+            border: 1px solid #ddd;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .badge {
+            background: #eee;
+            padding: 0.2rem 0.5rem;
+            border-radius: 99px;
+            font-size: 0.8rem;
+        }
+
+        .unread {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Chats</h1>
+    <div id="chat-list">
+        {% for chat in chats %}
+        <div class="chat-card">
+            <div>
+                <strong>{{ chat.name }}</strong>
+                <span class="badge">
+                    {{ chat.type.value | title }}
+                </span>
+            </div>
+            {% if chat.unread_count > 0 %}
+            <div class="unread">
+                {% if chat.type.value == 'forum' and chat.unread_topics_count is not none and chat.unread_topics_count >
+                0 %}
+                {{ chat.unread_count }} messages in {{ chat.unread_topics_count }} chats
+                {% else %}
+                {{ chat.unread_count }} new
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</body>
+
+</html>
