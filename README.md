@@ -1,5 +1,7 @@
 # Telegram AI Manager
 
+A LOT OF WORK TO BE DONE IN THIS REPO!
+
 Personal assisstant for telegram accounts with tons of (yet developing)
 features like auto-read/skipping ads or trash messages or finding information in
 those shitty city chats, auto-replying/likes, etc. Might manage multiple user
@@ -31,10 +33,20 @@ Edit `.env` and paste your `TG_API_ID` and `TG_API_HASH`.
 
 ## Running
 
-### **Install dependencies and run**
+### **Install dependencies**
+
+Ensure all dependencies, including development ones, are installed.
 
 ```bash
-uv run src/app.py
+uv sync --dev
+```
+
+### **Run with Live Reload (Development)**
+
+Use `hypercorn` with the `--reload` flag for development, which will monitor file changes and restart the server.
+
+```bash
+uv run hypercorn src.app:app --reload -b 0.0.0.0:8000
 ```
 
 ### **Access Web Interface**
