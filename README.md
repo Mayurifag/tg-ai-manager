@@ -60,3 +60,10 @@ Run the integration tests (mocked):
 ```bash
 uv run pytest
 ```
+
+## TODO
+
+- Use /cache/ instead of /static/image
+- Are we able to use webp? and lay images download, at least on index template
+- DRY. helpers? something else?
+- messages have to support links, bold messages and so on. We probably would need to change to markdown or something

@@ -4,13 +4,15 @@
         "**/.pytest_cache": true,
         "**/.venv": true,
         "**/manager_session.session": true,
-        "**/manager_session.session-journal": true
+        "**/manager_session.session-journal": true,
+        "**/cache": true
     },
     "search.exclude": {
         "**/__pycache__": true,
         "**/.pytest_cache": true,
         "**/.venv": true,
         "**/manager_session.session": true,
-        "**/manager_session.session-journal": true
+        "**/manager_session.session-journal": true,
+        "**/cache": true
     }
 }
