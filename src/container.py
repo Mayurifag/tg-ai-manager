@@ -1,17 +1,17 @@
 from src.config import get_settings
 from src.adapters.telegram import TelethonAdapter
-from src.services import ChatService
+from src.application.interactors import ChatInteractor
 
-_service_instance = None
+_interactor_instance = None
 
-def get_chat_service() -> ChatService:
-    global _service_instance
-    if _service_instance is None:
+def get_chat_interactor() -> ChatInteractor:
+    global _interactor_instance
+    if _interactor_instance is None:
         settings = get_settings()
         adapter = TelethonAdapter(
             settings.TG_SESSION_NAME,
             settings.TG_API_ID,
             settings.TG_API_HASH
         )
-        _service_instance = ChatService(adapter)
-    return _service_instance
+        _interactor_instance = ChatInteractor(adapter)
+    return _interactor_instance

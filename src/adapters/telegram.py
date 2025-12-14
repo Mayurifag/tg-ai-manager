@@ -1,9 +1,9 @@
 import os
 from typing import Protocol, Any, Awaitable, List, Optional
 from telethon import TelegramClient, functions, utils
-from telethon.tl.types import Message as TlMessage, MessageService
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message
+from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
 
 class ITelethonClient(Protocol):
     def connect(self) -> Awaitable[None]: ...
@@ -44,45 +44,11 @@ class TelethonAdapter(ChatRepository):
             pass
         return None
 
-    def _format_preview(self, message: Any, chat_type: ChatType, topic_name: Optional[str] = None) -> str:
-        if not message:
-            return "No messages"
-
-        if isinstance(message, MessageService):
-            return "Service message"
-
-        text = getattr(message, 'message', '')
-        if not text:
-            return "Media/Sticker"
-
-        text = text.replace('\n', ' ')
-        if len(text) > 50:
-            text = text[:47] + "..."
-
-        prefix = ""
-        if chat_type == ChatType.GROUP:
-            sender = getattr(message, 'sender', None)
-            if sender:
-                name = utils.get_display_name(sender)
-                prefix = f"{name}: "
-        elif chat_type == ChatType.FORUM and topic_name:
-            prefix = f"{topic_name}: "
-
-        return f"{prefix}{text}"
-
     async def get_chats(self, limit: int) -> list[Chat]:
         dialogs = await self.client.get_dialogs(limit=limit)
         results = []
         for d in dialogs:
-            chat_type = ChatType.GROUP
-
-            if d.is_user:
-                chat_type = ChatType.USER
-            elif d.is_channel:
-                if getattr(d.entity, 'forum', False):
-                    chat_type = ChatType.FORUM
-                elif not d.is_group:
-                    chat_type = ChatType.CHANNEL
+            chat_type = map_telethon_dialog_to_chat_type(d)
 
             unread_topics_count = None
             calculated_unread_count = d.unread_count
@@ -111,15 +77,10 @@ class TelethonAdapter(ChatRepository):
                 except Exception as e:
                     print(f"Failed to fetch topics for forum {d.name}: {e}")
 
-            preview_topic_name = None
             msg = getattr(d, 'message', None)
-            if chat_type == ChatType.FORUM and msg:
-                reply_to = getattr(msg, 'reply_to', None)
-                if reply_to:
-                    tid = getattr(reply_to, 'reply_to_msg_id', None) or getattr(reply_to, 'reply_to_top_id', None)
-                    preview_topic_name = topic_map.get(tid)
 
-            preview = self._format_preview(msg, chat_type, preview_topic_name)
+            preview = format_message_preview(msg, chat_type, topic_map)
+
             image_url = await self._get_chat_image(d.entity, d.id)
 
             results.append(Chat(
@@ -189,7 +150,11 @@ class TelethonAdapter(ChatRepository):
 
             for t in response.topics:
                 last_msg = messages_map.get(t.top_message)
-                preview = self._format_preview(last_msg, ChatType.GROUP)
+
+                preview = format_message_preview(last_msg, ChatType.TOPIC)
+
+                # Fetching icon_emoji, which might be None if no explicit emoji is set
+                icon_emoji = getattr(t, 'icon_emoji', None)
 
                 topics.append(Chat(
                     id=t.id,
@@ -197,7 +162,8 @@ class TelethonAdapter(ChatRepository):
                     unread_count=t.unread_count,
                     type=ChatType.TOPIC,
                     last_message_preview=preview,
-                    image_url=None
+                    image_url=None,
+                    icon_emoji=icon_emoji
                 ))
 
             return topics

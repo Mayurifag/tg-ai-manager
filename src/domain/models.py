@@ -19,6 +19,7 @@ class Chat:
     unread_topics_count: Optional[int] = None
     last_message_preview: Optional[str] = None
     image_url: Optional[str] = None
+    icon_emoji: Optional[str] = None
 
 @dataclass
 class Message:

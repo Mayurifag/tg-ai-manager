@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Forum Topics{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/forum_styles.css">
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <a href="/" class="back-link">← Back to Chats</a>
+    <h1>Topics</h1>
+</div>
+
+<div class="chat-list">
+    {% for chat in chats %}
+
+    <a href="/chat/{{ parent_id }}/topic/{{ chat.id }}" class="chat-card">
+        <div class="chat-content">
+            <div class="avatar" style="background-color: #e0f7fa; color: #006064;">
+                {% if chat.icon_emoji %}
+                {{ chat.icon_emoji }}
+                {% else %}
+                {{ chat.name[0] | upper }}
+                {% endif %}
+            </div>
+
+            <div class="chat-info">
+                <span class="chat-name">{{ chat.name }}</span>
+                <div class="preview">
+                    {{ chat.last_message_preview or 'No messages' }}
+                </div>
+            </div>
+        </div>
+
+        {% if chat.unread_count > 0 %}
+        <div class="unread">
+            {{ chat.unread_count }}
+        </div>
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}

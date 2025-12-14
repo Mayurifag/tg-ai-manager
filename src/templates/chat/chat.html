@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Messages{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/chat_styles.css">
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <a href="javascript:history.back()" class="back-link">← Back</a>
+    <h2 style="margin: 0.5rem 0 0 0;">Messages</h2>
+</div>
+
+<div class="messages-container">
+    {% for msg in messages %}
+    <div class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}">
+        <div class="message-bubble">
+            {% if not msg.is_outgoing %}
+            <span class="sender">{{ msg.sender_name }}</span>
+            {% endif %}
+            {# Use a div for text, relying on CSS for pre-wrap. If the API provides Unicode, the browser should render
+            emojis #}
+            <div class="text">{{ msg.text }}</div>
+            <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+    window.scrollTo(0, document.body.scrollHeight);
+</script>
+{% endblock %}
