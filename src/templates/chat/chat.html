@@ -1,6 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Messages{% endblock %}
+{% block title %}
+{% if chat %}
+{{ chat.name }}
+{% else %}
+Messages
+{% endif %}
+{% endblock %}
 
 {% block head_extra %}
 <link rel="stylesheet" href="/static/css/chat_styles.css">
