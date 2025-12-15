@@ -21,5 +21,5 @@ class ChatInteractor:
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return await self.repository.get_forum_topics(chat_id)
 
-    async def get_chat_messages(self, chat_id: int, topic_id: Optional[int] = None) -> List[Message]:
-        return await self.repository.get_messages(chat_id, topic_id=topic_id)
+    async def get_chat_messages(self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
+        return await self.repository.get_messages(chat_id, topic_id=topic_id, offset_id=offset_id)

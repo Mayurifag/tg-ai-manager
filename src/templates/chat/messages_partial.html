@@ -1,0 +1,37 @@
+{% for msg in messages %}
+<div class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}" id="msg-{{ msg.id }}"
+    data-id="{{ msg.id }}">
+    {% if not msg.is_outgoing %}
+    <div class="message-avatar"
+        style="width: 35px; height: 35px; min-width: 35px; margin-right: 8px; border-radius: 50%; overflow: hidden; flex-shrink: 0;">
+        {% if msg.avatar_url %}
+        <img src="{{ msg.avatar_url }}" alt="{{ msg.sender_initials }}"
+            style="width: 100%; height: 100%; object-fit: cover; display: block;">
+        {% else %}
+        <div class="avatar-placeholder"
+            style="background-color: {{ msg.sender_color or '#ccc' }}; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; font-weight: bold; text-transform: uppercase;">
+            {{ msg.sender_initials or '?' }}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="message-bubble">
+        {% if not msg.is_outgoing and msg.sender_name %}
+        <span class="sender">{{ msg.sender_name }}</span>
+        {% endif %}
+
+        {% if msg.reply_to_msg_id %}
+        <a href="#msg-{{ msg.reply_to_msg_id }}" class="reply-indicator">
+            <div class="reply-content">
+                <div class="reply-name">{{ msg.reply_to_sender_name or 'Unknown' }}</div>
+                <div class="reply-text">{{ msg.reply_to_text or 'Message unavailable' }}</div>
+            </div>
+        </a>
+        {% endif %}
+
+        <div class="text">{{ msg.text | safe }}</div>
+        <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
+    </div>
+</div>
+{% endfor %}

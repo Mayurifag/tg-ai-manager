@@ -15,7 +15,7 @@ class ITelethonClient(Protocol):
     def is_connected(self) -> bool: ...
     def start(self) -> Awaitable[Any]: ...
     def get_dialogs(self, limit: int) -> Awaitable[Any]: ...
-    def get_messages(self, entity: Any, limit: int = 20, reply_to: int = None, ids: List[int] = None) -> Awaitable[Any]: ...
+    def get_messages(self, entity: Any, limit: int = 20, reply_to: int = None, ids: List[int] = None, offset_id: int = 0) -> Awaitable[Any]: ...
     def get_entity(self, entity: Any) -> Awaitable[Any]: ...
     def download_profile_photo(self, entity: Any, file: Any = None, download_big: bool = False) -> Awaitable[Any]: ...
     def __call__(self, request: Any) -> Awaitable[Any]: ...
@@ -72,6 +72,17 @@ class TelethonAdapter(ChatRepository):
         first = parts[0][0]
         second = parts[1][0] if len(parts) > 1 else ""
         return (first + second).upper()
+
+    def _extract_text(self, msg: Any) -> str:
+        """Helper to safely extract text from a message object."""
+        raw_text = getattr(msg, 'message', '') or ""
+        entities = getattr(msg, 'entities', [])
+        if raw_text:
+            try:
+                return html.unparse(raw_text, entities or [])
+            except Exception:
+                return html_escape(raw_text)
+        return ""
 
     async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
         try:
@@ -142,23 +153,36 @@ class TelethonAdapter(ChatRepository):
             print(f"Error fetching chat info {chat_id}: {e}")
             return None
 
-    async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None) -> List[Message]:
+    async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
         try:
             entity = await self.client.get_entity(chat_id)
-            messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id)
+            messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id, offset_id=offset_id)
+
+            # 1. Collect Reply IDs
+            reply_ids = []
+            for msg in messages:
+                reply_header = getattr(msg, 'reply_to', None)
+                if reply_header:
+                     rid = getattr(reply_header, 'reply_to_msg_id', None)
+                     if rid: reply_ids.append(rid)
+
+            # 2. Batch fetch referenced messages
+            replies_map = {}
+            if reply_ids:
+                try:
+                    # Remove duplicates
+                    reply_ids = list(set(reply_ids))
+                    replied_msgs = await self.client.get_messages(entity, ids=reply_ids)
+                    for r in replied_msgs:
+                        if r: replies_map[r.id] = r
+                except Exception as e:
+                    print(f"Failed to fetch replies: {e}")
 
             result_messages = []
-            sender_cache = {} # Cache sender objects for this batch
+            sender_cache = {}
 
             for msg in messages:
-                raw_text = getattr(msg, 'message', '') or ""
-                entities = getattr(msg, 'entities', [])
-                text = ""
-                if raw_text:
-                    try:
-                        text = html.unparse(raw_text, entities or [])
-                    except Exception:
-                        text = html_escape(raw_text)
+                text = self._extract_text(msg)
                 if not text: text = "[Media/Sticker]"
 
                 sender_name = "Unknown"
@@ -167,7 +191,6 @@ class TelethonAdapter(ChatRepository):
                 sender_color = None
                 sender_initials = "?"
 
-                # Determine sender ID first
                 if getattr(msg, 'from_id', None):
                      if isinstance(msg.from_id, types.PeerUser):
                          sender_id = msg.from_id.user_id
@@ -176,28 +199,45 @@ class TelethonAdapter(ChatRepository):
 
                 sender = getattr(msg, 'sender', None)
 
-                # Check cache or fetch if missing and we have an ID
                 if sender_id and not sender:
                     if sender_id in sender_cache:
                         sender = sender_cache[sender_id]
                     else:
                         try:
-                            # Try fetching from cache/API
                             sender = await self.client.get_entity(sender_id)
-                            if sender:
-                                sender_cache[sender_id] = sender
+                            if sender: sender_cache[sender_id] = sender
                         except Exception:
-                            # If individual fetch fails, just skip
                             pass
 
                 if sender:
-                     sender_id = sender.id # Ensure ID is correct from entity
+                     sender_id = sender.id
                      sender_name = utils.get_display_name(sender)
-                     # Optimistically assume image url doesn't change during request
                      avatar_url = await self._get_chat_image(sender, sender_id)
 
                 sender_color = self._get_sender_color(sender, sender_id)
                 sender_initials = self._get_sender_initials(sender_name)
+
+                # 3. Handle Reply Info
+                reply_to_msg_id = None
+                reply_to_text = None
+                reply_to_sender = None
+
+                reply_header = getattr(msg, 'reply_to', None)
+                if reply_header:
+                    reply_to_msg_id = getattr(reply_header, 'reply_to_msg_id', None)
+                    if reply_to_msg_id and reply_to_msg_id in replies_map:
+                        r_msg = replies_map[reply_to_msg_id]
+                        # Extract text
+                        r_text = self._extract_text(r_msg)
+                        if not r_text: r_text = "📷 Media" # Placeholder if empty
+                        reply_to_text = r_text
+
+                        # Extract sender
+                        r_sender = getattr(r_msg, 'sender', None)
+                        if r_sender:
+                            reply_to_sender = utils.get_display_name(r_sender)
+                        else:
+                            reply_to_sender = "User"
 
                 result_messages.append(Message(
                     id=msg.id,
@@ -208,7 +248,10 @@ class TelethonAdapter(ChatRepository):
                     sender_id=sender_id,
                     avatar_url=avatar_url,
                     sender_color=sender_color,
-                    sender_initials=sender_initials
+                    sender_initials=sender_initials,
+                    reply_to_msg_id=reply_to_msg_id,
+                    reply_to_text=reply_to_text,
+                    reply_to_sender_name=reply_to_sender
                 ))
             return result_messages
         except Exception as e:
