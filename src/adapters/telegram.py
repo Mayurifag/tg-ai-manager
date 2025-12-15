@@ -1,6 +1,8 @@
 import os
 from typing import Protocol, Any, Awaitable, List, Optional, Dict
+from html import escape as html_escape
 from telethon import TelegramClient, functions, utils
+from telethon.extensions import html
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
@@ -125,7 +127,19 @@ class TelethonAdapter(ChatRepository):
 
             result_messages = []
             for msg in messages:
-                text = getattr(msg, 'message', '')
+                raw_text = getattr(msg, 'message', '') or ""
+                entities = getattr(msg, 'entities', [])
+
+                text = ""
+                if raw_text:
+                    try:
+                        # Convert message text + entities to HTML
+                        text = html.unparse(raw_text, entities or [])
+                    except Exception as e:
+                        print(f"Error parsing message entities: {e}")
+                        # Fallback to safe escaped text if parsing fails
+                        text = html_escape(raw_text)
+
                 if not text:
                      text = "[Media/Sticker]"
 

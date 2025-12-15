@@ -25,7 +25,7 @@ Messages
             {% if not msg.is_outgoing %}
             <span class="sender">{{ msg.sender_name }}</span>
             {% endif %}
-            <div class="text">{{ msg.text }}</div>
+            <div class="text">{{ msg.text | safe }}</div>
             <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
         </div>
     </div>
