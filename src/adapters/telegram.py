@@ -12,6 +12,7 @@ class ITelethonClient(Protocol):
     def connect(self) -> Awaitable[None]: ...
     def disconnect(self) -> Awaitable[None]: ...
     def is_user_authorized(self) -> Awaitable[bool]: ...
+    def is_connected(self) -> bool: ...
     def start(self) -> Awaitable[Any]: ...
     def get_dialogs(self, limit: int) -> Awaitable[Any]: ...
     def get_messages(self, entity: Any, limit: int = 20, reply_to: int = None, ids: List[int] = None) -> Awaitable[Any]: ...
@@ -25,12 +26,14 @@ class TelethonAdapter(ChatRepository):
         self.images_dir = os.path.join(os.getcwd(), "cache")
 
     async def connect(self):
-        await self.client.connect()
+        if not self.client.is_connected():
+            await self.client.connect()
         if not await self.client.is_user_authorized():
             await self.client.start()
 
     async def disconnect(self):
-        await self.client.disconnect()
+        if self.client.is_connected():
+            await self.client.disconnect()
 
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
         filename = f"{chat_id}.jpg"
@@ -49,52 +52,25 @@ class TelethonAdapter(ChatRepository):
         return None
 
     def _get_sender_color(self, sender: Any, sender_id: int) -> str:
-        """
-        Determines the sender's color using Telegram's standard logic.
-        Uses 'user.color' (PeerColor) if available, otherwise falls back to 'user_id % 7'.
-        """
         color_index = 0
-
-        # Check if the sender object has a specific 'color' attribute (PeerColor)
-        # This covers Premium users or specific profile color settings
         peer_color = getattr(sender, 'color', None)
         if peer_color and hasattr(peer_color, 'color'):
              color_index = peer_color.color
         else:
-             # Standard fallback: ID modulo 7
              color_index = abs(sender_id) % 7
 
-        # Standard Telegram Palette (Red, Orange, Violet, Green, Cyan, Blue, Pink)
-        # Using the standard hex codes found in Telegram Web K/A
         palette = [
-            "#e17076", # 0: Red
-            "#faa774", # 1: Orange
-            "#a695e7", # 2: Violet
-            "#7bc862", # 3: Green
-            "#6ec9cb", # 4: Cyan
-            "#65aadd", # 5: Blue
-            "#ee7aae", # 6: Pink
+            "#e17076", "#faa774", "#a695e7", "#7bc862",
+            "#6ec9cb", "#65aadd", "#ee7aae"
         ]
-
-        # Extended palette logic: If index > 6, it maps to one of the base colors modulo 7
-        # (Though in reality Telegram has distinct colors for indices > 6, they are variations of these base ones)
         return palette[color_index % 7]
 
     def _get_sender_initials(self, name: str) -> str:
-        if not name:
-            return "?"
+        if not name: return "?"
         parts = name.strip().split()
-        if not parts:
-            return "?"
-
-        # First letter of first name
+        if not parts: return "?"
         first = parts[0][0]
-        # First letter of last name (if exists)
         second = parts[1][0] if len(parts) > 1 else ""
-
-        # If only one name part but it's long, take first two chars?
-        # No, standard is usually just initials.
-        # If single name "Telegram", "T". If "John Doe", "JD".
         return (first + second).upper()
 
     async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
@@ -123,7 +99,6 @@ class TelethonAdapter(ChatRepository):
         results = []
         for d in dialogs:
             chat_type = map_telethon_dialog_to_chat_type(d)
-
             unread_topics_count = None
             calculated_unread_count = d.unread_count
             topic_map = {}
@@ -144,13 +119,9 @@ class TelethonAdapter(ChatRepository):
             image_url = await self._get_chat_image(d.entity, d.id)
 
             results.append(Chat(
-                id=d.id,
-                name=d.name,
-                unread_count=calculated_unread_count,
-                type=chat_type,
-                unread_topics_count=unread_topics_count,
-                last_message_preview=preview,
-                image_url=image_url
+                id=d.id, name=d.name, unread_count=calculated_unread_count,
+                type=chat_type, unread_topics_count=unread_topics_count,
+                last_message_preview=preview, image_url=image_url
             ))
         return results
 
@@ -159,15 +130,12 @@ class TelethonAdapter(ChatRepository):
             entity = await self.client.get_entity(chat_id)
             name = utils.get_display_name(entity)
             c_type = ChatType.GROUP
-            if isinstance(entity, types.User):
-                c_type = ChatType.USER
-            elif isinstance(entity, types.Chat):
-                c_type = ChatType.GROUP
+            if isinstance(entity, types.User): c_type = ChatType.USER
+            elif isinstance(entity, types.Chat): c_type = ChatType.GROUP
             elif isinstance(entity, types.Channel):
                 if getattr(entity, 'forum', False): c_type = ChatType.FORUM
                 elif getattr(entity, 'broadcast', False): c_type = ChatType.CHANNEL
                 else: c_type = ChatType.GROUP
-
             image_url = await self._get_chat_image(entity, chat_id)
             return Chat(id=chat_id, name=name, unread_count=0, type=c_type, image_url=image_url)
         except Exception as e:
@@ -180,6 +148,8 @@ class TelethonAdapter(ChatRepository):
             messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id)
 
             result_messages = []
+            sender_cache = {} # Cache sender objects for this batch
+
             for msg in messages:
                 raw_text = getattr(msg, 'message', '') or ""
                 entities = getattr(msg, 'entities', [])
@@ -197,28 +167,35 @@ class TelethonAdapter(ChatRepository):
                 sender_color = None
                 sender_initials = "?"
 
-                # Try to get sender from the message object
-                sender = getattr(msg, 'sender', None)
-
-                # If sender is missing (common in groups where users aren't cached), try to fetch explicitly
-                if not sender and getattr(msg, 'from_id', None):
-                    try:
-                        sender = await msg.get_sender()
-                    except Exception:
-                        pass
-
-                # Resolve ID from sender or from_id
-                if sender:
-                    sender_id = sender.id
-                    sender_name = utils.get_display_name(sender)
-                    avatar_url = await self._get_chat_image(sender, sender_id)
-                elif getattr(msg, 'from_id', None):
+                # Determine sender ID first
+                if getattr(msg, 'from_id', None):
                      if isinstance(msg.from_id, types.PeerUser):
                          sender_id = msg.from_id.user_id
                      elif isinstance(msg.from_id, types.PeerChannel):
                          sender_id = msg.from_id.channel_id
 
-                # Get the correct color using the sender object (for PeerColor support) or ID
+                sender = getattr(msg, 'sender', None)
+
+                # Check cache or fetch if missing and we have an ID
+                if sender_id and not sender:
+                    if sender_id in sender_cache:
+                        sender = sender_cache[sender_id]
+                    else:
+                        try:
+                            # Try fetching from cache/API
+                            sender = await self.client.get_entity(sender_id)
+                            if sender:
+                                sender_cache[sender_id] = sender
+                        except Exception:
+                            # If individual fetch fails, just skip
+                            pass
+
+                if sender:
+                     sender_id = sender.id # Ensure ID is correct from entity
+                     sender_name = utils.get_display_name(sender)
+                     # Optimistically assume image url doesn't change during request
+                     avatar_url = await self._get_chat_image(sender, sender_id)
+
                 sender_color = self._get_sender_color(sender, sender_id)
                 sender_initials = self._get_sender_initials(sender_name)
 
@@ -244,10 +221,8 @@ class TelethonAdapter(ChatRepository):
             response = await self._fetch_forum_topics_response(entity, limit=limit)
             topics = []
             if not response: return topics
-
             top_message_ids = [t.top_message for t in response.topics]
             messages_map = await self._get_top_messages_map(entity, top_message_ids)
-
             for t in response.topics:
                 last_msg = messages_map.get(t.top_message)
                 preview = format_message_preview(last_msg, ChatType.TOPIC)
