@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "base.html.j2" %}
 
 {% block title %}
 {% if chat %}
@@ -20,28 +20,8 @@ Messages
     {% endif %}
 </div>
 
-<!--
-    messages-container uses flex-direction: column-reverse.
-    Visually: Top of screen = End of HTML list. Bottom of screen = Start of HTML list.
-    Wait, usually column-reverse means:
-    Top of visual container has the LAST element in the DOM.
-    Bottom of visual container has the FIRST element in the DOM.
-
-    Telethon returns [Newest, ..., Oldest].
-    If we iterate normally:
-    1. Newest
-    2. Older
-
-    Visual (Column-Reverse):
-    2. Older (Top)
-    1. Newest (Bottom)
-
-    This matches standard chat behavior (newest at bottom).
-
-    To load older messages (history), we need to append them to the END of the DOM list (which is the VISUAL TOP).
--->
 <div class="messages-container" id="messages-container">
-    {% include "chat/messages_partial.html" %}
+    {% include "chat/messages_partial.html.j2" %}
 </div>
 
 <!-- Loading spinner (hidden by default) -->
@@ -55,27 +35,6 @@ Messages
     const topicId = {{ topic_id or 'null' }};
     let isLoading = false;
     let allLoaded = false;
-
-    // Scroll to bottom on initial load
-    // With column-reverse, scrollTop = 0 is actually the "bottom" visually if content overflows?
-    // No, browsers handle reverse flex containers oddly regarding scroll.
-    // Usually, with column-reverse, scrollTop 0 is at the physical top (which is the oldest message).
-    // We want to be at the physical bottom (newest message).
-    // Let's reset logic:
-    // Standard approach: To see newest messages, we usually scroll to bottom.
-    // Let's rely on window scroll.
-
-    // Actually, looking at the CSS: .messages-container { display: flex; flex-direction: column-reverse; }
-    // This reverses the order of children.
-    //
-    // Logic for Infinite Scroll (Upwards):
-    // As we scroll UP (visual top), we approach the bottom of the DOM list (because it's reversed).
-    // So we need to detect when we are near the 'bottom' of the container element physically?
-    // Or just use window scroll?
-    //
-    // Let's assume the container fills the page.
-    // Visual Top = Physical Top of window.
-    // We want to load when user scrolls to Top.
 
     window.scrollTo(0, document.body.scrollHeight);
 
