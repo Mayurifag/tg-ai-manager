@@ -25,8 +25,6 @@ Messages
             {% if not msg.is_outgoing %}
             <span class="sender">{{ msg.sender_name }}</span>
             {% endif %}
-            {# Use a div for text, relying on CSS for pre-wrap. If the API provides Unicode, the browser should render
-            emojis #}
             <div class="text">{{ msg.text }}</div>
             <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
         </div>
