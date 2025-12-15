@@ -19,7 +19,7 @@ class ITelethonClient(Protocol):
 class TelethonAdapter(ChatRepository):
     def __init__(self, session_name: str, api_id: int, api_hash: str):
         self.client: ITelethonClient = TelegramClient(session_name, api_id, api_hash) # type: ignore
-        self.images_dir = os.path.join(os.getcwd(), "static", "images")
+        self.images_dir = os.path.join(os.getcwd(), "cache")
 
     async def connect(self):
         await self.client.connect()
@@ -34,12 +34,12 @@ class TelethonAdapter(ChatRepository):
         path = os.path.join(self.images_dir, filename)
 
         if os.path.exists(path):
-            return f"/static/images/{filename}"
+            return f"/cache/{filename}"
 
         try:
             result = await self.client.download_profile_photo(entity, file=path)
             if result:
-                return f"/static/images/{filename}"
+                return f"/cache/{filename}"
         except Exception:
             pass
         return None
@@ -75,7 +75,7 @@ class TelethonAdapter(ChatRepository):
                         calculated_unread_count = sum(t.unread_count for t in unread_topics)
 
                 except Exception as e:
-                    print(f"Failed to fetch topics for forum {d.name}: {e}")
+                    print(f"Failed to fetch topics for forum {d.name}: {e.__class__.__name__}: {e}")
 
             msg = getattr(d, 'message', None)
 
@@ -153,7 +153,6 @@ class TelethonAdapter(ChatRepository):
 
                 preview = format_message_preview(last_msg, ChatType.TOPIC)
 
-                # Fetching icon_emoji, which might be None if no explicit emoji is set
                 icon_emoji = getattr(t, 'icon_emoji', None)
 
                 topics.append(Chat(

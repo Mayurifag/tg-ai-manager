@@ -5,7 +5,7 @@ from src.container import get_chat_interactor
 app = Quart(__name__)
 
 STATIC_DIR = os.path.join(os.getcwd(), "static")
-IMAGES_DIR = os.path.join(STATIC_DIR, "images")
+IMAGES_DIR = os.path.join(os.getcwd(), "cache")
 CSS_DIR = os.path.join(STATIC_DIR, "css")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(CSS_DIR, exist_ok=True)
@@ -20,7 +20,7 @@ async def shutdown():
     interactor = get_chat_interactor()
     await interactor.shutdown()
 
-@app.route("/static/images/<path:filename>")
+@app.route("/cache/<path:filename>")
 async def serve_images(filename):
     return await send_from_directory(IMAGES_DIR, filename)
 

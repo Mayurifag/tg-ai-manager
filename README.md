@@ -9,7 +9,7 @@ accounts via MTProto API. In future I might also add local models which might be
 learned on the context of specific chat.
 
 Managed via web interface, which deployed to VPS using docker image and env
-variables. Built using Telethon, e2e tested. Async event-driven architecture.
+variables. Built using Telethon. Async event-driven architecture.
 Gemini used as a free AI provider. Perhaps Kafka/Valkey/SQLite or else will be
 added in future. There is also logging of actions done by manager.
 
@@ -25,9 +25,9 @@ added in future. There is also logging of actions done by manager.
 
 3. **Configure Environment**
 
-```bash
+~~~bash
 cp .env.example .env
-```
+~~~
 
 Edit `.env` and paste your `TG_API_ID` and `TG_API_HASH`.
 
@@ -37,33 +37,24 @@ Edit `.env` and paste your `TG_API_ID` and `TG_API_HASH`.
 
 Ensure all dependencies, including development ones, are installed.
 
-```bash
+~~~bash
 uv sync --dev
-```
+~~~
 
 ### **Run with Live Reload (Development)**
 
 Use `hypercorn` with the `--reload` flag for development, which will monitor file changes and restart the server.
 
-```bash
+~~~bash
 uv run hypercorn src.app:app --reload -b 0.0.0.0:8000
-```
+~~~
 
 ### **Access Web Interface**
 
 Open <http://localhost:8000>
 
-## Testing
-
-Run the integration tests (mocked):
-
-```bash
-uv run pytest
-```
-
 ## TODO
 
-- Use /cache/ instead of /static/image
 - Are we able to use webp? and lay images download, at least on index template
 - DRY. helpers? something else?
 - messages have to support links, bold messages and so on. We probably would need to change to markdown or something
