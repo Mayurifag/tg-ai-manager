@@ -1,5 +1,5 @@
 import os
-from typing import Protocol, Any, Awaitable, List, Optional
+from typing import Protocol, Any, Awaitable, List, Optional, Dict
 from telethon import TelegramClient, functions, utils
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message
@@ -44,6 +44,39 @@ class TelethonAdapter(ChatRepository):
             pass
         return None
 
+    async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
+        """Fetches forum topics response and handles common exceptions."""
+        try:
+            return await self.client(functions.messages.GetForumTopicsRequest(
+                peer=peer,
+                offset_date=None,
+                offset_id=0,
+                offset_topic=0,
+                limit=limit,
+                q=''
+            ))
+        except Exception as e:
+            # Use the peer ID or a representation for logging
+            peer_id_str = str(utils.get_peer_id(peer)) if hasattr(utils, 'get_peer_id') else str(peer)
+            print(f"Failed to fetch topics for forum ID {peer_id_str}: {e.__class__.__name__}: {e}")
+            return None
+
+    async def _get_top_messages_map(self, entity: Any, top_message_ids: List[int]) -> Dict[int, Any]:
+        """Fetches top messages for topics and returns a map from message id to message object."""
+        messages_map = {}
+        if top_message_ids:
+            try:
+                # Use a specific limit for this call if required, but default get_messages is fine
+                msgs = await self.client.get_messages(entity, ids=top_message_ids)
+                if msgs:
+                    for m in msgs:
+                        if m:
+                            messages_map[m.id] = m
+            except Exception as e:
+                # Log a softer error if fetching top messages fails, as it might be non-critical
+                print(f"Warning: Failed to fetch some top messages: {e}")
+        return messages_map
+
     async def get_chats(self, limit: int) -> list[Chat]:
         dialogs = await self.client.get_dialogs(limit=limit)
         results = []
@@ -55,16 +88,10 @@ class TelethonAdapter(ChatRepository):
             topic_map = {}
 
             if chat_type == ChatType.FORUM:
-                try:
-                    response = await self.client(functions.messages.GetForumTopicsRequest(
-                        peer=d.entity,
-                        offset_date=None,
-                        offset_id=0,
-                        offset_topic=0,
-                        limit=20,
-                        q=''
-                    ))
+                # Use the new helper for fetching topics
+                response = await self._fetch_forum_topics_response(d.entity, limit=20)
 
+                if response:
                     active_topics = response.topics
                     for t in active_topics:
                         topic_map[t.id] = t.title
@@ -73,9 +100,6 @@ class TelethonAdapter(ChatRepository):
                     if unread_topics:
                         unread_topics_count = len(unread_topics)
                         calculated_unread_count = sum(t.unread_count for t in unread_topics)
-
-                except Exception as e:
-                    print(f"Failed to fetch topics for forum {d.name}: {e.__class__.__name__}: {e}")
 
             msg = getattr(d, 'message', None)
 
@@ -125,28 +149,17 @@ class TelethonAdapter(ChatRepository):
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         try:
             entity = await self.client.get_entity(chat_id)
-            response = await self.client(functions.messages.GetForumTopicsRequest(
-                peer=entity,
-                offset_date=None,
-                offset_id=0,
-                offset_topic=0,
-                limit=limit,
-                q=''
-            ))
+            # Use the new helper for fetching topics response
+            response = await self._fetch_forum_topics_response(entity, limit=limit)
 
             topics = []
-            top_message_ids = [t.top_message for t in response.topics]
-            messages_map = {}
+            if not response:
+                return topics # Return empty list if fetching failed
 
-            if top_message_ids:
-                try:
-                    msgs = await self.client.get_messages(entity, ids=top_message_ids)
-                    if msgs:
-                        for m in msgs:
-                            if m:
-                                messages_map[m.id] = m
-                except Exception:
-                    pass
+            top_message_ids = [t.top_message for t in response.topics]
+
+            # Use the new helper to fetch top messages
+            messages_map = await self._get_top_messages_map(entity, top_message_ids)
 
             for t in response.topics:
                 last_msg = messages_map.get(t.top_message)
@@ -167,5 +180,6 @@ class TelethonAdapter(ChatRepository):
 
             return topics
         except Exception as e:
-            print(f"Error fetching forum topics: {e}")
+            # Only need to catch exceptions that might occur after the _fetch_forum_topics_response call
+            print(f"Error post-processing forum topics for chat {chat_id}: {e}")
             return []
