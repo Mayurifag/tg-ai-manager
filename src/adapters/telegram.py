@@ -3,6 +3,7 @@ from typing import Protocol, Any, Awaitable, List, Optional, Dict
 from html import escape as html_escape
 from telethon import TelegramClient, functions, utils
 from telethon.extensions import html
+from telethon.tl import types
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
@@ -119,6 +120,37 @@ class TelethonAdapter(ChatRepository):
                 image_url=image_url
             ))
         return results
+
+    async def get_chat(self, chat_id: int) -> Optional[Chat]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            name = utils.get_display_name(entity)
+
+            c_type = ChatType.GROUP
+            if isinstance(entity, types.User):
+                c_type = ChatType.USER
+            elif isinstance(entity, types.Chat):
+                c_type = ChatType.GROUP
+            elif isinstance(entity, types.Channel):
+                if getattr(entity, 'forum', False):
+                    c_type = ChatType.FORUM
+                elif getattr(entity, 'broadcast', False):
+                    c_type = ChatType.CHANNEL
+                else:
+                    c_type = ChatType.GROUP
+
+            image_url = await self._get_chat_image(entity, chat_id)
+
+            return Chat(
+                id=chat_id,
+                name=name,
+                unread_count=0, # Not easily available from entity alone
+                type=c_type,
+                image_url=image_url
+            )
+        except Exception as e:
+            print(f"Error fetching chat info for {chat_id}: {e}")
+            return None
 
     async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None) -> List[Message]:
         try:

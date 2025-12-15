@@ -37,17 +37,20 @@ async def index():
 @app.route("/chat/<int(signed=True):chat_id>")
 async def chat_view(chat_id: int):
     interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id)
-    return await render_template("chat/chat.html", messages=messages, chat_id=chat_id, topic_id=None)
+    return await render_template("chat/chat.html", messages=messages, chat=chat, chat_id=chat_id, topic_id=None)
 
 @app.route("/forum/<int(signed=True):chat_id>")
 async def forum_view(chat_id: int):
     interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
     topics = await interactor.get_forum_topics(chat_id)
-    return await render_template("forum/forum.html", chats=topics, parent_id=chat_id)
+    return await render_template("forum/forum.html", chats=topics, chat=chat, parent_id=chat_id)
 
 @app.route("/chat/<int(signed=True):chat_id>/topic/<int(signed=True):topic_id>")
 async def topic_view(chat_id: int, topic_id: int):
     interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
-    return await render_template("chat/chat.html", messages=messages, chat_id=chat_id, topic_id=topic_id)
+    return await render_template("chat/chat.html", messages=messages, chat=chat, chat_id=chat_id, topic_id=topic_id)

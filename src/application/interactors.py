@@ -15,6 +15,9 @@ class ChatInteractor:
     async def get_recent_chats(self, limit: int = 10) -> List[Chat]:
         return await self.repository.get_chats(limit)
 
+    async def get_chat(self, chat_id: int) -> Optional[Chat]:
+        return await self.repository.get_chat(chat_id)
+
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return await self.repository.get_forum_topics(chat_id)
 
