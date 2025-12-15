@@ -28,3 +28,7 @@ class Message:
     date: datetime
     sender_name: str
     is_outgoing: bool
+    sender_id: Optional[int] = None
+    avatar_url: Optional[str] = None
+    sender_color: Optional[str] = None
+    sender_initials: Optional[str] = None
