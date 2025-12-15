@@ -6,4 +6,4 @@ __pycache__/
 *.session
 *.session-journal
 
-/cache/*.jpg
+/cache/

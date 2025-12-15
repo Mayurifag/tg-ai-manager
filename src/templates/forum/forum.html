@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "macros/chat_card.html" as cards %}
 
 {% block title %}
 {% if chat %}
@@ -9,6 +10,7 @@ Forum Topics
 {% endblock %}
 
 {% block head_extra %}
+<link rel="stylesheet" href="/static/css/chat_list.css">
 <link rel="stylesheet" href="/static/css/forum_styles.css">
 {% endblock %}
 
@@ -26,31 +28,7 @@ Forum Topics
 
 <div class="chat-list">
     {% for chat in chats %}
-
-    <a href="/chat/{{ parent_id }}/topic/{{ chat.id }}" class="chat-card">
-        <div class="chat-content">
-            <div class="avatar" style="background-color: #e0f7fa; color: #006064;">
-                {% if chat.icon_emoji %}
-                {{ chat.icon_emoji }}
-                {% else %}
-                {{ chat.name[0] | upper }}
-                {% endif %}
-            </div>
-
-            <div class="chat-info">
-                <span class="chat-name">{{ chat.name }}</span>
-                <div class="preview">
-                    {{ chat.last_message_preview or 'No messages' }}
-                </div>
-            </div>
-        </div>
-
-        {% if chat.unread_count > 0 %}
-        <div class="unread">
-            {{ chat.unread_count }}
-        </div>
-        {% endif %}
-    </a>
+    {{ cards.render_chat_card(chat, parent_id=parent_id) }}
     {% endfor %}
 </div>
 {% endblock %}
