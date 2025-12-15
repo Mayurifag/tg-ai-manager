@@ -55,6 +55,5 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- Window layout: Sidebar; up panel with backlink; chat panel
 - Getting messages from events subscription - refactor? valkey/[dramatiq](https://dramatiq.io/)
 - Updating chats with gotten messages - refactor?
