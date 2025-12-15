@@ -12,7 +12,7 @@ class ChatInteractor:
     async def shutdown(self):
         await self.repository.disconnect()
 
-    async def get_recent_chats(self, limit: int = 10) -> List[Chat]:
+    async def get_recent_chats(self, limit: int = 20) -> List[Chat]:
         return await self.repository.get_chats(limit)
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
