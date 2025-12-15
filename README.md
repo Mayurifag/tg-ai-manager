@@ -52,7 +52,3 @@ uv run hypercorn src.app:app --reload -b 0.0.0.0:8000
 ### **Access Web Interface**
 
 Open <http://localhost:8000>
-
-## TODO
-
-- messages have to support links, bold messages and so on. We probably would need to change to markdown or something
