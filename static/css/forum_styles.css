@@ -1,11 +1,16 @@
-.back-link {
-    margin-bottom: 0.5rem;
-    display: inline-block;
-}
-
 .avatar {
     width: 40px;
     height: 40px;
-    font-size: 1.5rem; /* Larger font for emoji */
-    color: #006064; /* Specific color for forum topics */
+    font-size: 1.5rem;
+    color: #006064;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: #e0f7fa;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 1.5rem;
 }

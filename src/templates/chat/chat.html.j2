@@ -12,19 +12,40 @@ Messages
 <link rel="stylesheet" href="/static/css/chat_styles.css?v={{ range(1, 10000) | random }}">
 {% endblock %}
 
-{% block content %}
-<div class="header">
-    <a href="javascript:history.back()" class="back-link">← Back</a>
-    {% if chat %}
-    <span style="font-weight: bold; margin-left: 10px;">{{ chat.name }}</span>
-    {% endif %}
-</div>
+{% block sidebar_back %}
+{% if topic_id %}
+<a href="/forum/{{ chat_id }}" class="back-link">← Back to Topics</a>
+{% else %}
+<a href="/" class="back-link">← Back to Chats</a>
+{% endif %}
+{% endblock %}
 
+{% block sidebar_info %}
+{% if chat %}
+<div style="text-align: center; margin-bottom: 20px;">
+    {% if chat.image_url %}
+    <img src="{{ chat.image_url }}"
+        style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 10px;">
+    {% else %}
+    <div
+        style="width: 80px; height: 80px; border-radius: 50%; background: #ddd; margin: 0 auto 10px auto; display: flex; align-items: center; justify-content: center; font-size: 2rem;">
+        {{ chat.name[0] | upper }}
+    </div>
+    {% endif %}
+    <h3 style="margin: 0; font-size: 1.1rem;">{{ chat.name }}</h3>
+    <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9rem;">{{ chat.type.value | title }}</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block settings %}
+{% endblock %}
+
+{% block content %}
 <div class="messages-container" id="messages-container">
     {% include "chat/messages_partial.html.j2" %}
 </div>
 
-<!-- Loading spinner (hidden by default) -->
 <div id="loading-indicator" style="display: none; text-align: center; padding: 10px; color: #666;">
     Loading...
 </div>
@@ -41,7 +62,6 @@ Messages
     window.addEventListener('scroll', () => {
         if (isLoading || allLoaded) return;
 
-        // Detect if scrolled to top
         if (window.scrollY < 100) {
             loadOlderMessages();
         }
@@ -52,7 +72,6 @@ Messages
         const indicator = document.getElementById('loading-indicator');
         indicator.style.display = 'block';
 
-        // Find the ID of the oldest message (visually top, so physically last in DOM list)
         const messages = container.querySelectorAll('.message-row');
         if (messages.length === 0) {
             isLoading = false;
@@ -62,7 +81,6 @@ Messages
         const oldestMsg = messages[messages.length - 1];
         const offsetId = oldestMsg.getAttribute('data-id');
 
-        // Save scroll height before appending
         const previousHeight = document.body.scrollHeight;
 
         try {
@@ -75,10 +93,8 @@ Messages
             if (data.count === 0) {
                 allLoaded = true;
             } else {
-                // Append new messages to the end of the container (Visual Top)
                 container.insertAdjacentHTML('beforeend', data.html);
 
-                // Adjust scroll position to maintain view
                 const newHeight = document.body.scrollHeight;
                 window.scrollTo(0, newHeight - previousHeight);
             }
