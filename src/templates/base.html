@@ -3,7 +3,7 @@
 
 <head>
     <title>{% block title %}Telegram Manager{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/base.css?v={{ range(1, 10000) | random }}">
     {% block head_extra %}{% endblock %}
 </head>
 
