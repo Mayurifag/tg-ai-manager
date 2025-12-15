@@ -16,6 +16,10 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def get_chat(self, chat_id: int) -> Optional[Chat]:
+        pass
+
+    @abstractmethod
     async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None) -> List[Message]:
         pass
 
