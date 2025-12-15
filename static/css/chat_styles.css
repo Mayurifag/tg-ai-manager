@@ -73,6 +73,47 @@
     border-bottom-right-radius: 2px;
 }
 
+/* Reply Styles */
+.reply-indicator {
+    display: block;
+    background-color: rgba(0,0,0,0.05);
+    padding: 4px 8px;
+    border-left: 3px solid #1976d2;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    text-decoration: none;
+    transition: background-color 0.2s;
+    overflow: hidden; /* Ensure content doesn't spill out */
+}
+
+.reply-indicator:hover {
+    background-color: rgba(0,0,0,0.1);
+}
+
+.reply-content {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.reply-name {
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: #1976d2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 2px;
+}
+
+.reply-text {
+    font-size: 0.8rem;
+    color: #666;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .sender {
     font-size: 0.8rem;
     color: #1976d2;
@@ -85,7 +126,7 @@
     word-wrap: break-word;
     white-space: pre-wrap;
     line-height: 1.5;
-    font-size: 17px; /* Explicit size as requested */
+    font-size: 17px;
 }
 
 .time {

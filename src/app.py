@@ -1,5 +1,5 @@
 import os
-from quart import Quart, render_template, send_from_directory
+from quart import Quart, render_template, send_from_directory, request, jsonify
 from src.container import get_chat_interactor
 
 app = Quart(__name__)
@@ -54,3 +54,19 @@ async def topic_view(chat_id: int, topic_id: int):
     chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
     return await render_template("chat/chat.html", messages=messages, chat=chat, chat_id=chat_id, topic_id=topic_id)
+
+@app.route("/api/chat/<int(signed=True):chat_id>/history")
+async def api_chat_history(chat_id: int):
+    interactor = get_chat_interactor()
+    offset_id = request.args.get('offset_id', type=int, default=0)
+    topic_id = request.args.get('topic_id', type=int, default=None)
+
+    messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
+
+    # Render just the messages list to string
+    html_content = await render_template("chat/messages_partial.html", messages=messages)
+
+    return jsonify({
+        "html": html_content,
+        "count": len(messages)
+    })
