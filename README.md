@@ -52,3 +52,9 @@ uv run hypercorn src.app:app --reload -b 0.0.0.0:8000
 ### **Access Web Interface**
 
 Open <http://localhost:8000>
+
+## TODO
+
+- Window layout: Sidebar; up panel with backlink; chat panel
+- Getting messages from events subscription - refactor? valkey/arq
+- Updating chats with gotten messages - refactor?

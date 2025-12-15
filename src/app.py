@@ -32,28 +32,28 @@ async def serve_css(filename):
 async def index():
     interactor = get_chat_interactor()
     chats = await interactor.get_recent_chats()
-    return await render_template("index/index.html", chats=chats)
+    return await render_template("index/index.html.j2", chats=chats)
 
 @app.route("/chat/<int(signed=True):chat_id>")
 async def chat_view(chat_id: int):
     interactor = get_chat_interactor()
     chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id)
-    return await render_template("chat/chat.html", messages=messages, chat=chat, chat_id=chat_id, topic_id=None)
+    return await render_template("chat/chat.html.j2", messages=messages, chat=chat, chat_id=chat_id, topic_id=None)
 
 @app.route("/forum/<int(signed=True):chat_id>")
 async def forum_view(chat_id: int):
     interactor = get_chat_interactor()
     chat = await interactor.get_chat(chat_id)
     topics = await interactor.get_forum_topics(chat_id)
-    return await render_template("forum/forum.html", chats=topics, chat=chat, parent_id=chat_id)
+    return await render_template("forum/forum.html.j2", chats=topics, chat=chat, parent_id=chat_id)
 
 @app.route("/chat/<int(signed=True):chat_id>/topic/<int(signed=True):topic_id>")
 async def topic_view(chat_id: int, topic_id: int):
     interactor = get_chat_interactor()
     chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
-    return await render_template("chat/chat.html", messages=messages, chat=chat, chat_id=chat_id, topic_id=topic_id)
+    return await render_template("chat/chat.html.j2", messages=messages, chat=chat, chat_id=chat_id, topic_id=topic_id)
 
 @app.route("/api/chat/<int(signed=True):chat_id>/history")
 async def api_chat_history(chat_id: int):
@@ -64,7 +64,7 @@ async def api_chat_history(chat_id: int):
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
 
     # Render just the messages list to string
-    html_content = await render_template("chat/messages_partial.html", messages=messages)
+    html_content = await render_template("chat/messages_partial.html.j2", messages=messages)
 
     return jsonify({
         "html": html_content,
