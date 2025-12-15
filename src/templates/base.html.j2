@@ -8,7 +8,29 @@
 </head>
 
 <body>
-    {% block content %}{% endblock %}
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-top">
+                {% block sidebar_back %}
+                {% endblock %}
+            </div>
+
+            <div class="sidebar-content">
+                {% block sidebar_info %}
+                {% endblock %}
+            </div>
+
+            <div class="sidebar-settings">
+                <div class="settings-header">Settings</div>
+                {% block settings %}
+                {% endblock %}
+            </div>
+        </aside>
+
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
 </body>
 
 </html>
