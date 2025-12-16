@@ -1,10 +1,12 @@
-from typing import List, Optional
+from typing import List, Optional, Callable, Awaitable
+from collections import deque
 from src.domain.ports import ChatRepository
-from src.domain.models import Chat, Message
+from src.domain.models import Chat, Message, SystemEvent
 
 class ChatInteractor:
     def __init__(self, repository: ChatRepository):
         self.repository = repository
+        self.recent_events = deque(maxlen=5)
 
     async def initialize(self):
         await self.repository.connect()
@@ -23,3 +25,12 @@ class ChatInteractor:
 
     async def get_chat_messages(self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
         return await self.repository.get_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
+
+    async def subscribe_to_events(self, callback: Callable[[SystemEvent], Awaitable[None]]):
+        async def wrapped_callback(event: SystemEvent):
+            self.recent_events.appendleft(event)
+            await callback(event)
+        self.repository.add_event_listener(wrapped_callback)
+
+    def get_recent_events(self) -> List[SystemEvent]:
+        return list(self.recent_events)

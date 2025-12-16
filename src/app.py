@@ -1,6 +1,11 @@
 import os
-from quart import Quart, render_template, send_from_directory, request, jsonify
+import sys
+import json
+import asyncio
+from dataclasses import asdict
+from quart import Quart, render_template, send_from_directory, request, jsonify, make_response
 from src.container import get_chat_interactor
+from src.domain.models import SystemEvent
 
 app = Quart(__name__)
 
@@ -10,15 +15,60 @@ CSS_DIR = os.path.join(STATIC_DIR, "css")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(CSS_DIR, exist_ok=True)
 
+# Connected SSE clients
+connected_queues = set()
+
+async def broadcast_event(event: SystemEvent):
+    """Pushes a new event to all connected SSE clients."""
+    # Serialize datetime manually
+    event_dict = asdict(event)
+    event_dict['date'] = event.date.isoformat()
+
+    data = json.dumps(event_dict)
+    for queue in connected_queues:
+        await queue.put(data)
+
 @app.before_serving
 async def startup():
     interactor = get_chat_interactor()
     await interactor.initialize()
+    # Subscribe to events and broadcast them
+    await interactor.subscribe_to_events(broadcast_event)
 
 @app.after_serving
 async def shutdown():
     interactor = get_chat_interactor()
     await interactor.shutdown()
+
+@app.context_processor
+def inject_recent_events():
+    interactor = get_chat_interactor()
+    # Return as list for jinja
+    return {'recent_events': interactor.get_recent_events()}
+
+@app.route("/api/events/stream")
+async def event_stream():
+    if "text/event-stream" not in request.accept_mimetypes:
+        return "SSE only", 400
+
+    queue = asyncio.Queue()
+    connected_queues.add(queue)
+
+    async def generator():
+        try:
+            while True:
+                data = await queue.get()
+                yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            connected_queues.remove(queue)
+            raise
+
+    response = await make_response(generator())
+    response.timeout = None  # Infinite timeout for streaming
+    response.headers['Content-Type'] = 'text/event-stream'
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Connection'] = 'keep-alive'
+    return response
 
 @app.route("/cache/<path:filename>")
 async def serve_images(filename):
@@ -63,7 +113,6 @@ async def api_chat_history(chat_id: int):
 
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
 
-    # Render just the messages list to string
     html_content = await render_template("chat/messages_partial.html.j2", messages=messages)
 
     return jsonify({

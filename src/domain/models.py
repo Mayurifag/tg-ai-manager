@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
 from datetime import datetime
@@ -35,3 +35,12 @@ class Message:
     reply_to_msg_id: Optional[int] = None
     reply_to_text: Optional[str] = None
     reply_to_sender_name: Optional[str] = None
+
+@dataclass
+class SystemEvent:
+    type: str  # "message", "edited", "deleted", "action"
+    text: str
+    chat_name: str
+    date: datetime = field(default_factory=datetime.now)
+    chat_id: Optional[int] = None
+    link: Optional[str] = None

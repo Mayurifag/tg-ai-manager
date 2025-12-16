@@ -1,11 +1,13 @@
 import os
-from typing import Protocol, Any, Awaitable, List, Optional, Dict
+import asyncio
+from datetime import datetime
+from typing import Protocol, Any, Awaitable, List, Optional, Dict, Callable
 from html import escape as html_escape
-from telethon import TelegramClient, functions, utils
+from telethon import TelegramClient, functions, utils, events
 from telethon.extensions import html
 from telethon.tl import types
 from src.domain.ports import ChatRepository
-from src.domain.models import Chat, ChatType, Message
+from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
 
 class ITelethonClient(Protocol):
@@ -19,11 +21,14 @@ class ITelethonClient(Protocol):
     def get_entity(self, entity: Any) -> Awaitable[Any]: ...
     def download_profile_photo(self, entity: Any, file: Any = None, download_big: bool = False) -> Awaitable[Any]: ...
     def __call__(self, request: Any) -> Awaitable[Any]: ...
+    def add_event_handler(self, callback: Any, event: Any): ...
 
 class TelethonAdapter(ChatRepository):
     def __init__(self, session_name: str, api_id: int, api_hash: str):
         self.client: ITelethonClient = TelegramClient(session_name, api_id, api_hash) # type: ignore
         self.images_dir = os.path.join(os.getcwd(), "cache")
+        self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
+        self._event_handler_registered = False
 
     async def connect(self):
         if not self.client.is_connected():
@@ -31,9 +36,130 @@ class TelethonAdapter(ChatRepository):
         if not await self.client.is_user_authorized():
             await self.client.start()
 
+        if not self._event_handler_registered:
+            self.client.add_event_handler(self._handle_new_message, events.NewMessage())
+            self.client.add_event_handler(self._handle_edited_message, events.MessageEdited())
+            self.client.add_event_handler(self._handle_deleted_message, events.MessageDeleted())
+            self.client.add_event_handler(self._handle_chat_action, events.ChatAction())
+            self._event_handler_registered = True
+
     async def disconnect(self):
         if self.client.is_connected():
             await self.client.disconnect()
+
+    def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
+        self.listeners.append(callback)
+
+    async def _dispatch(self, event: SystemEvent):
+        for listener in self.listeners:
+            try:
+                await listener(event)
+            except Exception as e:
+                print(f"Error in event listener: {e}")
+
+    async def _handle_new_message(self, event):
+        try:
+            chat_name = "Unknown"
+            try:
+                chat = await event.get_chat()
+                chat_name = utils.get_display_name(chat)
+            except: pass
+
+            text = self._extract_text(event.message)
+            if not text: text = "[Media]"
+
+            # Shorten for preview
+            preview = (text[:75] + '...') if len(text) > 75 else text
+
+            sys_event = SystemEvent(
+                type="message",
+                text=preview,
+                chat_name=chat_name,
+                chat_id=event.chat_id,
+                link=f"/chat/{event.chat_id}"
+            )
+            await self._dispatch(sys_event)
+        except Exception as e:
+            print(f"Error handling new message: {e}")
+
+    async def _handle_edited_message(self, event):
+        try:
+            chat_name = "Unknown"
+            try:
+                chat = await event.get_chat()
+                chat_name = utils.get_display_name(chat)
+            except: pass
+
+            text = self._extract_text(event.message)
+            if not text: text = "[Media]"
+            preview = (text[:75] + '...') if len(text) > 75 else text
+
+            sys_event = SystemEvent(
+                type="edited",
+                text=preview,
+                chat_name=chat_name,
+                chat_id=event.chat_id,
+                link=f"/chat/{event.chat_id}"
+            )
+            await self._dispatch(sys_event)
+        except Exception as e:
+            print(f"Error handling edit: {e}")
+
+    async def _handle_deleted_message(self, event):
+        try:
+            # Delete events often don't have chat info if global, but usually have if channel specific
+            chat_name = "Unknown"
+            chat_id = None
+            if hasattr(event, 'chat_id') and event.chat_id:
+                chat_id = event.chat_id
+                try:
+                    # Try to get from cache if possible, avoiding network call for delete might be hard
+                    # We'll try fetching entity only if we have ID
+                    entity = await self.client.get_entity(event.chat_id)
+                    chat_name = utils.get_display_name(entity)
+                except:
+                    chat_name = f"Chat {event.chat_id}"
+
+            count = len(event.deleted_ids)
+            text = f"Deleted {count} message(s)"
+
+            sys_event = SystemEvent(
+                type="deleted",
+                text=text,
+                chat_name=chat_name,
+                chat_id=chat_id,
+                link=f"/chat/{chat_id}" if chat_id else "#"
+            )
+            await self._dispatch(sys_event)
+        except Exception as e:
+            print(f"Error handling delete: {e}")
+
+    async def _handle_chat_action(self, event):
+        try:
+            chat_name = "Unknown"
+            try:
+                chat = await event.get_chat()
+                chat_name = utils.get_display_name(chat)
+            except: pass
+
+            text = "Unknown action"
+            if event.user_joined or event.user_added:
+                text = "User joined"
+            elif event.user_left or event.user_kicked:
+                text = "User left"
+            elif event.new_title:
+                text = f"Title changed to {event.new_title}"
+
+            sys_event = SystemEvent(
+                type="action",
+                text=text,
+                chat_name=chat_name,
+                chat_id=event.chat_id,
+                link=f"/chat/{event.chat_id}"
+            )
+            await self._dispatch(sys_event)
+        except Exception as e:
+            print(f"Error handling action: {e}")
 
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
         filename = f"{chat_id}.jpg"
@@ -153,12 +279,81 @@ class TelethonAdapter(ChatRepository):
             print(f"Error fetching chat info {chat_id}: {e}")
             return None
 
+    async def _parse_message(self, msg: Any, replies_map: Dict[int, Any] = None) -> Message:
+        # NOTE: This is still used by get_messages, but the event handlers use a lighter extraction logic
+        # to avoid overhead.
+        replies_map = replies_map or {}
+
+        text = self._extract_text(msg)
+        if not text: text = "[Media/Sticker]"
+
+        sender_name = "Unknown"
+        sender_id = 0
+        avatar_url = None
+        sender_color = None
+        sender_initials = "?"
+
+        if getattr(msg, 'from_id', None):
+             if isinstance(msg.from_id, types.PeerUser):
+                 sender_id = msg.from_id.user_id
+             elif isinstance(msg.from_id, types.PeerChannel):
+                 sender_id = msg.from_id.channel_id
+
+        sender = getattr(msg, 'sender', None)
+
+        if sender_id and not sender:
+             try:
+                 sender = await self.client.get_entity(sender_id)
+             except Exception:
+                 pass
+
+        if sender:
+             sender_id = sender.id
+             sender_name = utils.get_display_name(sender)
+             avatar_url = await self._get_chat_image(sender, sender_id)
+
+        sender_color = self._get_sender_color(sender, sender_id)
+        sender_initials = self._get_sender_initials(sender_name)
+
+        reply_to_msg_id = None
+        reply_to_text = None
+        reply_to_sender = None
+
+        reply_header = getattr(msg, 'reply_to', None)
+        if reply_header:
+            reply_to_msg_id = getattr(reply_header, 'reply_to_msg_id', None)
+            if reply_to_msg_id and reply_to_msg_id in replies_map:
+                r_msg = replies_map[reply_to_msg_id]
+                r_text = self._extract_text(r_msg)
+                if not r_text: r_text = "📷 Media"
+                reply_to_text = r_text
+
+                r_sender = getattr(r_msg, 'sender', None)
+                if r_sender:
+                    reply_to_sender = utils.get_display_name(r_sender)
+                else:
+                    reply_to_sender = "User"
+
+        return Message(
+            id=msg.id,
+            text=text,
+            date=msg.date,
+            sender_name=sender_name,
+            is_outgoing=getattr(msg, 'out', False),
+            sender_id=sender_id,
+            avatar_url=avatar_url,
+            sender_color=sender_color,
+            sender_initials=sender_initials,
+            reply_to_msg_id=reply_to_msg_id,
+            reply_to_text=reply_to_text,
+            reply_to_sender_name=reply_to_sender
+        )
+
     async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id, offset_id=offset_id)
 
-            # 1. Collect Reply IDs
             reply_ids = []
             for msg in messages:
                 reply_header = getattr(msg, 'reply_to', None)
@@ -166,11 +361,9 @@ class TelethonAdapter(ChatRepository):
                      rid = getattr(reply_header, 'reply_to_msg_id', None)
                      if rid: reply_ids.append(rid)
 
-            # 2. Batch fetch referenced messages
             replies_map = {}
             if reply_ids:
                 try:
-                    # Remove duplicates
                     reply_ids = list(set(reply_ids))
                     replied_msgs = await self.client.get_messages(entity, ids=reply_ids)
                     for r in replied_msgs:
@@ -179,80 +372,10 @@ class TelethonAdapter(ChatRepository):
                     print(f"Failed to fetch replies: {e}")
 
             result_messages = []
-            sender_cache = {}
-
             for msg in messages:
-                text = self._extract_text(msg)
-                if not text: text = "[Media/Sticker]"
+                parsed = await self._parse_message(msg, replies_map)
+                result_messages.append(parsed)
 
-                sender_name = "Unknown"
-                sender_id = 0
-                avatar_url = None
-                sender_color = None
-                sender_initials = "?"
-
-                if getattr(msg, 'from_id', None):
-                     if isinstance(msg.from_id, types.PeerUser):
-                         sender_id = msg.from_id.user_id
-                     elif isinstance(msg.from_id, types.PeerChannel):
-                         sender_id = msg.from_id.channel_id
-
-                sender = getattr(msg, 'sender', None)
-
-                if sender_id and not sender:
-                    if sender_id in sender_cache:
-                        sender = sender_cache[sender_id]
-                    else:
-                        try:
-                            sender = await self.client.get_entity(sender_id)
-                            if sender: sender_cache[sender_id] = sender
-                        except Exception:
-                            pass
-
-                if sender:
-                     sender_id = sender.id
-                     sender_name = utils.get_display_name(sender)
-                     avatar_url = await self._get_chat_image(sender, sender_id)
-
-                sender_color = self._get_sender_color(sender, sender_id)
-                sender_initials = self._get_sender_initials(sender_name)
-
-                # 3. Handle Reply Info
-                reply_to_msg_id = None
-                reply_to_text = None
-                reply_to_sender = None
-
-                reply_header = getattr(msg, 'reply_to', None)
-                if reply_header:
-                    reply_to_msg_id = getattr(reply_header, 'reply_to_msg_id', None)
-                    if reply_to_msg_id and reply_to_msg_id in replies_map:
-                        r_msg = replies_map[reply_to_msg_id]
-                        # Extract text
-                        r_text = self._extract_text(r_msg)
-                        if not r_text: r_text = "📷 Media" # Placeholder if empty
-                        reply_to_text = r_text
-
-                        # Extract sender
-                        r_sender = getattr(r_msg, 'sender', None)
-                        if r_sender:
-                            reply_to_sender = utils.get_display_name(r_sender)
-                        else:
-                            reply_to_sender = "User"
-
-                result_messages.append(Message(
-                    id=msg.id,
-                    text=text,
-                    date=msg.date,
-                    sender_name=sender_name,
-                    is_outgoing=getattr(msg, 'out', False),
-                    sender_id=sender_id,
-                    avatar_url=avatar_url,
-                    sender_color=sender_color,
-                    sender_initials=sender_initials,
-                    reply_to_msg_id=reply_to_msg_id,
-                    reply_to_text=reply_to_text,
-                    reply_to_sender_name=reply_to_sender
-                ))
             return result_messages
         except Exception as e:
             print(f"Error fetching messages: {e}")

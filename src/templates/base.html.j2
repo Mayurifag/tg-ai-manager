@@ -15,6 +15,25 @@
                 {% endblock %}
             </div>
 
+            <div class="sidebar-feed">
+                <div class="settings-header">Live Events</div>
+                <div id="event-feed-list">
+                    {% if recent_events %}
+                        {% for event in recent_events %}
+                        <div class="event-item type-{{ event.type }}">
+                            <div class="event-header">
+                                <span class="event-type">{{ event.type | upper }}</span>
+                                <span class="event-chat">{{ event.chat_name }}</span>
+                            </div>
+                            <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-feed">No recent events</div>
+                    {% endif %}
+                </div>
+            </div>
+
             <div class="sidebar-content">
                 {% block sidebar_info %}
                 {% endblock %}
@@ -31,6 +50,55 @@
             {% block content %}{% endblock %}
         </main>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const feedContainer = document.getElementById('event-feed-list');
+            const evtSource = new EventSource("/api/events/stream");
+
+            evtSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+
+                // Remove empty message if present
+                const emptyMsg = feedContainer.querySelector('.empty-feed');
+                if (emptyMsg) emptyMsg.remove();
+
+                const item = document.createElement('div');
+                item.className = `event-item type-${data.type}`;
+
+                const header = document.createElement('div');
+                header.className = 'event-header';
+
+                const typeSpan = document.createElement('span');
+                typeSpan.className = 'event-type';
+                typeSpan.textContent = data.type.toUpperCase();
+
+                const chatSpan = document.createElement('span');
+                chatSpan.className = 'event-chat';
+                chatSpan.textContent = data.chat_name;
+
+                header.appendChild(typeSpan);
+                header.appendChild(chatSpan);
+
+                const textDiv = document.createElement('div');
+                textDiv.className = 'event-text';
+                textDiv.textContent = data.text;
+                textDiv.title = data.text;
+
+                item.appendChild(header);
+                item.appendChild(textDiv);
+
+                // Add to top
+                feedContainer.insertBefore(item, feedContainer.firstChild);
+
+                // Keep only last 5
+                const items = feedContainer.querySelectorAll('.event-item');
+                if (items.length > 5) {
+                    items[items.length - 1].remove();
+                }
+            };
+        });
+    </script>
 </body>
 
 </html>
