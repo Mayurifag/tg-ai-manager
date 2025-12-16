@@ -65,6 +65,73 @@ body {
     border-top: 1px solid #eee;
 }
 
+.sidebar-feed {
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+#event-feed-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.empty-feed {
+    color: #999;
+    font-size: 0.9rem;
+    font-style: italic;
+    padding: 5px 0;
+}
+
+.event-item {
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    border-left: 3px solid #ccc;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.event-item.type-message { border-left-color: #4caf50; }
+.event-item.type-edited { border-left-color: #ff9800; }
+.event-item.type-deleted { border-left-color: #f44336; }
+.event-item.type-action { border-left-color: #2196f3; }
+
+.event-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font-size: 0.75rem;
+    color: #666;
+}
+
+.event-type {
+    font-weight: bold;
+    font-size: 0.7rem;
+}
+
+.event-chat {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.event-text {
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+
 .settings-header {
     font-weight: bold;
     color: #444;

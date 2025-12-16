@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
-from src.domain.models import Chat, Message
+from typing import List, Optional, Callable, Awaitable
+from src.domain.models import Chat, Message, SystemEvent
 
 class ChatRepository(ABC):
     @abstractmethod
@@ -25,4 +25,9 @@ class ChatRepository(ABC):
 
     @abstractmethod
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
+        pass
+
+    @abstractmethod
+    def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
+        """Register a callback for system events."""
         pass
