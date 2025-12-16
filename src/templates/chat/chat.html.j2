@@ -53,15 +53,15 @@ Messages
 <script>
     const container = document.getElementById('messages-container');
     const chatId = {{ chat_id }};
-    const topicId = {{ topic_id or 'null' }};
+    const currentTopicId = {{ topic_id or 'null' }};
     let isLoading = false;
     let allLoaded = false;
 
     window.scrollTo(0, document.body.scrollHeight);
 
+    // Infinite Scroll
     window.addEventListener('scroll', () => {
         if (isLoading || allLoaded) return;
-
         if (window.scrollY < 100) {
             loadOlderMessages();
         }
@@ -80,12 +80,11 @@ Messages
 
         const oldestMsg = messages[messages.length - 1];
         const offsetId = oldestMsg.getAttribute('data-id');
-
         const previousHeight = document.body.scrollHeight;
 
         try {
             let url = `/api/chat/${chatId}/history?offset_id=${offsetId}`;
-            if (topicId) url += `&topic_id=${topicId}`;
+            if (currentTopicId) url += `&topic_id=${currentTopicId}`;
 
             const response = await fetch(url);
             const data = await response.json();
@@ -94,7 +93,6 @@ Messages
                 allLoaded = true;
             } else {
                 container.insertAdjacentHTML('beforeend', data.html);
-
                 const newHeight = document.body.scrollHeight;
                 window.scrollTo(0, newHeight - previousHeight);
             }
@@ -105,5 +103,62 @@ Messages
             indicator.style.display = 'none';
         }
     }
+
+    // Live Updates
+    document.addEventListener('tg:event', (e) => {
+        const data = e.detail;
+
+        // Ensure update belongs to this chat
+        if (data.chat_id !== chatId) return;
+
+        // Ensure update belongs to this topic (if we are in a topic view)
+        // If currentTopicId is null, we show all (unless it's a forum main view, handled elsewhere)
+        // If currentTopicId is set, match against data.topic_id
+        if (currentTopicId && data.topic_id !== currentTopicId) {
+            return;
+        }
+
+        if (data.type === 'message') {
+            if (data.rendered_html) {
+                container.insertAdjacentHTML('afterbegin', data.rendered_html);
+                // Optional: Scroll to bottom if user is near bottom
+                if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
+                    window.scrollTo(0, document.body.scrollHeight);
+                }
+            }
+        }
+        else if (data.type === 'edited' && data.message_model) {
+            const msgId = data.message_model.id;
+            const msgRow = document.getElementById(`msg-${msgId}`);
+            if (msgRow) {
+                const textEl = msgRow.querySelector('.text');
+                if (textEl) {
+                    // Update the text content with the new HTML from the message model
+                    textEl.innerHTML = data.message_model.text;
+
+                    // Add an 'edited' label if desired
+                    if (!msgRow.querySelector('.edited-label')) {
+                        const timeEl = msgRow.querySelector('.time');
+                        const editedSpan = document.createElement('span');
+                        editedSpan.className = 'edited-label';
+                        editedSpan.style.fontSize = '0.7em';
+                        editedSpan.style.color = '#999';
+                        editedSpan.style.marginRight = '4px';
+                        editedSpan.innerText = '(edited)';
+                        if (timeEl) timeEl.parentNode.insertBefore(editedSpan, timeEl);
+                    }
+                }
+            }
+        }
+        else if (data.type === 'deleted' && data.message_model) {
+            const msgId = data.message_model.id;
+            const msgRow = document.getElementById(`msg-${msgId}`);
+            if (msgRow) {
+                msgRow.style.transition = 'opacity 0.3s, height 0.3s';
+                msgRow.style.opacity = '0';
+                setTimeout(() => msgRow.remove(), 300);
+            }
+        }
+    });
 </script>
 {% endblock %}

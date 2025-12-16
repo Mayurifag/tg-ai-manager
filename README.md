@@ -55,5 +55,5 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- Getting messages from events subscription - refactor? valkey/[dramatiq](https://dramatiq.io/)
-- Updating chats with gotten messages - refactor?
+- have pinned chat indicator and live updates have to be after that
+- saving msgs in valkey/[dramatiq](https://dramatiq.io/)
