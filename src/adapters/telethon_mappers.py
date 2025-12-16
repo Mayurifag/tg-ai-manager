@@ -16,6 +16,7 @@ from telethon.tl.types import (
     MessageActionChatCreate,
     MessageActionChannelCreate,
     MessageActionGameScore,
+    MessageMediaPoll, # <-- Added MessageMediaPoll
     PeerUser
 )
 from telethon import utils
@@ -88,6 +89,19 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if media:
         if isinstance(media, MessageMediaPhoto):
             media_text = "📷 Photo"
+        elif isinstance(media, MessageMediaPoll): # <-- Handle Polls for Preview
+            poll = media.poll
+            # question is a DataJSON structure, need to get .text from it
+            poll_question = getattr(poll, 'question', None)
+            topic = getattr(poll_question, 'text', 'Unknown Poll') if poll_question else 'Unknown Poll'
+            text_preview = f"Poll: {topic}"
+            # Polls usually don't have text outside of the media object, so we return this as the main preview
+            if chat_type == ChatType.GROUP or chat_type == ChatType.TOPIC:
+                 sender = getattr(message, 'sender', None)
+                 if sender:
+                     name = utils.get_display_name(sender)
+                     return f"{name}: {text_preview}"
+            return text_preview
         elif isinstance(media, MessageMediaDocument):
             if hasattr(media, 'document'):
                 # Check attributes

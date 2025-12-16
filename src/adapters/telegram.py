@@ -7,7 +7,7 @@ from telethon import TelegramClient, functions, utils, events
 from telethon.extensions import html
 from telethon.tl import types
 from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
-from telethon.tl.types import InputDialogPeer, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio
+from telethon.tl.types import InputDialogPeer, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio, MessageMediaPoll # Added MessageMediaPoll
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview, get_message_action_text
@@ -97,6 +97,8 @@ class TelethonAdapter(ChatRepository):
                  elif domain_msg.is_audio:
                      if domain_msg.is_voice: preview = "🎤 Voice"
                      else: preview = f"🎵 {domain_msg.audio_performer or ''} - {domain_msg.audio_title or 'Music'}"
+                 elif domain_msg.is_poll: # <-- Handle Poll in live event preview
+                     preview = f"Poll: {domain_msg.poll_question or 'Unknown Poll'}"
                  else: preview = "📷 Media"
 
             if len(preview) > 75:
@@ -453,8 +455,17 @@ class TelethonAdapter(ChatRepository):
         audio_performer = None
         audio_duration = None
 
+        # Poll fields
+        is_poll = False
+        poll_question = None
+
         if has_media:
-            if isinstance(media, MessageMediaDocument):
+            if isinstance(media, MessageMediaPoll): # <-- Handle Poll
+                is_poll = True
+                poll = media.poll
+                # poll.question is a DataJSON structure
+                poll_question = getattr(poll.question, 'text', 'Poll')
+            elif isinstance(media, MessageMediaDocument):
                 for attr in getattr(media.document, 'attributes', []):
                     if isinstance(attr, DocumentAttributeVideo):
                         is_video = True
@@ -467,6 +478,7 @@ class TelethonAdapter(ChatRepository):
                         audio_title = getattr(attr, 'title', None)
                         audio_performer = getattr(attr, 'performer', None)
                         audio_duration = getattr(attr, 'duration', None)
+            # Other media types are implicitly handled by has_media = True
 
         sender_name = "Unknown"
         sender_id = 0
@@ -515,6 +527,7 @@ class TelethonAdapter(ChatRepository):
             sticker_emoji=sticker_emoji,
             is_audio=is_audio, is_voice=is_voice,
             audio_title=audio_title, audio_performer=audio_performer, audio_duration=audio_duration,
+            is_poll=is_poll, poll_question=poll_question,
             is_service=is_service
         )
 

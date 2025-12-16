@@ -47,6 +47,9 @@ class Message:
     audio_title: Optional[str] = None
     audio_performer: Optional[str] = None
     audio_duration: Optional[int] = None # Seconds
+    # Poll fields
+    is_poll: bool = False
+    poll_question: Optional[str] = None
     # Service Messages
     is_service: bool = False
 

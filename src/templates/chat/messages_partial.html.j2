@@ -76,6 +76,14 @@
                 </audio>
             </div>
 
+            {% elif msg.is_poll %}
+            <div class="poll-content"
+                style="background: #f0f4f7; padding: 10px; border-radius: 8px; border: 1px solid #cfd8dc; color: #37474f; min-width: 250px;">
+                <div style="font-weight: bold; font-size: 1.05rem; margin-bottom: 5px;">🗳️ Poll: {{ msg.poll_question
+                    or 'Unknown Poll' }}</div>
+                <div style="font-size: 0.9rem; color: #666;">Poll content is not yet fully displayed.</div>
+            </div>
+
             {% else %}
             {# Photos/General Media #}
             <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media"
