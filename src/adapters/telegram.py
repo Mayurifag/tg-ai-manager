@@ -297,7 +297,8 @@ class TelethonAdapter(ChatRepository):
             results.append(Chat(
                 id=d.id, name=d.name, unread_count=calculated_unread_count,
                 type=chat_type, unread_topics_count=unread_topics_count,
-                last_message_preview=preview, image_url=image_url
+                last_message_preview=preview, image_url=image_url,
+                is_pinned=d.pinned
             ))
         return results
 
@@ -323,14 +324,16 @@ class TelethonAdapter(ChatRepository):
             unread_count = 0
             unread_topics_count = None
             last_message_preview = None
+            is_pinned = False
 
-            # 1. Dialog Stats (Unread)
+            # 1. Dialog Stats (Unread, Pinned Status)
             try:
                 input_peer = utils.get_input_peer(entity)
-                res = await self.client(GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)]))
+                res = await self.client(GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])) # type: ignore
                 if res.dialogs:
                     dialog = res.dialogs[0]
                     unread_count = dialog.unread_count
+                    is_pinned = dialog.pinned
             except Exception as e:
                 print(f"Warning: Could not fetch dialog stats for {chat_id}: {e}")
 
@@ -365,7 +368,8 @@ class TelethonAdapter(ChatRepository):
                 type=c_type,
                 unread_topics_count=unread_topics_count,
                 image_url=image_url,
-                last_message_preview=last_message_preview
+                last_message_preview=last_message_preview,
+                is_pinned=is_pinned
             )
         except Exception as e:
             print(f"Error fetching chat info {chat_id}: {e}")

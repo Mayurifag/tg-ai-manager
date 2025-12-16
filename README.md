@@ -57,3 +57,4 @@ Open <http://localhost:8000>
 
 - have pinned chat indicator and live updates have to be after that
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/)
+- Show Media/Stickers/Pictures/(video indicator)

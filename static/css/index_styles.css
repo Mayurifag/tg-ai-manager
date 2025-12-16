@@ -30,6 +30,13 @@
     flex-shrink: 0;
 }
 
+.pinned-indicator {
+    font-size: 0.8em; /* Little emoji, barely noticeable */
+    margin-left: 0.2rem;
+    color: #4CAF50; /* A subtle green/blue color */
+    flex-shrink: 0;
+}
+
 .meta {
     text-align: right;
     min-width: 100px;

@@ -20,6 +20,7 @@ class Chat:
     last_message_preview: Optional[str] = None
     image_url: Optional[str] = None
     icon_emoji: Optional[str] = None
+    is_pinned: bool = False
 
 @dataclass
 class Message:

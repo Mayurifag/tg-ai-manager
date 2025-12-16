@@ -15,7 +15,8 @@
 {% block content %}
 <div class="chat-list" id="chat-list-container">
     {% for chat in chats %}
-    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">
+    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}" {% if chat.is_pinned %}data-is-pinned="true" {% endif
+        %}>
         {{ cards.render_chat_card(chat) }}
     </div>
     {% endfor %}
@@ -41,25 +42,37 @@
                 if (response.ok) {
                     const html = await response.text();
 
+                    // Create a temporary element to hold the new card wrapper
+                    const temp = document.createElement('div');
+                    temp.innerHTML = html;
+                    const newCard = temp.firstElementChild; // The new div.chat-card-wrapper
+                    const isPinned = newCard.getAttribute('data-is-pinned') === 'true';
+
                     if (cardWrapper) {
                         // Replace existing card
-                        const temp = document.createElement('div');
-                        temp.innerHTML = html;
-                        const newCard = temp.firstElementChild;
                         cardWrapper.replaceWith(newCard);
-
-                        // Visual Highlight
-                        const inner = newCard.querySelector('.chat-card');
-                        if (inner) {
-                            inner.style.transition = 'background-color 0.5s';
-                            inner.style.backgroundColor = '#fff9c4';
-                            setTimeout(() => inner.style.backgroundColor = '', 800);
-                        }
                     } else {
-                        // Create new card at top
-                        list.insertAdjacentHTML('afterbegin', html);
-                        const newItem = list.firstElementChild;
-                        newItem.style.animation = 'fadeIn 0.5s';
+                        // New Chat: Insert after pinned chats (or at top if pinned)
+                        const pinnedChats = list.querySelectorAll('.chat-card-wrapper[data-is-pinned="true"]');
+                        let insertionPoint;
+
+                        if (isPinned || pinnedChats.length === 0) {
+                            // If new chat is pinned OR there are no pinned chats, insert at the top
+                            insertionPoint = list.firstChild;
+                        } else {
+                            // If new chat is unpinned, insert after the last pinned chat
+                            insertionPoint = pinnedChats[pinnedChats.length - 1].nextSibling;
+                        }
+
+                        list.insertBefore(newCard, insertionPoint);
+                    }
+
+                    // Visual Highlight
+                    const inner = newCard.querySelector('.chat-card');
+                    if (inner) {
+                        inner.style.transition = 'background-color 0.5s';
+                        inner.style.backgroundColor = '#fff9c4';
+                        setTimeout(() => inner.style.backgroundColor = '', 800);
                     }
                 }
             } catch (e) {
@@ -109,7 +122,15 @@
                     metaDiv.appendChild(newBadge);
                 }
 
-                list.prepend(cardWrapper);
+                // NEW LOGIC: Only move if it is NOT pinned. Pinned chats stay put.
+                const isPinned = cardWrapper.getAttribute('data-is-pinned') === 'true';
+                if (!isPinned) {
+                    // Move the cardWrapper after the last pinned chat (to the top of the unpinned list)
+                    const pinnedChats = list.querySelectorAll('.chat-card-wrapper[data-is-pinned="true"]');
+                    const insertionPoint = pinnedChats.length > 0 ? pinnedChats[pinnedChats.length - 1].nextSibling : list.firstChild;
+                    list.insertBefore(cardWrapper, insertionPoint);
+                }
+
                 cardWrapper.style.transition = 'background-color 0.5s';
                 cardWrapper.style.backgroundColor = '#e3f2fd';
                 setTimeout(() => cardWrapper.style.backgroundColor = '', 1000);
