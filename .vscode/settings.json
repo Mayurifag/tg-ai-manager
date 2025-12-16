@@ -18,4 +18,5 @@
         "/.vscode",
         "__pycache__"
     ],
+    "codeWebChat.editContextSystemInstructions": "You're making code for my project. NEVER add comments or descriptions in code."
 }

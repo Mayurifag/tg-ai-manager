@@ -55,6 +55,6 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- have pinned chat indicator and live updates have to be after that
+- global setting field with tooltip to autoread pinned events, someone entered or removed from chat, etc.
+- refactoring. Plan is: Look at my repository and give me plan what could you make in my app better - I mean DRY or splitting big files or else, give me plan. Maybe there are too much smelly code and so on
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/)
-- Show Media/Stickers/Pictures/(video indicator)

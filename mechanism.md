@@ -11,6 +11,7 @@ Before message goes to AI we can:
 - Skip if author is user account itself (this actually covers case of Saved Messages chat)
 - Skip if message has specific link or regexp on words
 - Skip if event is pinning or editing or deletion, we just have to parse msgs
+- Photo changed, game scores, forum topic actions
 
 ## Not to forget
 

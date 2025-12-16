@@ -1,4 +1,12 @@
 {% for msg in messages %}
+
+{% if msg.is_service %}
+<div class="service-message-row" id="msg-{{ msg.id }}" data-id="{{ msg.id }}">
+    <div class="service-message-bubble">
+        {{ msg.sender_name }} {{ msg.text }}
+    </div>
+</div>
+{% else %}
 <div class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}" id="msg-{{ msg.id }}"
     data-id="{{ msg.id }}">
     {% if not msg.is_outgoing %}
@@ -84,4 +92,5 @@
         <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
     </div>
 </div>
+{% endif %}
 {% endfor %}

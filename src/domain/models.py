@@ -47,6 +47,8 @@ class Message:
     audio_title: Optional[str] = None
     audio_performer: Optional[str] = None
     audio_duration: Optional[int] = None # Seconds
+    # Service Messages
+    is_service: bool = False
 
 @dataclass
 class SystemEvent:

@@ -10,7 +10,7 @@ from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopics
 from telethon.tl.types import InputDialogPeer, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message, SystemEvent
-from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
+from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview, get_message_action_text
 
 class ITelethonClient(Protocol):
     def connect(self) -> Awaitable[None]: ...
@@ -32,8 +32,6 @@ class TelethonAdapter(ChatRepository):
         self.images_dir = os.path.join(os.getcwd(), "cache")
         self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
         self._event_handler_registered = False
-
-        # KEY FIX: Map Message ID -> Chat ID to handle deletions where Chat ID is missing
         self._msg_id_to_chat_id: Dict[int, int] = {}
 
     async def connect(self):
@@ -73,7 +71,6 @@ class TelethonAdapter(ChatRepository):
         return None
 
     def _cache_message_chat(self, msg_id: int, chat_id: int):
-        """Helper to cache msg->chat mapping. Limits size to prevent memory leaks."""
         if len(self._msg_id_to_chat_id) > 15000:
             self._msg_id_to_chat_id.clear()
         self._msg_id_to_chat_id[msg_id] = chat_id
@@ -92,7 +89,6 @@ class TelethonAdapter(ChatRepository):
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
             topic_id = self._extract_topic_id(event.message)
 
-            # Simple text preview for the event text
             preview = domain_msg.text
             if not preview and domain_msg.has_media:
                  if domain_msg.is_sticker: preview = f"{domain_msg.sticker_emoji or ''} Sticker"
@@ -153,15 +149,12 @@ class TelethonAdapter(ChatRepository):
     async def _handle_deleted_message(self, event):
         try:
             chat_id = getattr(event, 'chat_id', None)
-
-            # 1. Try Memory Cache (Crucial for Private Chats)
             if not chat_id and event.deleted_ids:
                 for did in event.deleted_ids:
                     if did in self._msg_id_to_chat_id:
                         chat_id = self._msg_id_to_chat_id[did]
                         break
 
-            # 2. Try parsing Channel ID from update
             if not chat_id and hasattr(event, 'original_update'):
                  if hasattr(event.original_update, 'channel_id'):
                     chat_id = utils.get_peer_id(types.PeerChannel(event.original_update.channel_id))
@@ -176,7 +169,6 @@ class TelethonAdapter(ChatRepository):
             else:
                 print(f"DEBUG: Could not resolve chat_id for deleted messages: {event.deleted_ids}")
 
-            # Dispatch event if we found the chat ID
             if chat_id and event.deleted_ids:
                 sys_event = SystemEvent(
                     type="deleted",
@@ -202,13 +194,17 @@ class TelethonAdapter(ChatRepository):
                 chat_name = utils.get_display_name(chat)
             except: pass
 
+            # Use the strict mapper logic to get text, but we need the 'SystemEvent' to work.
+            # event.action_message is the MessageService object
             text = "Unknown action"
-            if event.user_joined or event.user_added:
-                text = "User joined"
-            elif event.user_left or event.user_kicked:
-                text = "User left"
-            elif event.new_title:
-                text = f"Title changed to {event.new_title}"
+
+            # Re-use our centralized mapper
+            action_text = get_message_action_text(event.action_message)
+            if action_text:
+                # Add sender name if available to make it "Sender pinned a message"
+                # event.action_message has sender info
+                msg_model = await self._parse_message(event.action_message, chat_id=event.chat_id)
+                text = f"{msg_model.sender_name} {action_text}"
 
             sys_event = SystemEvent(
                 type="action",
@@ -232,10 +228,6 @@ class TelethonAdapter(ChatRepository):
         return None
 
     async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
-        """
-        Downloads media for a specific message on demand.
-        Returns the relative path to the cached file.
-        """
         try:
             entity = await self.client.get_entity(chat_id)
             message = await self.client.get_messages(entity, ids=message_id)
@@ -243,25 +235,17 @@ class TelethonAdapter(ChatRepository):
             if not message or not message.media:
                 return None
 
-            # Determine extension
-            ext = "jpg" # Default
-
-            # Use Telethon utils to guess extension from mime_type
+            ext = "jpg"
             guessed_ext = utils.get_extension(message.media)
             if guessed_ext:
                 ext = guessed_ext.lstrip('.')
 
-            # Fallbacks / Specific overrides
             if hasattr(message.media, 'document'):
                  if hasattr(message.media.document, 'mime_type'):
-                     if 'webp' in message.media.document.mime_type:
-                         ext = "webp"
-                     elif 'audio/ogg' in message.media.document.mime_type:
-                         ext = "ogg"
-                     elif 'audio/mpeg' in message.media.document.mime_type:
-                         ext = "mp3"
-                     elif 'video/mp4' in message.media.document.mime_type:
-                         ext = "mp4"
+                     if 'webp' in message.media.document.mime_type: ext = "webp"
+                     elif 'audio/ogg' in message.media.document.mime_type: ext = "ogg"
+                     elif 'audio/mpeg' in message.media.document.mime_type: ext = "mp3"
+                     elif 'video/mp4' in message.media.document.mime_type: ext = "mp4"
 
             filename = f"media_{chat_id}_{message_id}.{ext}"
             path = os.path.join(self.images_dir, filename)
@@ -269,34 +253,25 @@ class TelethonAdapter(ChatRepository):
             if os.path.exists(path):
                 return f"/cache/{filename}"
 
-            # Download Logic
-            # 'thumb' kwarg: 0, 1, 2 for sizes, or 'm', 's'.
-
             is_sticker = False
             is_audio = False
             is_video = False
 
             if isinstance(message.media, MessageMediaDocument):
                  for attr in getattr(message.media.document, 'attributes', []):
-                      if isinstance(attr, DocumentAttributeSticker):
-                           is_sticker = True
-                      if isinstance(attr, DocumentAttributeAudio):
-                           is_audio = True
-                      if isinstance(attr, DocumentAttributeVideo):
-                           is_video = True
+                      if isinstance(attr, DocumentAttributeSticker): is_sticker = True
+                      if isinstance(attr, DocumentAttributeAudio): is_audio = True
+                      if isinstance(attr, DocumentAttributeVideo): is_video = True
 
             result = None
             if is_sticker or is_audio or is_video:
-                 # Download full file for stickers, audio, and video
                  result = await self.client.download_media(message, file=path)
             else:
-                 # Try downloading thumbnail first (for photos)
                  result = await self.client.download_media(message, file=path, thumb='m')
                  if not result:
                      result = await self.client.download_media(message, file=path)
 
             if result:
-                 # Ensure result path is correct in case telethon changed extension
                  final_filename = os.path.basename(result)
                  return f"/cache/{final_filename}"
 
@@ -349,10 +324,6 @@ class TelethonAdapter(ChatRepository):
         return messages_map
 
     async def get_chats(self, limit: int) -> list[Chat]:
-        """
-        Fetches the recent chats for the index page.
-        POPULATES CACHE with the top message of every chat found.
-        """
         dialogs = await self.client.get_dialogs(limit=limit)
         results = []
         for d in dialogs:
@@ -362,7 +333,6 @@ class TelethonAdapter(ChatRepository):
             topic_map = {}
 
             if chat_type == ChatType.FORUM:
-                # Fetch explicit forum stats to get the "5 messages (2 topics)" breakdown
                 response = await self._fetch_forum_topics_response(d.entity, limit=20)
                 if response:
                     active_topics = response.topics
@@ -374,11 +344,8 @@ class TelethonAdapter(ChatRepository):
                         calculated_unread_count = sum(t.unread_count for t in unread_topics)
 
             msg = getattr(d, 'message', None)
-
-            # --- POPULATE CACHE FOR LIVE DELETES ---
             if msg:
                 self._cache_message_chat(msg.id, d.id)
-            # ---------------------------------------
 
             preview = format_message_preview(msg, chat_type, topic_map)
             image_url = await self._get_chat_image(d.entity, d.id)
@@ -392,10 +359,6 @@ class TelethonAdapter(ChatRepository):
         return results
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
-        """
-        Fetches a single chat card.
-        Uses get_messages(limit=1) to ensure we get the non-deleted top message.
-        """
         try:
             entity = await self.client.get_entity(chat_id)
             name = utils.get_display_name(entity)
@@ -415,7 +378,6 @@ class TelethonAdapter(ChatRepository):
             last_message_preview = None
             is_pinned = False
 
-            # 1. Dialog Stats (Unread, Pinned Status)
             try:
                 input_peer = utils.get_input_peer(entity)
                 res = await self.client(GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])) # type: ignore
@@ -426,7 +388,6 @@ class TelethonAdapter(ChatRepository):
             except Exception as e:
                 print(f"Warning: Could not fetch dialog stats for {chat_id}: {e}")
 
-            # 2. Latest Message (Visual Preview)
             try:
                 messages = await self.client.get_messages(entity, limit=1)
                 if messages:
@@ -438,7 +399,6 @@ class TelethonAdapter(ChatRepository):
             except Exception as e:
                 print(f"Warning: Could not fetch latest message for {chat_id}: {e}")
 
-            # 3. Forum Stats
             if c_type == ChatType.FORUM:
                 try:
                     topics_res = await self._fetch_forum_topics_response(entity, limit=20)
@@ -464,13 +424,21 @@ class TelethonAdapter(ChatRepository):
             print(f"Error fetching chat info {chat_id}: {e}")
             return None
 
-    # Added chat_id for cache context
     async def _parse_message(self, msg: Any, replies_map: Dict[int, Any] | None = None, chat_id: Optional[int] = None) -> Message:
         if chat_id:
             self._cache_message_chat(msg.id, chat_id)
 
         replies_map = replies_map or {}
-        text = self._extract_text(msg)
+
+        # --- Service Message Logic ---
+        is_service = False
+        text = ""
+
+        if isinstance(msg, types.MessageService):
+            is_service = True
+            text = get_message_action_text(msg) or "Service message"
+        else:
+            text = self._extract_text(msg)
 
         # Check Media
         has_media = bool(msg.media)
@@ -546,7 +514,8 @@ class TelethonAdapter(ChatRepository):
             has_media=has_media, is_video=is_video, is_sticker=is_sticker,
             sticker_emoji=sticker_emoji,
             is_audio=is_audio, is_voice=is_voice,
-            audio_title=audio_title, audio_performer=audio_performer, audio_duration=audio_duration
+            audio_title=audio_title, audio_performer=audio_performer, audio_duration=audio_duration,
+            is_service=is_service
         )
 
     async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
@@ -555,9 +524,7 @@ class TelethonAdapter(ChatRepository):
             messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id, offset_id=offset_id)
             reply_ids = []
             for msg in messages:
-                # Cache the message ID
                 self._cache_message_chat(msg.id, chat_id)
-
                 reply_header = getattr(msg, 'reply_to', None)
                 if reply_header:
                      rid = getattr(reply_header, 'reply_to_msg_id', None)
