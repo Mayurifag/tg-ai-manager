@@ -1,0 +1,121 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Action Logs{% endblock %}
+
+{% block sidebar_back %}
+<a href="/" class="back-link">← Back to Chats</a>
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Action Log</h1>
+</div>
+
+<div class="logs-container">
+    <style>
+        .logs-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .logs-table th,
+        .logs-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .logs-table th {
+            background-color: #f5f5f5;
+            font-weight: 600;
+            color: #444;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+        }
+
+        .logs-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .logs-table tr:hover {
+            background-color: #f9f9f9;
+        }
+
+        .log-chat-link {
+            text-decoration: none;
+            color: #1976d2;
+            font-weight: 500;
+        }
+
+        .log-chat-link:hover {
+            text-decoration: underline;
+        }
+
+        .log-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-read {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .badge-manual {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+    </style>
+
+    {% if logs %}
+    <table class="logs-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Action</th>
+                <th>Chat</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td style="color: #666; font-size: 0.9rem; white-space: nowrap;">
+                    {{ log.date.strftime('%Y-%m-%d %H:%M:%S') }}
+                </td>
+                <td>
+                    <span class="log-badge badge-read">{{ log.action }}</span>
+                </td>
+                <td>
+                    {% if log.link %}
+                    <a href="{{ log.link }}" class="log-chat-link">
+                        {{ log.chat_name }}
+                    </a>
+                    {% else %}
+                    <a href="/chat/{{ log.chat_id }}" class="log-chat-link">
+                        {{ log.chat_name }}
+                    </a>
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="log-badge badge-manual">{{ log.reason }}</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div style="text-align: center; color: #999; padding: 40px;">
+        No actions recorded yet.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

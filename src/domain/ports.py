@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Callable, Awaitable
-from src.domain.models import Chat, Message, SystemEvent
+from src.domain.models import Chat, Message, SystemEvent, ActionLog
 
 class ChatRepository(ABC):
     @abstractmethod
@@ -28,6 +28,11 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
+        """Get the name of a specific forum topic."""
+        pass
+
+    @abstractmethod
     async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
         """Downloads the media for a message and returns cache path."""
         pass
@@ -35,4 +40,18 @@ class ChatRepository(ABC):
     @abstractmethod
     def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         """Register a callback for system events."""
+        pass
+
+    @abstractmethod
+    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
+        """Marks the chat or specific topic as read."""
+        pass
+
+class ActionRepository(ABC):
+    @abstractmethod
+    async def add_log(self, log: ActionLog) -> None:
+        pass
+
+    @abstractmethod
+    async def get_logs(self, limit: int = 50) -> List[ActionLog]:
         pass

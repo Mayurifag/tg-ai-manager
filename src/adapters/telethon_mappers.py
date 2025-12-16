@@ -54,11 +54,13 @@ def get_message_action_text(message: Any) -> Optional[str]:
         return "👋 joined via invite link"
     elif isinstance(action, MessageActionChatAddUser):
         # Check if user added themselves (joined) or was added
-        if message.sender_id in action.users:
+        sender_id = getattr(message, 'sender_id', None)
+        if sender_id and sender_id in action.users:
             return "👋 joined the group"
         return "👤 added a user"
     elif isinstance(action, MessageActionChatDeleteUser):
-        if message.sender_id == action.user_id:
+        sender_id = getattr(message, 'sender_id', None)
+        if sender_id == action.user_id:
             return "💨 left the group"
         return "🚫 removed a user"
 
