@@ -61,3 +61,13 @@ class SystemEvent:
     link: Optional[str] = None
     message_model: Optional[Message] = None
     rendered_html: Optional[str] = None
+
+@dataclass
+class ActionLog:
+    action: str
+    chat_id: int
+    chat_name: str
+    reason: str
+    date: datetime = field(default_factory=datetime.now)
+    link: Optional[str] = None
+    id: Optional[int] = None

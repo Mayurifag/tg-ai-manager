@@ -25,6 +25,7 @@ class ITelethonClient(Protocol):
     def download_media(self, message: Any, file: Any = None, thumb: Any = None) -> Awaitable[Any]: ...
     def __call__(self, request: Any) -> Awaitable[Any]: ...
     def add_event_handler(self, callback: Any, event: Any): ...
+    def send_read_acknowledge(self, entity: Any, message: Any = None, max_id: int | None = None, clear_mentions: bool = True, reply_to: int | None = None) -> Awaitable[Any]: ...
 
 class TelethonAdapter(ChatRepository):
     def __init__(self, session_name: str, api_id: int, api_hash: str):
@@ -194,15 +195,9 @@ class TelethonAdapter(ChatRepository):
                 chat_name = utils.get_display_name(chat)
             except: pass
 
-            # Use the strict mapper logic to get text, but we need the 'SystemEvent' to work.
-            # event.action_message is the MessageService object
             text = "Unknown action"
-
-            # Re-use our centralized mapper
             action_text = get_message_action_text(event.action_message)
             if action_text:
-                # Add sender name if available to make it "Sender pinned a message"
-                # event.action_message has sender info
                 msg_model = await self._parse_message(event.action_message, chat_id=event.chat_id)
                 text = f"{msg_model.sender_name} {action_text}"
 
@@ -230,9 +225,12 @@ class TelethonAdapter(ChatRepository):
     async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
         try:
             entity = await self.client.get_entity(chat_id)
-            message = await self.client.get_messages(entity, ids=message_id)
+            messages = await self.client.get_messages(entity, ids=[message_id])
+            if not messages:
+                return None
+            message = messages[0]
 
-            if not message or not message.media:
+            if not message or not getattr(message, 'media', None):
                 return None
 
             ext = "jpg"
@@ -441,7 +439,9 @@ class TelethonAdapter(ChatRepository):
             text = self._extract_text(msg)
 
         # Check Media
-        has_media = bool(msg.media)
+        # Safe access because MessageService might not have media
+        media = getattr(msg, 'media', None)
+        has_media = bool(media)
         is_video = False
         is_sticker = False
         sticker_emoji = None
@@ -454,8 +454,8 @@ class TelethonAdapter(ChatRepository):
         audio_duration = None
 
         if has_media:
-            if isinstance(msg.media, MessageMediaDocument):
-                for attr in getattr(msg.media.document, 'attributes', []):
+            if isinstance(media, MessageMediaDocument):
+                for attr in getattr(media.document, 'attributes', []):
                     if isinstance(attr, DocumentAttributeVideo):
                         is_video = True
                     elif isinstance(attr, DocumentAttributeSticker):
@@ -506,7 +506,7 @@ class TelethonAdapter(ChatRepository):
                 reply_to_sender = utils.get_display_name(r_sender) if r_sender else "User"
 
         return Message(
-            id=msg.id, text=text, date=msg.date, sender_name=sender_name,
+            id=msg.id, text=text, date=msg.date or datetime.now(), sender_name=sender_name,
             is_outgoing=getattr(msg, 'out', False), sender_id=sender_id,
             avatar_url=avatar_url, sender_color=sender_color,
             sender_initials=sender_initials, reply_to_msg_id=reply_to_msg_id,
@@ -568,3 +568,38 @@ class TelethonAdapter(ChatRepository):
         except Exception as e:
             print(f"Error topics: {e}")
             return []
+
+    async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            # Use raw client to fetch message object (not parsed domain object)
+            # ids=[topic_id] to return a List (TotalList)
+            messages = await self.client.get_messages(entity, ids=[topic_id])
+
+            if messages:
+                message = messages[0]
+                if message and getattr(message, 'action', None):
+                    if isinstance(message.action, types.MessageActionTopicCreate):
+                        return message.action.title
+        except Exception as e:
+            print(f"Error fetching topic name {chat_id}/{topic_id}: {e}")
+        return None
+
+    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            if topic_id:
+                # Fetch latest message to get the max_id
+                msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
+                max_id = msgs[0].id if msgs else topic_id
+
+                # Use the raw API request to read a specific thread/topic
+                await self.client(functions.messages.ReadDiscussionRequest(
+                    peer=entity,
+                    msg_id=topic_id,
+                    read_max_id=max_id
+                ))
+            else:
+                 await self.client.send_read_acknowledge(entity)
+        except Exception as e:
+            print(f"Error marking as read {chat_id} {topic_id}: {e}")

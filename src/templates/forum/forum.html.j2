@@ -37,6 +37,32 @@ Forum Topics
 {% endblock %}
 
 {% block settings %}
+<div class="setting-option" id="btn-read-forum" style="color: #2e7d32; font-weight: 500;">
+    ✅ Read All Topics
+</div>
+<script>
+    document.getElementById('btn-read-forum').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-read-forum');
+        btn.style.opacity = '0.5';
+        btn.style.pointerEvents = 'none';
+
+        try {
+            const url = `/api/chat/{{ chat.id }}/read`;
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+        } catch(e) {
+            console.error(e);
+        } finally {
+            setTimeout(() => {
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            }, 500);
+        }
+    });
+</script>
 {% endblock %}
 
 {% block content %}

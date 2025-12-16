@@ -54,6 +54,14 @@ async def broadcast_event(event: SystemEvent):
 
 @app.before_serving
 async def startup():
+    # Reset DB on start
+    if os.path.exists("actions.db"):
+        try:
+            os.remove("actions.db")
+            print("Reset actions.db")
+        except Exception as e:
+            print(f"Failed to delete actions.db: {e}")
+
     interactor = get_chat_interactor()
     await interactor.initialize()
     await interactor.subscribe_to_events(broadcast_event)
@@ -143,6 +151,12 @@ async def index():
     chats = await interactor.get_recent_chats()
     return await render_template("index/index.html.j2", chats=chats)
 
+@app.route("/actions")
+async def actions_view():
+    interactor = get_chat_interactor()
+    logs = await interactor.get_action_logs()
+    return await render_template("actions/log.html.j2", logs=logs)
+
 @app.route("/chat/<int(signed=True):chat_id>")
 async def chat_view(chat_id: int):
     interactor = get_chat_interactor()
@@ -177,6 +191,17 @@ async def api_chat_history(chat_id: int):
         "html": html_content,
         "count": len(messages)
     })
+
+@app.route("/api/chat/<int(signed=True):chat_id>/read", methods=["POST"])
+async def mark_read(chat_id: int):
+    interactor = get_chat_interactor()
+    data = await request.get_json()
+    topic_id = None
+    if data:
+        topic_id = data.get("topic_id")
+
+    await interactor.mark_chat_as_read(chat_id, topic_id=topic_id)
+    return jsonify({"status": "ok"})
 
 @app.route("/api/chat/<int(signed=True):chat_id>/card")
 async def api_get_chat_card(chat_id: int):
