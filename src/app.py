@@ -4,7 +4,7 @@ import json
 import asyncio
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from quart import Quart, render_template, send_from_directory, request, jsonify, make_response, render_template_string
+from quart import Quart, render_template, send_from_directory, request, jsonify, make_response, render_template_string, redirect
 from src.container import get_chat_interactor
 from src.domain.models import SystemEvent
 
@@ -33,9 +33,11 @@ async def broadcast_event(event: SystemEvent):
     # Pre-render HTML for messages
     if event.type == "message" and event.message_model:
         # We pass a list of 1 message to reuse the loop template
+        # Must pass chat_id for media links
         event.rendered_html = await render_template(
             "chat/messages_partial.html.j2",
-            messages=[event.message_model]
+            messages=[event.message_model],
+            chat_id=event.chat_id
         )
     # Also render for Edited messages so we can replace the bubble text
     elif event.type == "edited" and event.message_model:
@@ -117,6 +119,20 @@ async def event_stream():
 async def serve_images(filename):
     return await send_from_directory(IMAGES_DIR, filename)
 
+@app.route("/media/<int(signed=True):chat_id>/<int(signed=True):msg_id>")
+async def get_message_media(chat_id: int, msg_id: int):
+    """Lazy load media for a message."""
+    interactor = get_chat_interactor()
+
+    # Try to find if file already exists in cache with a pattern (since we don't know extension easily)
+    # Actually, the adapter handles the cache logic and returns a path like "/cache/..."
+
+    public_path = await interactor.get_media_path(chat_id, msg_id)
+    if public_path:
+        return redirect(public_path)
+
+    return "", 404
+
 @app.route("/static/css/<path:filename>")
 async def serve_css(filename):
     return await send_from_directory(CSS_DIR, filename)
@@ -155,7 +171,7 @@ async def api_chat_history(chat_id: int):
     topic_id = request.args.get('topic_id', type=int, default=None)
 
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
-    html_content = await render_template("chat/messages_partial.html.j2", messages=messages)
+    html_content = await render_template("chat/messages_partial.html.j2", messages=messages, chat_id=chat_id)
 
     return jsonify({
         "html": html_content,

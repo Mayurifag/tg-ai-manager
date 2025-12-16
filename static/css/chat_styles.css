@@ -123,3 +123,10 @@
     text-align: right;
     margin-top: 0.2rem;
 }
+
+.inline-media {
+    transition: opacity 0.3s;
+}
+.inline-media:hover {
+    opacity: 0.9;
+}

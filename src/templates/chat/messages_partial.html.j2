@@ -30,7 +30,57 @@
         </a>
         {% endif %}
 
+        {% if msg.has_media %}
+        <div class="media-content" style="margin-bottom: 5px;">
+            {% if msg.is_video %}
+            <video controls preload="metadata"
+                style="max-width: 100%; border-radius: 8px; max-height: 400px; display: block;">
+                <source src="/media/{{ chat_id }}/{{ msg.id }}">
+                Your browser does not support the video tag.
+            </video>
+
+            {% elif msg.is_sticker %}
+            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy"
+                style="max-width: 300px; max-height: 300px; display: block;" alt="Sticker">
+
+            {% elif msg.is_audio %}
+            <div class="audio-player"
+                style="background: rgba(0,0,0,0.05); padding: 8px; border-radius: 8px; min-width: 250px;">
+                <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 1.5rem; margin-right: 10px;">
+                        {{ '🎤' if msg.is_voice else '🎵' }}
+                    </span>
+                    <div style="overflow: hidden;">
+                        {% if msg.audio_title or msg.audio_performer %}
+                        <div style="font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            {{ msg.audio_title or 'Unknown Title' }}</div>
+                        <div
+                            style="font-size: 0.8rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            {{ msg.audio_performer or 'Unknown Artist' }}</div>
+                        {% else %}
+                        <div style="font-weight: bold;">Audio File</div>
+                        {% endif %}
+                    </div>
+                </div>
+                <audio controls preload="none" style="width: 100%; height: 30px;">
+                    <source src="/media/{{ chat_id }}/{{ msg.id }}">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+
+            {% else %}
+            {# Photos/General Media #}
+            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media"
+                style="max-width: 250px; max-height: 300px; border-radius: 8px; display: block; cursor: pointer;"
+                onclick="window.open(this.src, '_blank')">
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if msg.text %}
         <div class="text">{{ msg.text | safe }}</div>
+        {% endif %}
+
         <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
     </div>
 </div>

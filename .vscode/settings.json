@@ -1,7 +1,6 @@
 {
     "files.exclude": {
         "**/__pycache__": true,
-        "**/.pytest_cache": true,
         "**/.venv": true,
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
@@ -9,10 +8,14 @@
     },
     "search.exclude": {
         "**/__pycache__": true,
-        "**/.pytest_cache": true,
         "**/.venv": true,
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
         "**/cache": true
-    }
+    },
+    "codeWebChat.ignorePatterns": [
+        "/uv.lock",
+        "/.vscode",
+        "__pycache__"
+    ],
 }
