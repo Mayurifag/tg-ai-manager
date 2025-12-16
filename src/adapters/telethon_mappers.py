@@ -1,5 +1,23 @@
 from typing import Any, Optional, Dict
-from telethon.tl.types import MessageService, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio
+from telethon.tl.types import (
+    MessageService,
+    MessageMediaPhoto,
+    MessageMediaDocument,
+    DocumentAttributeSticker,
+    DocumentAttributeVideo,
+    DocumentAttributeAudio,
+    MessageActionPinMessage,
+    MessageActionChatEditTitle,
+    MessageActionChatEditPhoto,
+    MessageActionChatDeletePhoto,
+    MessageActionChatAddUser,
+    MessageActionChatDeleteUser,
+    MessageActionChatJoinedByLink,
+    MessageActionChatCreate,
+    MessageActionChannelCreate,
+    MessageActionGameScore,
+    PeerUser
+)
 from telethon import utils
 from html import unescape as html_unescape
 from src.domain.models import ChatType
@@ -14,12 +32,50 @@ def map_telethon_dialog_to_chat_type(d: Any) -> ChatType:
             return ChatType.CHANNEL
     return ChatType.GROUP
 
+def get_message_action_text(message: Any) -> Optional[str]:
+    """Extracts a human-readable description from a Service Message action."""
+    if not isinstance(message, MessageService):
+        return None
+
+    action = message.action
+    if isinstance(action, MessageActionPinMessage):
+        return "📌 pinned a message"
+    elif isinstance(action, MessageActionChatEditTitle):
+        return f"✏️ changed group name to {action.title}"
+    elif isinstance(action, MessageActionChatEditPhoto):
+        return "📷 updated group photo"
+    elif isinstance(action, MessageActionChatDeletePhoto):
+        return "🗑️ removed group photo"
+    elif isinstance(action, (MessageActionChatCreate, MessageActionChannelCreate)):
+        return "✨ created the group"
+    elif isinstance(action, MessageActionGameScore):
+        return f"🎮 scored {action.score}"
+    elif isinstance(action, MessageActionChatJoinedByLink):
+        return "👋 joined via invite link"
+    elif isinstance(action, MessageActionChatAddUser):
+        # Check if user added themselves (joined) or was added
+        if message.sender_id in action.users:
+            return "👋 joined the group"
+        return "👤 added a user"
+    elif isinstance(action, MessageActionChatDeleteUser):
+        if message.sender_id == action.user_id:
+            return "💨 left the group"
+        return "🚫 removed a user"
+
+    return "Service message"
+
 def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optional[Dict[int, str]] = None) -> str:
     if not message:
         return "No messages"
 
+    # Handle Service Messages specifically
     if isinstance(message, MessageService):
-        return "Service message"
+        action_text = get_message_action_text(message)
+        if action_text:
+            # We skip the "User: " prefix logic below because service messages often read better as "<User> <Action>"
+            # But the caller of this function might expect just the text to combine.
+            # To match the sidebar style "Name: Text", we return just the action text.
+            return action_text
 
     text = getattr(message, 'message', '')
 
@@ -63,7 +119,6 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if not text and media_text:
         text = media_text
     elif text and media_text:
-        # Prioritize text but maybe indicator? For now just text
         pass
     elif not text and not media_text:
         text = "Media/Sticker"
@@ -94,6 +149,5 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
         if sender:
             name = utils.get_display_name(sender)
             prefix = f"{name}: "
-
 
     return f"{prefix}{text}"
