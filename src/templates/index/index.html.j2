@@ -13,9 +13,115 @@
 {% endblock %}
 
 {% block content %}
-<div class="chat-list">
+<div class="chat-list" id="chat-list-container">
     {% for chat in chats %}
-    {{ cards.render_chat_card(chat) }}
+    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">
+        {{ cards.render_chat_card(chat) }}
+    </div>
     {% endfor %}
 </div>
+
+<script>
+    let updateTimeouts = {};
+
+    async function reloadCard(chatId) {
+        if (!chatId) return;
+
+        // Debounce to handle multiple deletes at once
+        if (updateTimeouts[chatId]) clearTimeout(updateTimeouts[chatId]);
+
+        // Wait 500ms to allow Telegram servers to process the deletion state
+        updateTimeouts[chatId] = setTimeout(async () => {
+            const list = document.getElementById('chat-list-container');
+            const cardWrapper = list.querySelector(`.chat-card-wrapper[data-chat-id="${chatId}"]`);
+
+            try {
+                // Fetch the new card HTML
+                const response = await fetch(`/api/chat/${chatId}/card?t=${Date.now()}`);
+                if (response.ok) {
+                    const html = await response.text();
+
+                    if (cardWrapper) {
+                        // Replace existing card
+                        const temp = document.createElement('div');
+                        temp.innerHTML = html;
+                        const newCard = temp.firstElementChild;
+                        cardWrapper.replaceWith(newCard);
+
+                        // Visual Highlight
+                        const inner = newCard.querySelector('.chat-card');
+                        if (inner) {
+                            inner.style.transition = 'background-color 0.5s';
+                            inner.style.backgroundColor = '#fff9c4';
+                            setTimeout(() => inner.style.backgroundColor = '', 800);
+                        }
+                    } else {
+                        // Create new card at top
+                        list.insertAdjacentHTML('afterbegin', html);
+                        const newItem = list.firstElementChild;
+                        newItem.style.animation = 'fadeIn 0.5s';
+                    }
+                }
+            } catch (e) {
+                console.error("Error updating card:", e);
+            }
+        }, 500);
+    }
+
+    document.addEventListener('tg:event', async (e) => {
+        const data = e.detail;
+
+        // If chat_id is missing, we can't do anything (though backend now tries hard to find it)
+        if (!data.chat_id) return;
+
+        if (data.type === 'message') {
+            const list = document.getElementById('chat-list-container');
+            const cardWrapper = list.querySelector(`.chat-card-wrapper[data-chat-id="${data.chat_id}"]`);
+
+            // If card exists and is NOT a forum, we can try a fast client-side update
+            let isForum = false;
+            if (cardWrapper) {
+                const innerLink = cardWrapper.querySelector('.chat-card');
+                if (innerLink && innerLink.getAttribute('data-chat-type') === 'forum') isForum = true;
+            }
+
+            if (cardWrapper && !isForum) {
+                // Client-side optimizations
+                const previewEl = cardWrapper.querySelector('.preview');
+                if (previewEl) previewEl.textContent = data.text;
+
+                const chatCard = cardWrapper.querySelector('.chat-card');
+                let unreadBadge = chatCard.querySelector('.unread');
+
+                if (unreadBadge) {
+                    let count = parseInt(unreadBadge.textContent);
+                    if (!isNaN(count)) unreadBadge.textContent = count + 1;
+                } else {
+                    let metaDiv = chatCard.querySelector('.meta');
+                    if (!metaDiv) {
+                        metaDiv = document.createElement('div');
+                        metaDiv.className = 'meta';
+                        chatCard.appendChild(metaDiv);
+                    }
+                    const newBadge = document.createElement('div');
+                    newBadge.className = 'unread';
+                    newBadge.textContent = '1';
+                    metaDiv.appendChild(newBadge);
+                }
+
+                list.prepend(cardWrapper);
+                cardWrapper.style.transition = 'background-color 0.5s';
+                cardWrapper.style.backgroundColor = '#e3f2fd';
+                setTimeout(() => cardWrapper.style.backgroundColor = '', 1000);
+            } else {
+                // Forums or New Chats: Must reload card from server
+                await reloadCard(data.chat_id);
+            }
+        }
+        else if (data.type === 'deleted' || data.type === 'edited') {
+            // ALWAYS reload card from server on delete/edit
+            await reloadCard(data.chat_id);
+        }
+    });
+</script>
 {% endblock %}

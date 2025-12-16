@@ -43,4 +43,9 @@ class SystemEvent:
     chat_name: str
     date: datetime = field(default_factory=datetime.now)
     chat_id: Optional[int] = None
+    topic_id: Optional[int] = None  # Added topic_id
     link: Optional[str] = None
+    # The raw message object (optional)
+    message_model: Optional[Message] = None
+    # The pre-rendered HTML for this event (optional, populated by app layer)
+    rendered_html: Optional[str] = None

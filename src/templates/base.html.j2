@@ -19,17 +19,17 @@
                 <div class="settings-header">Live Events</div>
                 <div id="event-feed-list">
                     {% if recent_events %}
-                        {% for event in recent_events %}
-                        <div class="event-item type-{{ event.type }}">
-                            <div class="event-header">
-                                <span class="event-type">{{ event.type | upper }}</span>
-                                <span class="event-chat">{{ event.chat_name }}</span>
-                            </div>
-                            <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
+                    {% for event in recent_events %}
+                    <div class="event-item type-{{ event.type }}">
+                        <div class="event-header">
+                            <span class="event-type">{{ event.type | upper }}</span>
+                            <span class="event-chat">{{ event.chat_name }}</span>
                         </div>
-                        {% endfor %}
+                        <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
+                    </div>
+                    {% endfor %}
                     {% else %}
-                        <div class="empty-feed">No recent events</div>
+                    <div class="empty-feed">No recent events</div>
                     {% endif %}
                 </div>
             </div>
@@ -56,10 +56,14 @@
             const feedContainer = document.getElementById('event-feed-list');
             const evtSource = new EventSource("/api/events/stream");
 
-            evtSource.onmessage = function(e) {
+            evtSource.onmessage = function (e) {
                 const data = JSON.parse(e.data);
 
-                // Remove empty message if present
+                // 1. Dispatch global event for other pages to consume
+                const customEvent = new CustomEvent('tg:event', { detail: data });
+                document.dispatchEvent(customEvent);
+
+                // 2. Update Sidebar Feed
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
 

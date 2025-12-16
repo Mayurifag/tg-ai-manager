@@ -2,8 +2,9 @@ import os
 import sys
 import json
 import asyncio
-from dataclasses import asdict
-from quart import Quart, render_template, send_from_directory, request, jsonify, make_response
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from quart import Quart, render_template, send_from_directory, request, jsonify, make_response, render_template_string
 from src.container import get_chat_interactor
 from src.domain.models import SystemEvent
 
@@ -18,13 +19,34 @@ os.makedirs(CSS_DIR, exist_ok=True)
 # Connected SSE clients
 connected_queues = set()
 
+def json_serializer(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    # Check if it's an instance, not a class type
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 async def broadcast_event(event: SystemEvent):
     """Pushes a new event to all connected SSE clients."""
-    # Serialize datetime manually
-    event_dict = asdict(event)
-    event_dict['date'] = event.date.isoformat()
 
-    data = json.dumps(event_dict)
+    # Pre-render HTML for messages
+    if event.type == "message" and event.message_model:
+        # We pass a list of 1 message to reuse the loop template
+        event.rendered_html = await render_template(
+            "chat/messages_partial.html.j2",
+            messages=[event.message_model]
+        )
+    # Also render for Edited messages so we can replace the bubble text
+    elif event.type == "edited" and event.message_model:
+        # For edits, we might only need the text content, but keeping it consistent
+        # We won't use the full partial for replacement, but having the model data available is key.
+        # Use the same template effectively creates a replacement node.
+        pass
+
+    # Manual serialization using custom default
+    data = json.dumps(asdict(event), default=json_serializer)
+
     for queue in connected_queues:
         await queue.put(data)
 
@@ -32,18 +54,30 @@ async def broadcast_event(event: SystemEvent):
 async def startup():
     interactor = get_chat_interactor()
     await interactor.initialize()
-    # Subscribe to events and broadcast them
     await interactor.subscribe_to_events(broadcast_event)
 
 @app.after_serving
 async def shutdown():
     interactor = get_chat_interactor()
+    # Disconnect Telegram client
     await interactor.shutdown()
+
+    # Gracefully close all SSE connections by sending a kill signal (None)
+    put_tasks = [queue.put(None) for queue in list(connected_queues)]
+    if put_tasks:
+        # Await all put operations to ensure the signal is delivered
+        await asyncio.gather(*put_tasks, return_exceptions=True)
+
+    # Give the generators a brief moment to process 'None', exit, and clean up.
+    # This short delay often resolves Ctrl+C hang issues in async web servers
+    # with open connections.
+    await asyncio.sleep(0.5)
+
+    connected_queues.clear()
 
 @app.context_processor
 def inject_recent_events():
     interactor = get_chat_interactor()
-    # Return as list for jinja
     return {'recent_events': interactor.get_recent_events()}
 
 @app.route("/api/events/stream")
@@ -58,13 +92,22 @@ async def event_stream():
         try:
             while True:
                 data = await queue.get()
+                # Check for kill signal
+                if data is None:
+                    break
                 yield f"data: {data}\n\n"
         except asyncio.CancelledError:
-            connected_queues.remove(queue)
-            raise
+            # Client disconnected manually (e.g. closing tab)
+            pass
+        finally:
+            if queue in connected_queues:
+                connected_queues.remove(queue)
 
     response = await make_response(generator())
-    response.timeout = None  # Infinite timeout for streaming
+
+    # Avoid Pylance error for dynamic attribute assignment
+    setattr(response, 'timeout', None)
+
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['Connection'] = 'keep-alive'
@@ -112,10 +155,26 @@ async def api_chat_history(chat_id: int):
     topic_id = request.args.get('topic_id', type=int, default=None)
 
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
-
     html_content = await render_template("chat/messages_partial.html.j2", messages=messages)
 
     return jsonify({
         "html": html_content,
         "count": len(messages)
     })
+
+@app.route("/api/chat/<int(signed=True):chat_id>/card")
+async def api_get_chat_card(chat_id: int):
+    """Fetches a rendered HTML card for a specific chat."""
+    interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
+    if not chat:
+        return "Chat not found", 404
+
+    # Render using the existing macro. We wrap it in a string template to use 'import'.
+    template = """
+    {% import "macros/chat_card.html.j2" as cards %}
+    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">
+        {{ cards.render_chat_card(chat) }}
+    </div>
+    """
+    return await render_template_string(template, chat=chat)

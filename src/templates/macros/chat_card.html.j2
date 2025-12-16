@@ -1,63 +1,67 @@
 {% macro render_chat_card(chat, parent_id=none) %}
-    {# Determine the correct link for the chat or topic #}
-    {% set link = "/chat/" ~ chat.id %}
-    {% if chat.type.value == 'forum' %}
-        {% set link = "/forum/" ~ chat.id %}
-    {% elif chat.type.value == 'topic' and parent_id is not none %}
-        {% set link = "/chat/" ~ parent_id ~ "/topic/" ~ chat.id %}
-    {% endif %}
+{# Determine the correct link for the chat or topic #}
+{% set link = "/chat/" ~ chat.id %}
+{% if chat.type.value == 'forum' %}
+{% set link = "/forum/" ~ chat.id %}
+{% elif chat.type.value == 'topic' and parent_id is not none %}
+{% set link = "/chat/" ~ parent_id ~ "/topic/" ~ chat.id %}
+{% endif %}
 
-    <a href="{{ link }}" class="chat-card">
-        <div class="chat-content">
-            {# --- Avatar/Icon --- #}
-            {% if chat.type.value == 'topic' %}
-                <div class="avatar" style="background-color: #e0f7fa;">
-                    {% if chat.icon_emoji %}
-                        {{ chat.icon_emoji }}
-                    {% else %}
-                        {{ chat.name[0] | upper }}
-                    {% endif %}
-                </div>
-            {% elif chat.image_url %}
-                <img src="{{ chat.image_url }}" class="avatar" alt="Avatar">
+<a href="{{ link }}" class="chat-card" data-chat-type="{{ chat.type.value }}">
+    <div class="chat-content">
+        {# --- Avatar/Icon --- #}
+        {% if chat.type.value == 'topic' %}
+        <div class="avatar" style="background-color: #e0f7fa;">
+            {% if chat.icon_emoji %}
+            {{ chat.icon_emoji }}
             {% else %}
-                <div class="avatar">{{ chat.name[0] | upper }}</div>
+            {{ chat.name[0] | upper }}
+            {% endif %}
+        </div>
+        {% elif chat.image_url %}
+        <img src="{{ chat.image_url }}" class="avatar" alt="Avatar">
+        {% else %}
+        <div class="avatar">{{ chat.name[0] | upper }}</div>
+        {% endif %}
+
+        {# --- Chat Info --- #}
+        <div class="chat-info">
+            {% if chat.type.value != 'topic' %}
+            <div class="chat-header">
+                <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
+                <span class="badge">{{ chat.type.value }}</span>
+            </div>
+            {% else %}
+            <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
             {% endif %}
 
-            {# --- Chat Info --- #}
-            <div class="chat-info">
-                {% if chat.type.value != 'topic' %}
-                <div class="chat-header">
-                    <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
-                    <span class="badge">{{ chat.type.value }}</span>
-                </div>
-                {% else %}
-                <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
-                {% endif %}
-
-                <div class="preview">
-                    {{ chat.last_message_preview or 'No messages' }}
-                </div>
+            <div class="preview">
+                {{ chat.last_message_preview or 'No messages' }}
             </div>
         </div>
+    </div>
 
-        {# --- Meta/Unread Count --- #}
-        {% if chat.unread_count > 0 %}
-            {% if chat.type.value != 'topic' %}
-            <div class="meta">
-            {% endif %}
-
-                <div class="unread">
-                    {% if chat.type.value == 'forum' and chat.unread_topics_count is not none and chat.unread_topics_count > 0 %}
-                        {{ chat.unread_count }} ({{ chat.unread_topics_count }} topics)
-                    {% else %}
-                        {{ chat.unread_count }}
-                    {% endif %}
-                </div>
-
-            {% if chat.type.value != 'topic' %}
-            </div>
-            {% endif %}
+    {# --- Meta/Unread Count --- #}
+    {% if chat.unread_count > 0 %}
+    {% if chat.type.value != 'topic' %}
+    <div class="meta">
         {% endif %}
-    </a>
+
+        <div class="unread">
+            {% if chat.type.value == 'forum' %}
+            {% if chat.unread_topics_count and chat.unread_topics_count > 0 %}
+            {{ chat.unread_count }} ({{ chat.unread_topics_count }} topics)
+            {% else %}
+            {{ chat.unread_count }}
+            {% endif %}
+            {% else %}
+            {{ chat.unread_count }}
+            {% endif %}
+        </div>
+
+        {% if chat.type.value != 'topic' %}
+    </div>
+    {% endif %}
+    {% endif %}
+</a>
 {% endmacro %}
