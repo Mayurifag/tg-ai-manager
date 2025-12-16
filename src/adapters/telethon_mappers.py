@@ -1,6 +1,7 @@
 from typing import Any, Optional, Dict
 from telethon.tl.types import MessageService
 from telethon import utils
+from html import unescape as html_unescape
 from src.domain.models import ChatType
 
 def map_telethon_dialog_to_chat_type(d: Any) -> ChatType:
@@ -24,9 +25,12 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if not text:
         return "Media/Sticker"
 
+    text = html_unescape(text) # UNESCAPE HTML entities like &quot;
     text = text.replace('\n', ' ')
-    if len(text) > 50:
-        text = text[:47] + "..."
+
+    MAX_LENGTH = 100
+    if len(text) > MAX_LENGTH:
+        text = text[:(MAX_LENGTH - 3)] + "..."
 
     prefix = ""
     if chat_type == ChatType.GROUP:
@@ -38,9 +42,10 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
         reply_to = getattr(message, 'reply_to', None)
         if reply_to:
             tid = getattr(reply_to, 'reply_to_msg_id', None) or getattr(reply_to, 'reply_to_top_id', None)
-            topic_name = topic_map.get(tid)
-            if topic_name:
-                 prefix = f"{topic_name}: "
+            if tid is not None:
+                topic_name = topic_map.get(tid)
+                if topic_name:
+                     prefix = f"{topic_name}: "
     elif chat_type == ChatType.TOPIC:
         sender = getattr(message, 'sender', None)
         if sender:

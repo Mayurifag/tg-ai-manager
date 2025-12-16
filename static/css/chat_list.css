@@ -4,6 +4,12 @@
     gap: 0.5rem;
 }
 
+.chat-card-wrapper[data-is-pinned="true"] .chat-card {
+    background: #fffdf5; /* Subtle off-white/yellow */
+    border-left: 3px solid #fbc02d; /* Highlight left border */
+    padding-left: calc(0.75rem - 3px); /* Adjust padding for border */
+}
+
 .chat-card {
     background: white;
     border: 1px solid #ddd;
