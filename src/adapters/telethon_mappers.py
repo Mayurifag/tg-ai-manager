@@ -1,5 +1,5 @@
 from typing import Any, Optional, Dict
-from telethon.tl.types import MessageService
+from telethon.tl.types import MessageService, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio
 from telethon import utils
 from html import unescape as html_unescape
 from src.domain.models import ChatType
@@ -22,8 +22,51 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
         return "Service message"
 
     text = getattr(message, 'message', '')
-    if not text:
-        return "Media/Sticker"
+
+    # Handle Media Previews
+    media = getattr(message, 'media', None)
+    media_text = ""
+
+    if media:
+        if isinstance(media, MessageMediaPhoto):
+            media_text = "📷 Photo"
+        elif isinstance(media, MessageMediaDocument):
+            if hasattr(media, 'document'):
+                # Check attributes
+                for attr in getattr(media.document, 'attributes', []):
+                    if isinstance(attr, DocumentAttributeSticker):
+                        emoji = attr.alt or ""
+                        media_text = f"{emoji} Sticker" if emoji else "Sticker"
+                        break
+                    elif isinstance(attr, DocumentAttributeVideo):
+                        media_text = "📹 Video"
+                        break
+                    elif isinstance(attr, DocumentAttributeAudio):
+                        if getattr(attr, 'voice', False):
+                            media_text = "🎤 Voice Message"
+                        else:
+                            performer = getattr(attr, 'performer', '')
+                            title = getattr(attr, 'title', '')
+                            if performer and title:
+                                media_text = f"🎵 {performer} - {title}"
+                            elif title:
+                                media_text = f"🎵 {title}"
+                            else:
+                                media_text = "🎵 Music"
+                        break
+
+                # If still empty, generic document
+                if not media_text:
+                    media_text = "📄 Document"
+
+    # If text is present, show text. If text is empty, show media description.
+    if not text and media_text:
+        text = media_text
+    elif text and media_text:
+        # Prioritize text but maybe indicator? For now just text
+        pass
+    elif not text and not media_text:
+        text = "Media/Sticker"
 
     text = html_unescape(text) # UNESCAPE HTML entities like &quot;
     text = text.replace('\n', ' ')

@@ -28,6 +28,11 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
+        """Downloads the media for a message and returns cache path."""
+        pass
+
+    @abstractmethod
     def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         """Register a callback for system events."""
         pass

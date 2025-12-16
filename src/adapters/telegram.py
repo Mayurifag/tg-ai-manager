@@ -7,7 +7,7 @@ from telethon import TelegramClient, functions, utils, events
 from telethon.extensions import html
 from telethon.tl import types
 from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
-from telethon.tl.types import InputDialogPeer
+from telethon.tl.types import InputDialogPeer, MessageMediaPhoto, MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeVideo, DocumentAttributeAudio
 from src.domain.ports import ChatRepository
 from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
@@ -22,6 +22,7 @@ class ITelethonClient(Protocol):
     def get_messages(self, entity: Any, limit: int = 20, reply_to: int | None = None, ids: List[int] | None = None, offset_id: int = 0) -> Awaitable[Any]: ...
     def get_entity(self, entity: Any) -> Awaitable[Any]: ...
     def download_profile_photo(self, entity: Any, file: Any = None, download_big: bool = False) -> Awaitable[Any]: ...
+    def download_media(self, message: Any, file: Any = None, thumb: Any = None) -> Awaitable[Any]: ...
     def __call__(self, request: Any) -> Awaitable[Any]: ...
     def add_event_handler(self, callback: Any, event: Any): ...
 
@@ -90,7 +91,19 @@ class TelethonAdapter(ChatRepository):
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
             topic_id = self._extract_topic_id(event.message)
-            preview = (domain_msg.text[:75] + '...') if len(domain_msg.text) > 75 else domain_msg.text
+
+            # Simple text preview for the event text
+            preview = domain_msg.text
+            if not preview and domain_msg.has_media:
+                 if domain_msg.is_sticker: preview = f"{domain_msg.sticker_emoji or ''} Sticker"
+                 elif domain_msg.is_video: preview = "📹 Video"
+                 elif domain_msg.is_audio:
+                     if domain_msg.is_voice: preview = "🎤 Voice"
+                     else: preview = f"🎵 {domain_msg.audio_performer or ''} - {domain_msg.audio_title or 'Music'}"
+                 else: preview = "📷 Media"
+
+            if len(preview) > 75:
+                 preview = preview[:75] + '...'
 
             sys_event = SystemEvent(
                 type="message",
@@ -116,9 +129,12 @@ class TelethonAdapter(ChatRepository):
                 chat_name = utils.get_display_name(chat)
             except: pass
 
-            text = self._extract_text(event.message)
-            if not text: text = "[Media]"
-            preview = (text[:75] + '...') if len(text) > 75 else text
+            domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
+            preview = domain_msg.text
+            if not preview and domain_msg.has_media:
+                 preview = "Media/Sticker"
+            if len(preview) > 75: preview = preview[:75] + '...'
+
             topic_id = self._extract_topic_id(event.message)
 
             sys_event = SystemEvent(
@@ -128,7 +144,7 @@ class TelethonAdapter(ChatRepository):
                 chat_id=event.chat_id,
                 topic_id=topic_id,
                 link=f"/chat/{event.chat_id}",
-                message_model=await self._parse_message(event.message, chat_id=event.chat_id)
+                message_model=domain_msg
             )
             await self._dispatch(sys_event)
         except Exception as e:
@@ -213,6 +229,79 @@ class TelethonAdapter(ChatRepository):
             result = await self.client.download_profile_photo(entity, file=path, download_big=False)
             if result: return f"/cache/{filename}"
         except Exception: pass
+        return None
+
+    async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
+        """
+        Downloads media for a specific message on demand.
+        Returns the relative path to the cached file.
+        """
+        try:
+            entity = await self.client.get_entity(chat_id)
+            message = await self.client.get_messages(entity, ids=message_id)
+
+            if not message or not message.media:
+                return None
+
+            # Determine extension
+            ext = "jpg" # Default
+
+            # Use Telethon utils to guess extension from mime_type
+            guessed_ext = utils.get_extension(message.media)
+            if guessed_ext:
+                ext = guessed_ext.lstrip('.')
+
+            # Fallbacks / Specific overrides
+            if hasattr(message.media, 'document'):
+                 if hasattr(message.media.document, 'mime_type'):
+                     if 'webp' in message.media.document.mime_type:
+                         ext = "webp"
+                     elif 'audio/ogg' in message.media.document.mime_type:
+                         ext = "ogg"
+                     elif 'audio/mpeg' in message.media.document.mime_type:
+                         ext = "mp3"
+                     elif 'video/mp4' in message.media.document.mime_type:
+                         ext = "mp4"
+
+            filename = f"media_{chat_id}_{message_id}.{ext}"
+            path = os.path.join(self.images_dir, filename)
+
+            if os.path.exists(path):
+                return f"/cache/{filename}"
+
+            # Download Logic
+            # 'thumb' kwarg: 0, 1, 2 for sizes, or 'm', 's'.
+
+            is_sticker = False
+            is_audio = False
+            is_video = False
+
+            if isinstance(message.media, MessageMediaDocument):
+                 for attr in getattr(message.media.document, 'attributes', []):
+                      if isinstance(attr, DocumentAttributeSticker):
+                           is_sticker = True
+                      if isinstance(attr, DocumentAttributeAudio):
+                           is_audio = True
+                      if isinstance(attr, DocumentAttributeVideo):
+                           is_video = True
+
+            result = None
+            if is_sticker or is_audio or is_video:
+                 # Download full file for stickers, audio, and video
+                 result = await self.client.download_media(message, file=path)
+            else:
+                 # Try downloading thumbnail first (for photos)
+                 result = await self.client.download_media(message, file=path, thumb='m')
+                 if not result:
+                     result = await self.client.download_media(message, file=path)
+
+            if result:
+                 # Ensure result path is correct in case telethon changed extension
+                 final_filename = os.path.basename(result)
+                 return f"/cache/{final_filename}"
+
+        except Exception as e:
+            print(f"Error downloading media {chat_id}/{message_id}: {e}")
         return None
 
     def _get_sender_color(self, sender: Any, sender_id: int) -> str:
@@ -382,7 +471,34 @@ class TelethonAdapter(ChatRepository):
 
         replies_map = replies_map or {}
         text = self._extract_text(msg)
-        if not text: text = "[Media/Sticker]"
+
+        # Check Media
+        has_media = bool(msg.media)
+        is_video = False
+        is_sticker = False
+        sticker_emoji = None
+
+        # Audio
+        is_audio = False
+        is_voice = False
+        audio_title = None
+        audio_performer = None
+        audio_duration = None
+
+        if has_media:
+            if isinstance(msg.media, MessageMediaDocument):
+                for attr in getattr(msg.media.document, 'attributes', []):
+                    if isinstance(attr, DocumentAttributeVideo):
+                        is_video = True
+                    elif isinstance(attr, DocumentAttributeSticker):
+                        is_sticker = True
+                        sticker_emoji = attr.alt
+                    elif isinstance(attr, DocumentAttributeAudio):
+                        is_audio = True
+                        is_voice = getattr(attr, 'voice', False)
+                        audio_title = getattr(attr, 'title', None)
+                        audio_performer = getattr(attr, 'performer', None)
+                        audio_duration = getattr(attr, 'duration', None)
 
         sender_name = "Unknown"
         sender_id = 0
@@ -426,7 +542,11 @@ class TelethonAdapter(ChatRepository):
             is_outgoing=getattr(msg, 'out', False), sender_id=sender_id,
             avatar_url=avatar_url, sender_color=sender_color,
             sender_initials=sender_initials, reply_to_msg_id=reply_to_msg_id,
-            reply_to_text=reply_to_text, reply_to_sender_name=reply_to_sender
+            reply_to_text=reply_to_text, reply_to_sender_name=reply_to_sender,
+            has_media=has_media, is_video=is_video, is_sticker=is_sticker,
+            sticker_emoji=sticker_emoji,
+            is_audio=is_audio, is_voice=is_voice,
+            audio_title=audio_title, audio_performer=audio_performer, audio_duration=audio_duration
         )
 
     async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:

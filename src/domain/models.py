@@ -36,6 +36,17 @@ class Message:
     reply_to_msg_id: Optional[int] = None
     reply_to_text: Optional[str] = None
     reply_to_sender_name: Optional[str] = None
+    # Media fields
+    has_media: bool = False
+    is_video: bool = False
+    is_sticker: bool = False
+    sticker_emoji: Optional[str] = None
+    # Audio fields
+    is_audio: bool = False
+    is_voice: bool = False
+    audio_title: Optional[str] = None
+    audio_performer: Optional[str] = None
+    audio_duration: Optional[int] = None # Seconds
 
 @dataclass
 class SystemEvent:
@@ -44,9 +55,7 @@ class SystemEvent:
     chat_name: str
     date: datetime = field(default_factory=datetime.now)
     chat_id: Optional[int] = None
-    topic_id: Optional[int] = None  # Added topic_id
+    topic_id: Optional[int] = None
     link: Optional[str] = None
-    # The raw message object (optional)
     message_model: Optional[Message] = None
-    # The pre-rendered HTML for this event (optional, populated by app layer)
     rendered_html: Optional[str] = None
