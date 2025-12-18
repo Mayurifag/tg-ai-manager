@@ -49,24 +49,26 @@
     padding: 0.6rem 1rem;
     border-radius: 12px;
     position: relative;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .message-row.incoming .message-bubble {
-    background: white;
+    background: #2a2a2c;
     border-bottom-left-radius: 2px;
+    color: #e0e0e0;
 }
 
 .message-row.outgoing .message-bubble {
-    background: #e3f2fd;
+    background: #004a99;
     border-bottom-right-radius: 2px;
+    color: white;
 }
 
 .reply-indicator {
     display: block;
-    background-color: rgba(0,0,0,0.05);
+    background-color: rgba(255,255,255,0.05);
     padding: 4px 8px;
-    border-left: 3px solid #1976d2;
+    border-left: 3px solid #6ab7ff;
     border-radius: 4px;
     margin-bottom: 6px;
     text-decoration: none;
@@ -75,7 +77,7 @@
 }
 
 .reply-indicator:hover {
-    background-color: rgba(0,0,0,0.1);
+    background-color: rgba(255,255,255,0.1);
 }
 
 .reply-content {
@@ -87,7 +89,7 @@
 .reply-name {
     font-size: 0.75rem;
     font-weight: bold;
-    color: #1976d2;
+    color: #6ab7ff;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -96,7 +98,7 @@
 
 .reply-text {
     font-size: 0.8rem;
-    color: #666;
+    color: #aaa;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -104,7 +106,7 @@
 
 .sender {
     font-size: 0.8rem;
-    color: #1976d2;
+    color: #6ab7ff;
     font-weight: bold;
     margin-bottom: 0.2rem;
     display: block;
@@ -127,6 +129,7 @@
 .inline-media {
     transition: opacity 0.3s;
 }
+
 .inline-media:hover {
     opacity: 0.9;
 }
@@ -139,13 +142,12 @@
 }
 
 .service-message-bubble {
-    background-color: rgba(0, 0, 0, 0.2);
-    color: white;
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #ddd;
     padding: 4px 12px;
     border-radius: 12px;
     font-size: 0.85rem;
     text-align: center;
     max-width: 80%;
     font-weight: 500;
-    text-shadow: 0 1px 1px rgba(0,0,0,0.1);
 }

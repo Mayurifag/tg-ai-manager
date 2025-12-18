@@ -10,8 +10,8 @@ Forum Topics
 {% endblock %}
 
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/chat_list.css">
-<link rel="stylesheet" href="/static/css/forum_styles.css">
+<link rel="stylesheet" href="/static/css/chat_list.css?t={{ 'static/css/chat_list.css' | file_mtime }}">
+<link rel="stylesheet" href="/static/css/forum_styles.css?t={{ 'static/css/forum_styles.css' | file_mtime }}">
 {% endblock %}
 
 {% block sidebar_back %}
@@ -53,7 +53,7 @@ Forum Topics
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({})
             });
-        } catch(e) {
+        } catch (e) {
             console.error(e);
         } finally {
             setTimeout(() => {
@@ -77,8 +77,8 @@ Forum Topics
 </div>
 
 <div class="chat-list">
-    {% for chat in chats %}
-    {{ cards.render_chat_card(chat, parent_id=parent_id) }}
+    {% for topic in chats %}
+    {{ cards.render_chat_card(topic, parent_id=chat.id) }}
     {% endfor %}
 </div>
 {% endblock %}
