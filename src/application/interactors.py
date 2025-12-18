@@ -28,7 +28,7 @@ class ChatInteractor:
     async def get_chat_messages(self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
         return await self.repository.get_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
 
-    async def mark_chat_as_read(self, chat_id: int, topic_id: Optional[int] = None):
+    async def mark_chat_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
         # 1. Perform Telegram Action
         await self.repository.mark_as_read(chat_id, topic_id)
 
@@ -50,7 +50,6 @@ class ChatInteractor:
             action_name = "read_topic"
 
         elif chat and chat.type == ChatType.FORUM:
-            # If we marked a whole forum read (topic_id=None)
             link = f"/forum/{chat_id}"
             action_name = "read_forum"
 

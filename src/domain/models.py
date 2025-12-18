@@ -55,9 +55,10 @@ class Message:
 
 @dataclass
 class SystemEvent:
-    type: str  # "message", "edited", "deleted", "action"
+    type: str # "message", "edited", "deleted", "action"
     text: str
     chat_name: str
+    topic_name: Optional[str] = None
     date: datetime = field(default_factory=datetime.now)
     chat_id: Optional[int] = None
     topic_id: Optional[int] = None
