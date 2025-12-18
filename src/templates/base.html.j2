@@ -31,7 +31,9 @@
                     <div class="event-item type-{{ event.type }}">
                         <div class="event-header">
                             <span class="event-type">{{ event.type | upper }}</span>
-                            <span class="event-chat">{{ event.chat_name }}</span>
+                            <span class="event-chat" {% if event.topic_name
+                                %}title="{{ event.topic_name }} - {{ event.chat_name }}" {% endif %}>{{ event.chat_name
+                                }}</span>
                         </div>
                         <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
                     </div>
@@ -86,6 +88,9 @@
                 const chatSpan = document.createElement('span');
                 chatSpan.className = 'event-chat';
                 chatSpan.textContent = data.chat_name;
+                if (data.topic_name) {
+                    chatSpan.title = `${data.topic_name} - ${data.chat_name}`;
+                }
 
                 header.appendChild(typeSpan);
                 header.appendChild(chatSpan);

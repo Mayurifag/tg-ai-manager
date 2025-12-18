@@ -18,15 +18,11 @@ class RuleService:
         if event.type != "message" or not event.message_model:
             return
 
-        # Only handle regular text/media messages (skip service, edited, etc.)
         if event.message_model.is_service:
             return
 
         if await self.is_autoread_enabled(event.chat_id, event.topic_id):
             chat_name = event.chat_name
-            if event.topic_id:
-                # We don't fetch topic name here to avoid extra API calls in hot path
-                chat_name = f"Topic {event.topic_id} - {chat_name}"
 
             log = ActionLog(
                 action="would_autoread",
@@ -59,11 +55,8 @@ class RuleService:
             return new_rule
 
     async def apply_autoread_to_all_topics(self, forum_id: int, enabled: bool):
-        # First toggle the main chat rule (applies to general topic)
         await self.toggle_autoread(forum_id, None, enabled)
 
-        # Get all current topics and create rules for each
-        # Note: This uses the interactor temporarily – in future we can inject ChatRepository
         from src.container import get_chat_interactor
         interactor = get_chat_interactor()
         topics = await interactor.get_forum_topics(forum_id)

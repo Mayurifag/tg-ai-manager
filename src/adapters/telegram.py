@@ -89,6 +89,13 @@ class TelethonAdapter(ChatRepository):
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
             topic_id = self._extract_topic_id(event.message)
+            topic_name = None
+            if topic_id:
+                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+
+            display_chat_name = chat_name
+            if topic_name:
+                display_chat_name = f"{topic_name} - {chat_name}"
 
             preview = domain_msg.text
             if not preview and domain_msg.has_media:
@@ -97,7 +104,7 @@ class TelethonAdapter(ChatRepository):
                  elif domain_msg.is_audio:
                      if domain_msg.is_voice: preview = "🎤 Voice"
                      else: preview = f"🎵 {domain_msg.audio_performer or ''} - {domain_msg.audio_title or 'Music'}"
-                 elif domain_msg.is_poll: # <-- Handle Poll in live event preview
+                 elif domain_msg.is_poll:
                      preview = f"Poll: {domain_msg.poll_question or 'Unknown Poll'}"
                  else: preview = "📷 Media"
 
@@ -107,7 +114,8 @@ class TelethonAdapter(ChatRepository):
             sys_event = SystemEvent(
                 type="message",
                 text=preview,
-                chat_name=chat_name,
+                chat_name=display_chat_name,
+                topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
                 link=f"/chat/{event.chat_id}",
@@ -135,11 +143,19 @@ class TelethonAdapter(ChatRepository):
             if len(preview) > 75: preview = preview[:75] + '...'
 
             topic_id = self._extract_topic_id(event.message)
+            topic_name = None
+            if topic_id:
+                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+
+            display_chat_name = chat_name
+            if topic_name:
+                display_chat_name = f"{topic_name} - {chat_name}"
 
             sys_event = SystemEvent(
                 type="edited",
                 text=preview,
-                chat_name=chat_name,
+                chat_name=display_chat_name,
+                topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
                 link=f"/chat/{event.chat_id}",
@@ -177,6 +193,7 @@ class TelethonAdapter(ChatRepository):
                     type="deleted",
                     text="Message deleted",
                     chat_name=chat_name,
+                    topic_name=None,
                     chat_id=chat_id,
                     link=f"/chat/{chat_id}" if chat_id else "#",
                     message_model=Message(
@@ -207,6 +224,7 @@ class TelethonAdapter(ChatRepository):
                 type="action",
                 text=text,
                 chat_name=chat_name,
+                topic_name=None,
                 chat_id=event.chat_id,
                 link=f"/chat/{event.chat_id}"
             )
@@ -460,10 +478,9 @@ class TelethonAdapter(ChatRepository):
         poll_question = None
 
         if has_media:
-            if isinstance(media, MessageMediaPoll): # <-- Handle Poll
+            if isinstance(media, MessageMediaPoll):
                 is_poll = True
                 poll = media.poll
-                # poll.question is a DataJSON structure
                 poll_question = getattr(poll.question, 'text', 'Poll')
             elif isinstance(media, MessageMediaDocument):
                 for attr in getattr(media.document, 'attributes', []):
@@ -478,12 +495,12 @@ class TelethonAdapter(ChatRepository):
                         audio_title = getattr(attr, 'title', None)
                         audio_performer = getattr(attr, 'performer', None)
                         audio_duration = getattr(attr, 'duration', None)
-            # Other media types are implicitly handled by has_media = True
 
         sender_name = "Unknown"
         sender_id = 0
         avatar_url = None
         sender_initials = "?"
+        sender_color = "#ccc"
 
         if getattr(msg, 'from_id', None):
              if isinstance(msg.from_id, types.PeerUser): sender_id = msg.from_id.user_id
@@ -585,8 +602,6 @@ class TelethonAdapter(ChatRepository):
     async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
         try:
             entity = await self.client.get_entity(chat_id)
-            # Use raw client to fetch message object (not parsed domain object)
-            # ids=[topic_id] to return a List (TotalList)
             messages = await self.client.get_messages(entity, ids=[topic_id])
 
             if messages:
@@ -602,11 +617,9 @@ class TelethonAdapter(ChatRepository):
         try:
             entity = await self.client.get_entity(chat_id)
             if topic_id:
-                # Fetch latest message to get the max_id
                 msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
                 max_id = msgs[0].id if msgs else topic_id
 
-                # Use the raw API request to read a specific thread/topic
                 await self.client(functions.messages.ReadDiscussionRequest(
                     peer=entity,
                     msg_id=topic_id,
