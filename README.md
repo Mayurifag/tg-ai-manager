@@ -60,6 +60,5 @@ Open <http://localhost:8000>
 - database with settings for future - which chat which rule has. Rules might change so keep them in another table
 - Add rule for topics - autoread. Make it copyable to all other topics button. I need by topic autoread.
 - Add global setting field with tooltip to autoread pinned events, someone entered or removed from chat, etc.
-- Long page loads sometimes - is that only because of not lazyloaded pictures? Research if we can lazy load also media things. even "back to chats" lags smtmes
-- More logging
-- saving msgs in valkey/[dramatiq](https://dramatiq.io/)
+- Long page loads sometimes - is that only because of not lazyloaded pictures? Research if we can lazy load also media things. even "back to chats" lags smtmes. More logging
+- saving msgs in valkey/[dramatiq](https://dramatiq.io/)? Seems I do not need this for now

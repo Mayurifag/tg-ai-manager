@@ -39,10 +39,48 @@ Messages
 {% endblock %}
 
 {% block settings %}
-<div class="setting-option" id="btn-read-chat" style="color: #2e7d32; font-weight: 500;">
+<div class="setting-option">
+    <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
+        <input type="checkbox" id="autoread-checkbox" {% if autoread_enabled %}checked{% endif %}>
+        <span style="margin-left: 8px;">Autoread messages</span>
+    </label>
+</div>
+
+{% if topic_id %}
+<div class="setting-option" id="apply-all-topics" style="margin-top: 12px; color: #ff9800; font-weight: 500;">
+    Apply to all topics in forum
+</div>
+{% endif %}
+
+<div class="setting-option" id="btn-read-chat" style="margin-top: 20px; color: #2e7d32; font-weight: 500;">
     ✅ Mark as Read
 </div>
+
 <script>
+    const chatId = {{ chat_id }};
+    const topicId = {{ topic_id or 'null' }};
+
+    document.getElementById('autoread-checkbox').addEventListener('change', async (e) => {
+        const enabled = e.target.checked;
+        await fetch('/api/rules/autoread/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, topic_id: topicId, enabled })
+        });
+    });
+
+    {% if topic_id %}
+    document.getElementById('apply-all-topics').addEventListener('click', async () => {
+        const checkbox = document.getElementById('autoread-checkbox');
+        const enabled = checkbox.checked;
+        await fetch('/api/rules/autoread/apply_all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ forum_id: chatId, enabled })
+        });
+    });
+    {% endif %}
+
     document.getElementById('btn-read-chat').addEventListener('click', async () => {
         const btn = document.getElementById('btn-read-chat');
         btn.style.opacity = '0.5';
@@ -78,7 +116,6 @@ Messages
 
 <script>
     const container = document.getElementById('messages-container');
-    const chatId = {{ chat_id }};
     const currentTopicId = {{ topic_id or 'null' }};
     let isLoading = false;
     let allLoaded = false;
