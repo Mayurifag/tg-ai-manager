@@ -5,14 +5,14 @@
 }
 
 .chat-card-wrapper[data-is-pinned="true"] .chat-card {
-    background: #fffdf5; /* Subtle off-white/yellow */
-    border-left: 3px solid #fbc02d; /* Highlight left border */
-    padding-left: calc(0.75rem - 3px); /* Adjust padding for border */
+    background: #2a2a2c;
+    border-left: 3px solid #fbc02d;
+    padding-left: calc(0.75rem - 3px);
 }
 
 .chat-card {
-    background: white;
-    border: 1px solid #ddd;
+    background: #1e1e20;
+    border: 1px solid #333;
     padding: 0.75rem;
     border-radius: 8px;
     display: flex;
@@ -20,11 +20,12 @@
     align-items: center;
     text-decoration: none;
     color: inherit;
-    transition: box-shadow 0.2s;
+    transition: box-shadow 0.2s, background 0.2s;
 }
 
 .chat-card:hover {
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    background: #262628;
 }
 
 .chat-content {
@@ -46,10 +47,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: #fff;
 }
 
 .preview {
-    color: #666;
+    color: #aaa;
     font-size: 0.9rem;
     white-space: nowrap;
     overflow: hidden;
@@ -57,10 +59,10 @@
 }
 
 .unread {
-    color: #d32f2f;
+    color: #ff6b6b;
     font-weight: bold;
     font-size: 0.9rem;
-    background: #ffebee;
+    background: #3a1c1c;
     padding: 2px 8px;
     border-radius: 12px;
 }

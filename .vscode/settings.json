@@ -14,9 +14,7 @@
         "**/cache": true
     },
     "codeWebChat.ignorePatterns": [
-        "/uv.lock",
-        "/.vscode",
-        "__pycache__"
+        "/uv.lock"
     ],
     "codeWebChat.editContextSystemInstructions": "You're making code for my project. NEVER add comments or descriptions in code."
 }

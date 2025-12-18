@@ -7,8 +7,11 @@ from datetime import datetime
 from quart import Quart, render_template, send_from_directory, request, jsonify, make_response, render_template_string, redirect
 from src.container import get_chat_interactor
 from src.domain.models import SystemEvent
+from src.jinja_filters import file_mtime_filter
 
 app = Quart(__name__)
+
+file_mtime_filter(app)
 
 STATIC_DIR = os.path.join(os.getcwd(), "static")
 IMAGES_DIR = os.path.join(os.getcwd(), "cache")
@@ -16,37 +19,23 @@ CSS_DIR = os.path.join(STATIC_DIR, "css")
 os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(CSS_DIR, exist_ok=True)
 
-# Connected SSE clients
 connected_queues = set()
 
 def json_serializer(obj):
     if isinstance(obj, datetime):
         return obj.isoformat()
-    # Check if it's an instance, not a class type
     if is_dataclass(obj) and not isinstance(obj, type):
         return asdict(obj)
     raise TypeError(f"Type {type(obj)} not serializable")
 
 async def broadcast_event(event: SystemEvent):
-    """Pushes a new event to all connected SSE clients."""
-
-    # Pre-render HTML for messages
     if event.type == "message" and event.message_model:
-        # We pass a list of 1 message to reuse the loop template
-        # Must pass chat_id for media links
         event.rendered_html = await render_template(
             "chat/messages_partial.html.j2",
             messages=[event.message_model],
             chat_id=event.chat_id
         )
-    # Also render for Edited messages so we can replace the bubble text
-    elif event.type == "edited" and event.message_model:
-        # For edits, we might only need the text content, but keeping it consistent
-        # We won't use the full partial for replacement, but having the model data available is key.
-        # Use the same template effectively creates a replacement node.
-        pass
 
-    # Manual serialization using custom default
     data = json.dumps(asdict(event), default=json_serializer)
 
     for queue in connected_queues:
@@ -54,7 +43,6 @@ async def broadcast_event(event: SystemEvent):
 
 @app.before_serving
 async def startup():
-    # Reset DB on start
     if os.path.exists("actions.db"):
         try:
             os.remove("actions.db")
@@ -69,18 +57,12 @@ async def startup():
 @app.after_serving
 async def shutdown():
     interactor = get_chat_interactor()
-    # Disconnect Telegram client
     await interactor.shutdown()
 
-    # Gracefully close all SSE connections by sending a kill signal (None)
     put_tasks = [queue.put(None) for queue in list(connected_queues)]
     if put_tasks:
-        # Await all put operations to ensure the signal is delivered
         await asyncio.gather(*put_tasks, return_exceptions=True)
 
-    # Give the generators a brief moment to process 'None', exit, and clean up.
-    # This short delay often resolves Ctrl+C hang issues in async web servers
-    # with open connections.
     await asyncio.sleep(0.5)
 
     connected_queues.clear()
@@ -102,12 +84,10 @@ async def event_stream():
         try:
             while True:
                 data = await queue.get()
-                # Check for kill signal
                 if data is None:
                     break
                 yield f"data: {data}\n\n"
         except asyncio.CancelledError:
-            # Client disconnected manually (e.g. closing tab)
             pass
         finally:
             if queue in connected_queues:
@@ -115,7 +95,6 @@ async def event_stream():
 
     response = await make_response(generator())
 
-    # Avoid Pylance error for dynamic attribute assignment
     setattr(response, 'timeout', None)
 
     response.headers['Content-Type'] = 'text/event-stream'
@@ -129,11 +108,7 @@ async def serve_images(filename):
 
 @app.route("/media/<int(signed=True):chat_id>/<int(signed=True):msg_id>")
 async def get_message_media(chat_id: int, msg_id: int):
-    """Lazy load media for a message."""
     interactor = get_chat_interactor()
-
-    # Try to find if file already exists in cache with a pattern (since we don't know extension easily)
-    # Actually, the adapter handles the cache logic and returns a path like "/cache/..."
 
     public_path = await interactor.get_media_path(chat_id, msg_id)
     if public_path:
@@ -205,17 +180,25 @@ async def mark_read(chat_id: int):
 
 @app.route("/api/chat/<int(signed=True):chat_id>/card")
 async def api_get_chat_card(chat_id: int):
-    """Fetches a rendered HTML card for a specific chat."""
     interactor = get_chat_interactor()
     chat = await interactor.get_chat(chat_id)
     if not chat:
         return "Chat not found", 404
 
-    # Render using the existing macro. We wrap it in a string template to use 'import'.
-    template = """
-    {% import "macros/chat_card.html.j2" as cards %}
-    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">
-        {{ cards.render_chat_card(chat) }}
-    </div>
+    template = """\
+    {% import "macros/chat_card.html.j2" as cards %}\
+    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">\
+        {{ cards.render_chat_card(chat) }}\
+    </div>\
     """
     return await render_template_string(template, chat=chat)
+
+@app.route("/api/forum/<int(signed=True):chat_id>/topic/<int(signed=True):topic_id>/card")
+async def api_get_topic_card(chat_id: int, topic_id: int):
+    interactor = get_chat_interactor()
+    topics = await interactor.get_forum_topics(chat_id)
+    topic = next((t for t in topics if t.id == topic_id), None)
+    if not topic:
+        return "Topic not found", 404
+
+    return await render_template("forum/topic_card_partial.html.j2", topic=topic, parent_id=chat_id)

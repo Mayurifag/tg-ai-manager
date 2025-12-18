@@ -55,10 +55,11 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- Live updates seem not to work for topics in forums - so when new message arrives, it is not updated
-- database with settings for future - which chat which rule has. Rules might change so keep them in another table
-- Add global setting field with tooltip to autoread pinned events, someone entered or removed from chat, etc.
 - refactoring. Plan is: Look at my repository and give me plan what could you make in my app better - I mean DRY or splitting big files or else, give me plan. Maybe there are too much smelly code and so on. eliminate tech debt
+- Research: if second device read some message, how first device knows it? Is that some event coming?
+- database with settings for future - which chat which rule has. Rules might change so keep them in another table
+- Add rule for topics - autoread. Make it copyable to all other topics button. I need by topic autoread.
+- Add global setting field with tooltip to autoread pinned events, someone entered or removed from chat, etc.
 - Long page loads sometimes - is that only because of not lazyloaded pictures? Research if we can lazy load also media things. even "back to chats" lags smtmes
 - More logging
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/)

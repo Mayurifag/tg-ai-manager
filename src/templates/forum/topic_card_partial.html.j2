@@ -1,0 +1,4 @@
+{% import "macros/chat_card.html.j2" as cards %}
+<div class="chat-card-wrapper" data-chat-id="{{ topic.id }}">
+    {{ cards.render_chat_card(topic, parent_id=parent_id) }}
+</div>

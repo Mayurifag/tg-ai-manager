@@ -9,7 +9,7 @@ Messages
 {% endblock %}
 
 {% block head_extra %}
-<link rel="stylesheet" href="/static/css/chat_styles.css?v={{ range(1, 10000) | random }}">
+<link rel="stylesheet" href="/static/css/chat_styles.css?t={{ 'static/css/chat_styles.css' | file_mtime }}">
 {% endblock %}
 
 {% block sidebar_back %}
@@ -28,7 +28,7 @@ Messages
         style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 10px;">
     {% else %}
     <div
-        style="width: 80px; height: 80px; border-radius: 50%; background: #ddd; margin: 0 auto 10px auto; display: flex; align-items: center; justify-content: center; font-size: 2rem;">
+        style="width: 80px; height: 80px; border-radius: 50%; background: #333; margin: 0 auto 10px auto; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #aaa;">
         {{ chat.name[0] | upper }}
     </div>
     {% endif %}
@@ -58,7 +58,6 @@ Messages
         } catch (e) {
             console.error(e);
         } finally {
-            // Re-enable after a short delay
             setTimeout(() => {
                 btn.style.opacity = '1';
                 btn.style.pointerEvents = 'auto';
@@ -86,7 +85,6 @@ Messages
 
     window.scrollTo(0, document.body.scrollHeight);
 
-    // Infinite Scroll
     window.addEventListener('scroll', () => {
         if (isLoading || allLoaded) return;
         if (window.scrollY < 100) {
@@ -131,16 +129,11 @@ Messages
         }
     }
 
-    // Live Updates
     document.addEventListener('tg:event', (e) => {
         const data = e.detail;
 
-        // Ensure update belongs to this chat
         if (data.chat_id !== chatId) return;
 
-        // Ensure update belongs to this topic (if we are in a topic view)
-        // If currentTopicId is null, we show all (unless it's a forum main view, handled elsewhere)
-        // If currentTopicId is set, match against data.topic_id
         if (currentTopicId && data.topic_id !== currentTopicId) {
             return;
         }
@@ -148,7 +141,6 @@ Messages
         if (data.type === 'message') {
             if (data.rendered_html) {
                 container.insertAdjacentHTML('afterbegin', data.rendered_html);
-                // Optional: Scroll to bottom if user is near bottom
                 if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
                     window.scrollTo(0, document.body.scrollHeight);
                 }
@@ -160,10 +152,8 @@ Messages
             if (msgRow) {
                 const textEl = msgRow.querySelector('.text');
                 if (textEl) {
-                    // Update the text content with the new HTML from the message model
                     textEl.innerHTML = data.message_model.text;
 
-                    // Add an 'edited' label if desired
                     if (!msgRow.querySelector('.edited-label')) {
                         const timeEl = msgRow.querySelector('.time');
                         const editedSpan = document.createElement('span');

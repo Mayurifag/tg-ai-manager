@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
+    <meta charset="UTF-8">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-scheme" content="dark">
     <title>{% block title %}Telegram Manager{% endblock %}</title>
-    <link rel="stylesheet" href="/static/css/base.css?v={{ range(1, 10000) | random }}">
+    <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
     {% block head_extra %}{% endblock %}
 </head>
 
@@ -64,11 +67,9 @@
             evtSource.onmessage = function (e) {
                 const data = JSON.parse(e.data);
 
-                // 1. Dispatch global event for other pages to consume
                 const customEvent = new CustomEvent('tg:event', { detail: data });
                 document.dispatchEvent(customEvent);
 
-                // 2. Update Sidebar Feed
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
 
@@ -97,10 +98,8 @@
                 item.appendChild(header);
                 item.appendChild(textDiv);
 
-                // Add to top
                 feedContainer.insertBefore(item, feedContainer.firstChild);
 
-                // Keep only last 5
                 const items = feedContainer.querySelectorAll('.event-item');
                 if (items.length > 5) {
                     items[items.length - 1].remove();

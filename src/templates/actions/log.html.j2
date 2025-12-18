@@ -16,23 +16,23 @@
         .logs-table {
             width: 100%;
             border-collapse: collapse;
-            background: white;
+            background: #1e1e20;
             border-radius: 8px;
             overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
         }
 
         .logs-table th,
         .logs-table td {
             padding: 12px 15px;
             text-align: left;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid #333;
         }
 
         .logs-table th {
-            background-color: #f5f5f5;
+            background-color: #2a2a2c;
             font-weight: 600;
-            color: #444;
+            color: #aaa;
             font-size: 0.9rem;
             text-transform: uppercase;
         }
@@ -42,12 +42,12 @@
         }
 
         .logs-table tr:hover {
-            background-color: #f9f9f9;
+            background-color: #262628;
         }
 
         .log-chat-link {
             text-decoration: none;
-            color: #1976d2;
+            color: #6ab7ff;
             font-weight: 500;
         }
 
@@ -65,13 +65,13 @@
         }
 
         .badge-read {
-            background: #e8f5e9;
-            color: #2e7d32;
+            background: #1e3a2a;
+            color: #4caf50;
         }
 
         .badge-manual {
-            background: #fff3e0;
-            color: #ef6c00;
+            background: #3a2a1e;
+            color: #ff9800;
         }
     </style>
 
@@ -88,7 +88,7 @@
         <tbody>
             {% for log in logs %}
             <tr>
-                <td style="color: #666; font-size: 0.9rem; white-space: nowrap;">
+                <td style="color: #888; font-size: 0.9rem; white-space: nowrap;">
                     {{ log.date.strftime('%Y-%m-%d %H:%M:%S') }}
                 </td>
                 <td>
@@ -113,7 +113,7 @@
         </tbody>
     </table>
     {% else %}
-    <div style="text-align: center; color: #999; padding: 40px;">
+    <div style="text-align: center; color: #777; padding: 40px;">
         No actions recorded yet.
     </div>
     {% endif %}
