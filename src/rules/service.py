@@ -13,7 +13,25 @@ class RuleService:
 
     async def is_autoread_enabled(self, chat_id: int, topic_id: Optional[int] = None) -> bool:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
-        return any(r.rule_type == RuleType.AUTOREAD and r.enabled for r in rules)
+
+        # Priority 1: Check for a specific topic rule if we are in a topic
+        if topic_id is not None:
+            specific_rule = next(
+                (r for r in rules if r.topic_id == topic_id and r.rule_type == RuleType.AUTOREAD),
+                None
+            )
+            if specific_rule:
+                return specific_rule.enabled
+
+        # Priority 2: Check for a chat-wide (global) rule
+        global_rule = next(
+            (r for r in rules if r.topic_id is None and r.rule_type == RuleType.AUTOREAD),
+            None
+        )
+        if global_rule:
+            return global_rule.enabled
+
+        return False
 
     async def handle_new_message_event(self, event: SystemEvent):
         if event.type != "message" or not event.message_model:
@@ -23,10 +41,13 @@ class RuleService:
             return
 
         if await self.is_autoread_enabled(event.chat_id, event.topic_id):
+            # Perform actual read operation
+            await self.chat_repo.mark_as_read(event.chat_id, event.topic_id)
+
             chat_name = event.chat_name
 
             log = ActionLog(
-                action="would_autoread",
+                action="autoread",
                 chat_id=event.chat_id,
                 chat_name=chat_name,
                 reason="autoread_rule",
@@ -37,7 +58,12 @@ class RuleService:
 
     async def toggle_autoread(self, chat_id: int, topic_id: Optional[int], enabled: bool) -> Rule:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
-        autoread_rule = next((r for r in rules if r.rule_type == RuleType.AUTOREAD), None)
+
+        # Find exact match for the requested scope (specific topic or global)
+        autoread_rule = next(
+            (r for r in rules if r.rule_type == RuleType.AUTOREAD and r.topic_id == topic_id),
+            None
+        )
 
         if autoread_rule:
             autoread_rule.enabled = enabled
@@ -56,8 +82,10 @@ class RuleService:
             return new_rule
 
     async def apply_autoread_to_all_topics(self, forum_id: int, enabled: bool):
+        # 1. Update/Create global forum rule
         await self.toggle_autoread(forum_id, None, enabled)
 
+        # 2. Update/Create rule for every existing topic
         topics = await self.chat_repo.get_forum_topics(forum_id)
 
         for topic in topics:

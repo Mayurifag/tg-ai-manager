@@ -47,12 +47,14 @@ Messages
 </div>
 
 {% if topic_id %}
-<div class="setting-option" id="apply-all-topics" style="margin-top: 12px; color: #ff9800; font-weight: 500;">
-    Apply to all topics in forum
+<div class="setting-option" id="apply-all-topics"
+    style="margin-top: 12px; color: #ff9800; font-weight: 500; cursor: pointer; display: flex; align-items: center; padding: 5px 0;">
+    <span style="margin-right: 6px;">📋</span> Copy setting to all topics
 </div>
 {% endif %}
 
-<div class="setting-option" id="btn-read-chat" style="margin-top: 20px; color: #2e7d32; font-weight: 500;">
+<div class="setting-option" id="btn-read-chat"
+    style="margin-top: 20px; color: #2e7d32; font-weight: 500; cursor: pointer;">
     ✅ Mark as Read
 </div>
 
@@ -71,13 +73,32 @@ Messages
 
     {% if topic_id %}
     document.getElementById('apply-all-topics').addEventListener('click', async () => {
+        const btn = document.getElementById('apply-all-topics');
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<span style="margin-right: 6px;">⏳</span> Applying...';
+        btn.style.opacity = '0.7';
+        btn.style.pointerEvents = 'none';
+
         const checkbox = document.getElementById('autoread-checkbox');
         const enabled = checkbox.checked;
-        await fetch('/api/rules/autoread/apply_all', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ forum_id: chatId, enabled })
-        });
+
+        try {
+            await fetch('/api/rules/autoread/apply_all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ forum_id: chatId, enabled })
+            });
+            btn.innerHTML = '<span style="margin-right: 6px;">✅</span> Done!';
+        } catch (e) {
+            console.error(e);
+            btn.innerHTML = '<span style="margin-right: 6px;">❌</span> Error';
+        } finally {
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            }, 1500);
+        }
     });
     {% endif %}
 
@@ -91,7 +112,7 @@ Messages
             await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ topic_id: currentTopicId })
+                body: JSON.stringify({ topic_id: topicId })
             });
         } catch (e) {
             console.error(e);
