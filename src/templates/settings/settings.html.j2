@@ -1,0 +1,226 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block sidebar_back %}
+<a href="/" class="back-link">← Back to Chats</a>
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Global Settings</h1>
+</div>
+
+<div style="max-width: 600px; background: #1e1e20; padding: 20px; border-radius: 8px; border: 1px solid #333;">
+    <h3 style="margin-top: 0; margin-bottom: 20px; color: #6ab7ff;">Smart Autoread Rules</h3>
+    <p style="color: #888; font-size: 0.9rem; margin-bottom: 20px; border-left: 2px solid #ff9800; padding-left: 10px;">
+        ℹ️ <strong>Note:</strong> Global rules below only trigger if the incoming message is the
+        <strong>only new message</strong> in the chat. If you have unread backlog, these rules are skipped to keep your
+        history intact.
+    </p>
+
+    <form id="settings-form">
+        <div class="setting-row">
+            <label class="toggle-switch">
+                <input type="checkbox" name="autoread_service_messages" {% if settings.autoread_service_messages
+                    %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <div class="setting-label">
+                <strong>Autoread Service Messages</strong>
+                <div class="desc">Pins, joins, leaves, photo changes, group setting changes, etc.</div>
+            </div>
+        </div>
+
+        <div class="setting-row">
+            <label class="toggle-switch">
+                <input type="checkbox" name="autoread_polls" {% if settings.autoread_polls %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <div class="setting-label">
+                <strong>Autoread Polls</strong>
+                <div class="desc">Automatically mark polls as read.</div>
+            </div>
+        </div>
+
+        <div class="setting-row">
+            <label class="toggle-switch">
+                <input type="checkbox" name="autoread_self" {% if settings.autoread_self %}checked{% endif %}>
+                <span class="slider"></span>
+            </label>
+            <div class="setting-label">
+                <strong>Autoread My Messages</strong>
+                <div class="desc">If the message sender is you (outgoing).</div>
+            </div>
+        </div>
+
+        <div class="setting-group">
+            <label>Autoread Bots / Users (Partial Name Match)</label>
+            <input type="text" name="autoread_bots" value="{{ settings.autoread_bots }}"
+                placeholder="@lolsBotCatcherBot, BotName">
+            <div class="desc">Comma separated. Matches if sender's name contains these strings.</div>
+        </div>
+
+        <div class="setting-group">
+            <label>Autoread Regex</label>
+            <input type="text" name="autoread_regex" value="{{ settings.autoread_regex }}"
+                placeholder="(crypto|buy|sell)">
+            <div class="desc">Regular expression to match against message text.</div>
+        </div>
+
+        <div style="margin-top: 30px; text-align: right;">
+            <button type="submit" class="save-btn" id="save-btn">Save Settings</button>
+        </div>
+    </form>
+</div>
+
+<style>
+    .setting-row {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #333;
+    }
+
+    .setting-row:last-of-type {
+        border-bottom: none;
+    }
+
+    .setting-label {
+        margin-left: 15px;
+    }
+
+    .setting-label strong {
+        display: block;
+        font-size: 1rem;
+        margin-bottom: 4px;
+    }
+
+    .desc {
+        color: #888;
+        font-size: 0.85rem;
+    }
+
+    .setting-group {
+        margin-bottom: 20px;
+    }
+
+    .setting-group label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+
+    .setting-group input[type="text"] {
+        width: 100%;
+        background: #2a2a2c;
+        border: 1px solid #444;
+        padding: 10px;
+        color: #fff;
+        border-radius: 4px;
+        font-size: 1rem;
+        box-sizing: border-box;
+    }
+
+    .save-btn {
+        background-color: #2e7d32;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        font-size: 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .save-btn:hover {
+        background-color: #388e3c;
+    }
+
+    /* Switch CSS */
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 24px;
+        flex-shrink: 0;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #444;
+        transition: .4s;
+        border-radius: 24px;
+    }
+
+    .slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 4px;
+        bottom: 4px;
+        background-color: white;
+        transition: .4s;
+        border-radius: 50%;
+    }
+
+    input:checked+.slider {
+        background-color: #2196F3;
+    }
+
+    input:checked+.slider:before {
+        transform: translateX(26px);
+    }
+</style>
+
+<script>
+    document.getElementById('settings-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('save-btn');
+        btn.textContent = "Saving...";
+        btn.disabled = true;
+
+        const formData = new FormData(e.target);
+        const data = {
+            autoread_service_messages: formData.get('autoread_service_messages') === 'on',
+            autoread_polls: formData.get('autoread_polls') === 'on',
+            autoread_self: formData.get('autoread_self') === 'on',
+            autoread_bots: formData.get('autoread_bots'),
+            autoread_regex: formData.get('autoread_regex')
+        };
+
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                btn.textContent = "Saved!";
+                setTimeout(() => {
+                    btn.textContent = "Save Settings";
+                    btn.disabled = false;
+                }, 2000);
+            } else {
+                btn.textContent = "Error";
+            }
+        } catch (err) {
+            console.error(err);
+            btn.textContent = "Error";
+        }
+    });
+</script>
+{% endblock %}
