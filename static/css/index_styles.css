@@ -22,11 +22,13 @@
 
 .meta {
     text-align: right;
-    min-width: 100px;
+    /* Removed min-width to allow the mark-read button to sit closer to the badge */
+    min-width: auto;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     justify-content: center;
+    padding-left: 10px; /* Add some padding so it doesn't touch the text */
 }
 
 .unread {

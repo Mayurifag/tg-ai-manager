@@ -53,6 +53,8 @@ Forum Topics
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({})
             });
+            // Reload page to reflect changes
+            window.location.reload();
         } catch (e) {
             console.error(e);
         } finally {
@@ -76,9 +78,50 @@ Forum Topics
     </h1>
 </div>
 
-<div class="chat-list">
+<div class="chat-list" id="topic-list-container">
     {% for topic in chats %}
     {{ cards.render_chat_card(topic, parent_id=chat.id) }}
     {% endfor %}
 </div>
+
+<script>
+    // Handle Mark as Read clicks for topics
+    document.getElementById('topic-list-container').addEventListener('click', async (e) => {
+        if (e.target.classList.contains('mark-read-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const btn = e.target;
+            const chatId = btn.getAttribute('data-chat-id');
+            const topicId = btn.getAttribute('data-topic-id');
+
+            if (!chatId || !topicId) return;
+
+            btn.style.opacity = '0.5';
+            btn.style.pointerEvents = 'none';
+
+            try {
+                const response = await fetch(`/api/chat/${chatId}/read`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic_id: parseInt(topicId) })
+                });
+
+                if (response.ok) {
+                    // Visually update the card: remove unread badge and button
+                    const card = btn.closest('.chat-card');
+                    if (card) {
+                        const unread = card.querySelector('.unread');
+                        if (unread) unread.remove();
+                        btn.remove();
+                    }
+                }
+            } catch (err) {
+                console.error("Error marking topic as read:", err);
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            }
+        }
+    });
+</script>
 {% endblock %}
