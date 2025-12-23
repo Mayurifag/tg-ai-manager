@@ -1,17 +1,17 @@
 import sqlite3
-import asyncio
 from typing import List, Optional
 from datetime import datetime
-from src.rules.models import Rule, RuleType, AutoReadRule
+from src.rules.models import Rule, RuleType
 from src.rules.ports import RuleRepository
+from src.infrastructure.db import BaseSqliteRepository
 
-class SqliteRuleRepository(RuleRepository):
+class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
     def __init__(self, db_path: str = "rules.db"):
-        self.db_path = db_path
+        super().__init__(db_path)
         self._init_db()
 
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +28,7 @@ class SqliteRuleRepository(RuleRepository):
 
     async def get_by_chat_and_topic(self, chat_id: int, topic_id: Optional[int] = None) -> List[Rule]:
         def _fetch():
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute("""
                     SELECT id, rule_type, chat_id, topic_id, enabled, created_at, updated_at
                     FROM rules
@@ -48,11 +48,11 @@ class SqliteRuleRepository(RuleRepository):
                     )
                     results.append(rule)
                 return results
-        return await asyncio.to_thread(_fetch)
+        return await self._execute(_fetch)
 
     async def get_all_for_chat(self, chat_id: int) -> List[Rule]:
         def _fetch():
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute("""
                     SELECT id, rule_type, chat_id, topic_id, enabled, created_at, updated_at
                     FROM rules WHERE chat_id = ?
@@ -70,11 +70,11 @@ class SqliteRuleRepository(RuleRepository):
                     )
                     results.append(rule)
                 return results
-        return await asyncio.to_thread(_fetch)
+        return await self._execute(_fetch)
 
     async def add(self, rule: Rule) -> int:
         def _insert():
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.execute("""
                     INSERT INTO rules (rule_type, chat_id, topic_id, enabled, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -88,21 +88,21 @@ class SqliteRuleRepository(RuleRepository):
                 ))
                 conn.commit()
                 return cursor.lastrowid
-        return await asyncio.to_thread(_insert)
+        return await self._execute(_insert)
 
     async def update(self, rule: Rule) -> None:
         def _update():
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.execute("""
                     UPDATE rules SET enabled = ?, updated_at = ?
                     WHERE id = ?
                 """, (int(rule.enabled), datetime.now().isoformat(), rule.id))
                 conn.commit()
-        await asyncio.to_thread(_update)
+        await self._execute(_update)
 
     async def delete(self, rule_id: int) -> None:
         def _delete():
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
                 conn.commit()
-        await asyncio.to_thread(_delete)
+        await self._execute(_delete)

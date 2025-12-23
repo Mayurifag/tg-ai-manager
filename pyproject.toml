@@ -9,10 +9,8 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "quart",
     "telethon>=1.42.0",
+    "structlog>=24.1.0",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "hypercorn>=0.16.1",
-    "watchfiles>=0.21.0",
-]
+dev = ["hypercorn>=0.16.1", "watchfiles>=0.21.0"]

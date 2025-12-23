@@ -1,0 +1,223 @@
+from typing import List, Optional, Any, Dict
+from telethon import functions, utils, types
+from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
+from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
+
+from src.domain.models import Chat, ChatType, Message
+from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
+from src.infrastructure.logging import get_logger
+
+logger = get_logger(__name__)
+
+class ChatOperationsMixin:
+    def __init__(self):
+        self.client: Any = None
+
+    # Abstract dependencies
+    async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]: raise NotImplementedError
+    def _cache_message_chat(self, msg_id: int, chat_id: int): raise NotImplementedError
+    async def _parse_message(self, msg: Any, replies_map: Dict[int, Any] | None = None, chat_id: Optional[int] = None) -> Message: raise NotImplementedError
+    def _extract_text(self, msg: Any) -> str: raise NotImplementedError
+
+    async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
+        try:
+            return await self.client(functions.messages.GetForumTopicsRequest(
+                peer=peer, offset_date=None, offset_id=0, offset_topic=0, limit=limit, q=''
+            ))
+        except Exception as e:
+            logger.error("fetch_topics_failed", error=str(e))
+            return None
+
+    async def _get_top_messages_map(self, entity: Any, top_message_ids: List[int]) -> Dict[int, Any]:
+        messages_map = {}
+        if top_message_ids:
+            try:
+                msgs = await self.client.get_messages(entity, ids=top_message_ids)
+                if msgs:
+                    for m in msgs:
+                        if m: messages_map[m.id] = m
+            except Exception as e: pass
+        return messages_map
+
+    async def get_chats(self, limit: int) -> list[Chat]:
+        dialogs = await self.client.get_dialogs(limit=limit)
+        results = []
+        for d in dialogs:
+            chat_type = map_telethon_dialog_to_chat_type(d)
+            unread_topics_count = None
+            calculated_unread_count = d.unread_count
+            topic_map = {}
+
+            if chat_type == ChatType.FORUM:
+                response = await self._fetch_forum_topics_response(d.entity, limit=20)
+                if response:
+                    active_topics = response.topics
+                    for t in active_topics:
+                        topic_map[t.id] = t.title
+                    unread_topics = [t for t in active_topics if t.unread_count > 0]
+                    if unread_topics:
+                        unread_topics_count = len(unread_topics)
+                        calculated_unread_count = sum(t.unread_count for t in unread_topics)
+
+            msg = getattr(d, 'message', None)
+            if msg:
+                self._cache_message_chat(msg.id, d.id)
+
+            preview = format_message_preview(msg, chat_type, topic_map)
+            image_url = await self._get_chat_image(d.entity, d.id)
+
+            results.append(Chat(
+                id=d.id, name=d.name, unread_count=calculated_unread_count,
+                type=chat_type, unread_topics_count=unread_topics_count,
+                last_message_preview=preview, image_url=image_url,
+                is_pinned=d.pinned
+            ))
+        return results
+
+    async def get_chat(self, chat_id: int) -> Optional[Chat]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            name = utils.get_display_name(entity)
+
+            c_type = ChatType.GROUP
+            if isinstance(entity, types.User): c_type = ChatType.USER
+            elif isinstance(entity, types.Chat): c_type = ChatType.GROUP
+            elif isinstance(entity, types.Channel):
+                if getattr(entity, 'forum', False): c_type = ChatType.FORUM
+                elif getattr(entity, 'broadcast', False): c_type = ChatType.CHANNEL
+                else: c_type = ChatType.GROUP
+
+            image_url = await self._get_chat_image(entity, chat_id)
+
+            unread_count = 0
+            unread_topics_count = None
+            last_message_preview = None
+            is_pinned = False
+
+            try:
+                input_peer = utils.get_input_peer(entity)
+                res = await self.client(GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])) # type: ignore
+                if res.dialogs:
+                    dialog = res.dialogs[0]
+                    unread_count = dialog.unread_count
+                    is_pinned = dialog.pinned
+            except Exception as e:
+                logger.warning("fetch_dialog_stats_failed", chat_id=chat_id, error=str(e))
+
+            try:
+                messages = await self.client.get_messages(entity, limit=1)
+                if messages:
+                    latest_msg = messages[0]
+                    self._cache_message_chat(latest_msg.id, chat_id) # Update Cache
+                    last_message_preview = format_message_preview(latest_msg, c_type, {})
+                else:
+                    last_message_preview = "No messages"
+            except Exception as e:
+                logger.warning("fetch_latest_message_failed", chat_id=chat_id, error=str(e))
+
+            if c_type == ChatType.FORUM:
+                try:
+                    topics_res = await self._fetch_forum_topics_response(entity, limit=20)
+                    if topics_res:
+                        unread_topics = [t for t in topics_res.topics if t.unread_count > 0]
+                        if unread_topics:
+                            unread_topics_count = len(unread_topics)
+                            unread_count = sum(t.unread_count for t in unread_topics)
+                except Exception as e:
+                    logger.warning("fetch_forum_stats_failed", chat_id=chat_id, error=str(e))
+
+            return Chat(
+                id=chat_id,
+                name=name,
+                unread_count=unread_count,
+                type=c_type,
+                unread_topics_count=unread_topics_count,
+                image_url=image_url,
+                last_message_preview=last_message_preview,
+                is_pinned=is_pinned
+            )
+        except Exception as e:
+            logger.error("get_chat_failed", chat_id=chat_id, error=str(e))
+            return None
+
+    async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            messages = await self.client.get_messages(entity, limit=limit, reply_to=topic_id, offset_id=offset_id)
+            reply_ids = []
+            for msg in messages:
+                self._cache_message_chat(msg.id, chat_id)
+                reply_header = getattr(msg, 'reply_to', None)
+                if reply_header:
+                     rid = getattr(reply_header, 'reply_to_msg_id', None)
+                     if rid: reply_ids.append(rid)
+
+            replies_map = {}
+            if reply_ids:
+                try:
+                    reply_ids = list(set(reply_ids))
+                    replied_msgs = await self.client.get_messages(entity, ids=reply_ids)
+                    for r in replied_msgs:
+                        if r: replies_map[r.id] = r
+                except Exception as e: pass
+
+            result_messages = []
+            for msg in messages:
+                parsed = await self._parse_message(msg, replies_map, chat_id=chat_id)
+                result_messages.append(parsed)
+            return result_messages
+        except Exception as e:
+            logger.error("get_messages_failed", chat_id=chat_id, error=str(e))
+            return []
+
+    async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            response = await self._fetch_forum_topics_response(entity, limit=limit)
+            topics = []
+            if not response: return topics
+            top_message_ids = [t.top_message for t in response.topics]
+            messages_map = await self._get_top_messages_map(entity, top_message_ids)
+            for t in response.topics:
+                last_msg = messages_map.get(t.top_message)
+                preview = format_message_preview(last_msg, ChatType.TOPIC)
+                topics.append(Chat(
+                    id=t.id, name=t.title, unread_count=t.unread_count,
+                    type=ChatType.TOPIC, last_message_preview=preview,
+                    icon_emoji=getattr(t, 'icon_emoji', None)
+                ))
+            return topics
+        except Exception as e:
+            logger.error("get_forum_topics_failed", chat_id=chat_id, error=str(e))
+            return []
+
+    async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            messages = await self.client.get_messages(entity, ids=[topic_id])
+
+            if messages:
+                message = messages[0]
+                if message and getattr(message, 'action', None):
+                    if isinstance(message.action, MessageActionTopicCreate):
+                        return message.action.title
+        except Exception as e:
+            logger.error("get_topic_name_failed", chat_id=chat_id, topic_id=topic_id, error=str(e))
+        return None
+
+    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            if topic_id:
+                msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
+                max_id = msgs[0].id if msgs else topic_id
+
+                await self.client(functions.messages.ReadDiscussionRequest(
+                    peer=entity,
+                    msg_id=topic_id,
+                    read_max_id=max_id
+                ))
+            else:
+                 await self.client.send_read_acknowledge(entity)
+        except Exception as e:
+            logger.error("mark_as_read_failed", chat_id=chat_id, topic_id=topic_id, error=str(e))
