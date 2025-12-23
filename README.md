@@ -55,6 +55,7 @@ Open <http://localhost:8000>
 
 ## TODO
 
+- I have "fake" autoread but now i want you to really read messages when they have to (would_autoread) also change that would_autoread to autoread and so on
 - refactoring. Plan is: Look at my repository and give me plan what could you make in my app better - I mean DRY or splitting big files or else, give me plan. Maybe there are too much smelly code and so on. eliminate tech debt
 - Research: if second device read some message, how first device knows it? Is that some event coming?
 - database with settings for future - which chat which rule has. Rules might change so keep them in another table

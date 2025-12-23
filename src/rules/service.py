@@ -2,13 +2,14 @@ from typing import List, Optional
 from src.rules.models import Rule, AutoReadRule, RuleType
 from src.rules.ports import RuleRepository
 from src.domain.models import SystemEvent, ActionLog
-from src.domain.ports import ActionRepository
+from src.domain.ports import ActionRepository, ChatRepository
 from datetime import datetime
 
 class RuleService:
-    def __init__(self, rule_repo: RuleRepository, action_repo: ActionRepository):
+    def __init__(self, rule_repo: RuleRepository, action_repo: ActionRepository, chat_repo: ChatRepository):
         self.rule_repo = rule_repo
         self.action_repo = action_repo
+        self.chat_repo = chat_repo
 
     async def is_autoread_enabled(self, chat_id: int, topic_id: Optional[int] = None) -> bool:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
@@ -57,9 +58,7 @@ class RuleService:
     async def apply_autoread_to_all_topics(self, forum_id: int, enabled: bool):
         await self.toggle_autoread(forum_id, None, enabled)
 
-        from src.container import get_chat_interactor
-        interactor = get_chat_interactor()
-        topics = await interactor.get_forum_topics(forum_id)
+        topics = await self.chat_repo.get_forum_topics(forum_id)
 
         for topic in topics:
             await self.toggle_autoread(forum_id, topic.id, enabled)
