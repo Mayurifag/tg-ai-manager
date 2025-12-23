@@ -8,3 +8,4 @@ __pycache__/
 /cache/
 /actions.db
 /rules.db
+/settings.db

@@ -56,7 +56,7 @@ Open <http://localhost:8000>
 ## TODO
 
 - Add global setting field with tooltip to autoread pinned events, someone entered or removed from chat, etc.
+- chats - 2 lines messages, longer message crop, respect `<strong>` tags and other html
 - Long page loads sometimes - is that only because of not lazyloaded pictures? Research if we can lazy load also media things. even "back to chats" lags smtmes. More logging
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/)? Seems I do not need this for now
-- Mark as Read -> navigate back
 - Check autorules things for topics
