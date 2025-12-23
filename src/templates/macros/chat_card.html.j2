@@ -47,9 +47,11 @@
 
     {# --- Meta/Unread Count --- #}
     {% if chat.unread_count > 0 %}
-    {% if chat.type.value != 'topic' %}
     <div class="meta">
-        {% endif %}
+        <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
+            data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
+            mark read
+        </button>
 
         <div class="unread">
             {% if chat.type.value == 'forum' %}
@@ -62,10 +64,7 @@
             {{ chat.unread_count }}
             {% endif %}
         </div>
-
-        {% if chat.type.value != 'topic' %}
     </div>
-    {% endif %}
     {% endif %}
 </a>
 {% endmacro %}

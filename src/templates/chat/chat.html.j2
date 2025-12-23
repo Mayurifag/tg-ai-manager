@@ -114,10 +114,17 @@ Messages
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ topic_id: topicId })
             });
+
+            // Navigate back after marking as read
+            if (topicId) {
+                window.location.href = `/forum/${chatId}`;
+            } else {
+                window.location.href = `/`;
+            }
         } catch (e) {
             console.error(e);
-        } finally {
-            setTimeout(() => {
+            // Restore button if error
+             setTimeout(() => {
                 btn.style.opacity = '1';
                 btn.style.pointerEvents = 'auto';
             }, 500);

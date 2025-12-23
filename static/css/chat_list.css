@@ -21,6 +21,7 @@
     text-decoration: none;
     color: inherit;
     transition: box-shadow 0.2s, background 0.2s;
+    position: relative;
 }
 
 .chat-card:hover {
@@ -65,4 +66,41 @@
     background: #3a1c1c;
     padding: 2px 8px;
     border-radius: 12px;
+}
+
+.meta {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.mark-read-btn {
+    position: absolute;
+    right: 100%;
+    /* Moved slightly up from 50% to 45% */
+    top: 45%;
+    transform: translateY(-50%);
+    margin-right: 6px; /* Reduced margin */
+
+    background: transparent; /* Removed background to look cleaner */
+    border: none;
+    color: #666;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out, color 0.2s;
+    padding: 2px 4px;
+}
+
+.chat-card:hover .mark-read-btn {
+    opacity: 1;
+}
+
+.mark-read-btn:hover {
+    color: #6ab7ff;
+    text-decoration: none; /* Removed underline */
 }

@@ -23,6 +23,45 @@
 </div>
 
 <script>
+    // Handle Mark as Read clicks
+    document.getElementById('chat-list-container').addEventListener('click', async (e) => {
+        if (e.target.classList.contains('mark-read-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const btn = e.target;
+            const chatId = btn.getAttribute('data-chat-id');
+            const topicId = btn.getAttribute('data-topic-id') || null;
+
+            if (!chatId) return;
+
+            btn.style.opacity = '0.5';
+            btn.style.pointerEvents = 'none';
+
+            try {
+                const response = await fetch(`/api/chat/${chatId}/read`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic_id: topicId })
+                });
+
+                if (response.ok) {
+                    // Visually update the card: remove unread badge and button
+                    const card = btn.closest('.chat-card');
+                    if (card) {
+                        const unread = card.querySelector('.unread');
+                        if (unread) unread.remove();
+                        btn.remove();
+                    }
+                }
+            } catch (err) {
+                console.error("Error marking as read:", err);
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            }
+        }
+    });
+
     let updateTimeouts = {};
 
     async function reloadCard(chatId) {
