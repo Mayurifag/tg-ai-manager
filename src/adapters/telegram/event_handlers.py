@@ -2,6 +2,7 @@ import asyncio
 from typing import Callable, Awaitable, List, Optional, Any, Dict
 from datetime import datetime
 from telethon import events, utils, types
+from telethon.tl.types import MessageActionChatEditPhoto, MessageActionChatDeletePhoto
 from src.domain.models import SystemEvent, Message
 from src.adapters.telethon_mappers import get_message_action_text
 from src.infrastructure.logging import get_logger
@@ -19,6 +20,7 @@ class EventHandlersMixin:
     def _extract_topic_id(self, message: Any) -> Optional[int]: raise NotImplementedError
     async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]: raise NotImplementedError
     def _cache_message_chat(self, msg_id: int, chat_id: int): raise NotImplementedError
+    def clear_chat_avatar(self, chat_id: int): raise NotImplementedError
 
     def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         self.listeners.append(callback)
@@ -62,6 +64,8 @@ class EventHandlersMixin:
                      preview = f"Poll: {domain_msg.poll_question or 'Unknown Poll'}"
                  else: preview = "📷 Media"
 
+            # Note: We keep SystemEvent previews short as they are for the sidebar feed,
+            # while the main chat list uses the mapper's full text.
             if len(preview) > 75:
                  preview = preview[:75] + '...'
 
@@ -162,6 +166,12 @@ class EventHandlersMixin:
 
     async def _handle_chat_action(self, event):
         try:
+            # Handle Cache Invalidation for Avatar
+            action = getattr(event.action_message, 'action', None)
+            if isinstance(action, (MessageActionChatEditPhoto, MessageActionChatDeletePhoto)):
+                if event.chat_id:
+                    self.clear_chat_avatar(event.chat_id)
+
             chat_name = "Unknown"
             try:
                 chat = await event.get_chat()
