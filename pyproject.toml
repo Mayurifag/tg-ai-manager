@@ -11,7 +11,8 @@ dependencies = [
     "telethon>=1.42.0",
     "structlog>=24.1.0",
     "redis>=5.0.1",
+    "hypercorn>=0.16.1", # Moved here so Production has a server
 ]
 
 [project.optional-dependencies]
-dev = ["hypercorn>=0.16.1", "watchfiles>=0.21.0"]
+dev = ["watchfiles>=0.21.0"]

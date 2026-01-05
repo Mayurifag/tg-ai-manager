@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     TG_SESSION_NAME: str = "manager_session"
 
     # Valkey / Redis Configuration
-    # Default points to the docker service name "valkey"
     VALKEY_URL: str = "redis://valkey:6379/0"
+
+    # Database Persistence Path
+    DB_PATH: str = "data.db"
 
     class Config:
         env_file = ".env"

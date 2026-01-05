@@ -44,7 +44,8 @@ def get_event_repo() -> ValkeyEventRepository:
 def _get_settings_repo() -> SqliteSettingsRepository:
     global _settings_repo
     if _settings_repo is None:
-        _settings_repo = SqliteSettingsRepository()  # Defaults to data.db
+        settings = get_settings()
+        _settings_repo = SqliteSettingsRepository(db_path=settings.DB_PATH)
     return _settings_repo
 
 
@@ -60,7 +61,8 @@ def get_chat_interactor() -> ChatInteractor:
 def get_rule_service() -> RuleService:
     global _rule_service
     if _rule_service is None:
-        rule_repo = SqliteRuleRepository()  # Defaults to data.db
+        settings = get_settings()
+        rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
         _rule_service = RuleService(
             rule_repo, get_action_repo(), _get_tg_adapter(), _get_settings_repo()
         )
