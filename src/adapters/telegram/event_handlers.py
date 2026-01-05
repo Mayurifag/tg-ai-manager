@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 from typing import Callable, Awaitable, List, Optional, Any, Dict
 from datetime import datetime
 from telethon import events, utils, types
@@ -30,7 +31,7 @@ class EventHandlersMixin:
             try:
                 await listener(event)
             except Exception as e:
-                logger.error("event_listener_error", error=str(e))
+                logger.error("event_listener_error", error=repr(e), traceback=traceback.format_exc())
 
     async def _handle_new_message(self, event):
         try:
@@ -68,7 +69,7 @@ class EventHandlersMixin:
             )
             await self._dispatch(sys_event)
         except Exception as e:
-            logger.error("handle_new_message_error", error=str(e))
+            logger.error("handle_new_message_error", error=repr(e), traceback=traceback.format_exc())
 
     async def _handle_edited_message(self, event):
         try:
@@ -107,7 +108,7 @@ class EventHandlersMixin:
             )
             await self._dispatch(sys_event)
         except Exception as e:
-            logger.error("handle_edited_message_error", error=str(e))
+            logger.error("handle_edited_message_error", error=repr(e), traceback=traceback.format_exc())
 
     async def _handle_deleted_message(self, event):
         try:
@@ -148,7 +149,7 @@ class EventHandlersMixin:
                 await self._dispatch(sys_event)
 
         except Exception as e:
-            logger.error("handle_deleted_message_error", error=str(e))
+            logger.error("handle_deleted_message_error", error=repr(e), traceback=traceback.format_exc())
 
     async def _handle_chat_action(self, event):
         try:
@@ -180,4 +181,4 @@ class EventHandlersMixin:
             )
             await self._dispatch(sys_event)
         except Exception as e:
-            logger.error("handle_chat_action_error", error=str(e))
+            logger.error("handle_chat_action_error", error=repr(e), traceback=traceback.format_exc())
