@@ -10,6 +10,7 @@ from src.web.serializers import json_serializer
 connected_queues = set()
 shutdown_event = asyncio.Event()
 
+
 async def broadcast_event(event: SystemEvent):
     """
     Broadcasts a system event to all connected SSE clients.
@@ -23,7 +24,7 @@ async def broadcast_event(event: SystemEvent):
         event.rendered_html = await render_template(
             "chat/messages_partial.html.j2",
             messages=[event.message_model],
-            chat_id=event.chat_id
+            chat_id=event.chat_id,
         )
 
     data = json.dumps(asdict(event), default=json_serializer)

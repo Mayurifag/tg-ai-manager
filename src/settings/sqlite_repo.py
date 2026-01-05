@@ -2,6 +2,7 @@ from src.infrastructure.db import BaseSqliteRepository
 from src.settings.models import GlobalSettings
 from src.settings.ports import SettingsRepository
 
+
 class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
     def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
@@ -43,17 +44,19 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                             autoread_polls=bool(row[1]),
                             autoread_bots=row[2] or "",
                             autoread_regex=row[3] or "",
-                            autoread_self=bool(row[4])
+                            autoread_self=bool(row[4]),
                         )
                 except Exception:
                     pass
                 return GlobalSettings()
+
         return await self._execute(_fetch)
 
     async def save_settings(self, settings: GlobalSettings) -> None:
         def _save():
             with self._connect() as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE global_settings
                     SET autoread_service_messages = ?,
                         autoread_polls = ?,
@@ -61,12 +64,15 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                         autoread_regex = ?,
                         autoread_self = ?
                     WHERE id = 1
-                """, (
-                    int(settings.autoread_service_messages),
-                    int(settings.autoread_polls),
-                    settings.autoread_bots,
-                    settings.autoread_regex,
-                    int(settings.autoread_self)
-                ))
+                """,
+                    (
+                        int(settings.autoread_service_messages),
+                        int(settings.autoread_polls),
+                        settings.autoread_bots,
+                        settings.autoread_regex,
+                        int(settings.autoread_self),
+                    ),
+                )
                 conn.commit()
+
         await self._execute(_save)

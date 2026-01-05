@@ -1,7 +1,8 @@
 from quart import Blueprint, request, jsonify
 from src.container import get_rule_service
 
-rules_bp = Blueprint('rules', __name__)
+rules_bp = Blueprint("rules", __name__)
+
 
 @rules_bp.route("/api/rules/autoread/toggle", methods=["POST"])
 async def api_toggle_autoread():
@@ -16,6 +17,7 @@ async def api_toggle_autoread():
 
     await rule_service.toggle_autoread(chat_id, topic_id, enabled)
     return jsonify({"status": "ok"})
+
 
 @rules_bp.route("/api/rules/autoread/apply_all", methods=["POST"])
 async def api_apply_autoread_all_topics():

@@ -2,7 +2,8 @@ import asyncio
 from quart import Blueprint, request, make_response
 from src.web.sse import connected_queues, shutdown_event
 
-sse_bp = Blueprint('sse', __name__)
+sse_bp = Blueprint("sse", __name__)
+
 
 @sse_bp.route("/api/events/stream")
 async def event_stream():
@@ -29,9 +30,9 @@ async def event_stream():
 
     response = await make_response(generator())
 
-    setattr(response, 'timeout', None)
+    setattr(response, "timeout", None)
 
-    response.headers['Content-Type'] = 'text/event-stream'
-    response.headers['Cache-Control'] = 'no-cache'
-    response.headers['Connection'] = 'keep-alive'
+    response.headers["Content-Type"] = "text/event-stream"
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Connection"] = "keep-alive"
     return response

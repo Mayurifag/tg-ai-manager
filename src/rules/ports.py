@@ -2,9 +2,12 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from src.rules.models import Rule, RuleType
 
+
 class RuleRepository(ABC):
     @abstractmethod
-    async def get_by_chat_and_topic(self, chat_id: int, topic_id: Optional[int] = None) -> List[Rule]:
+    async def get_by_chat_and_topic(
+        self, chat_id: int, topic_id: Optional[int] = None
+    ) -> List[Rule]:
         pass
 
     @abstractmethod

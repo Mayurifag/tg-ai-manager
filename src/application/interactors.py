@@ -3,11 +3,14 @@ from src.domain.ports import ChatRepository, ActionRepository, EventRepository
 from src.domain.models import Chat, Message, SystemEvent, ActionLog, ChatType
 from datetime import datetime
 
+
 class ChatInteractor:
-    def __init__(self,
-                 repository: ChatRepository,
-                 action_repo: ActionRepository,
-                 event_repo: EventRepository):
+    def __init__(
+        self,
+        repository: ChatRepository,
+        action_repo: ActionRepository,
+        event_repo: EventRepository,
+    ):
         self.repository = repository
         self.action_repo = action_repo
         self.event_repo = event_repo
@@ -27,10 +30,16 @@ class ChatInteractor:
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return await self.repository.get_forum_topics(chat_id)
 
-    async def get_chat_messages(self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
-        return await self.repository.get_messages(chat_id, topic_id=topic_id, offset_id=offset_id)
+    async def get_chat_messages(
+        self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0
+    ) -> List[Message]:
+        return await self.repository.get_messages(
+            chat_id, topic_id=topic_id, offset_id=offset_id
+        )
 
-    async def mark_chat_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
+    async def mark_chat_as_read(
+        self, chat_id: int, topic_id: Optional[int] = None
+    ) -> None:
         # 1. Perform Telegram Action
         await self.repository.mark_as_read(chat_id, topic_id)
 
@@ -62,7 +71,7 @@ class ChatInteractor:
             chat_name=chat_name,
             reason="manual",
             date=datetime.now(),
-            link=link
+            link=link,
         )
         await self.action_repo.add_log(log)
 
@@ -75,7 +84,9 @@ class ChatInteractor:
     async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
         return await self.repository.get_chat_avatar(chat_id)
 
-    async def subscribe_to_events(self, callback: Callable[[SystemEvent], Awaitable[None]]):
+    async def subscribe_to_events(
+        self, callback: Callable[[SystemEvent], Awaitable[None]]
+    ):
         async def wrapped_callback(event: SystemEvent):
             # Persist event to Valkey
             await self.event_repo.add_event(event)

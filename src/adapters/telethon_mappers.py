@@ -17,21 +17,23 @@ from telethon.tl.types import (
     MessageActionChannelCreate,
     MessageActionGameScore,
     MessageMediaPoll,
-    PeerUser
+    PeerUser,
 )
 from telethon import utils
 from html import unescape as html_unescape
 from src.domain.models import ChatType
 
+
 def map_telethon_dialog_to_chat_type(d: Any) -> ChatType:
     if d.is_user:
         return ChatType.USER
     elif d.is_channel:
-        if getattr(d.entity, 'forum', False):
+        if getattr(d.entity, "forum", False):
             return ChatType.FORUM
         elif not d.is_group:
             return ChatType.CHANNEL
     return ChatType.GROUP
+
 
 def get_message_action_text(message: Any) -> Optional[str]:
     """Extracts a human-readable description from a Service Message action."""
@@ -55,19 +57,22 @@ def get_message_action_text(message: Any) -> Optional[str]:
         return "👋 joined via invite link"
     elif isinstance(action, MessageActionChatAddUser):
         # Check if user added themselves (joined) or was added
-        sender_id = getattr(message, 'sender_id', None)
+        sender_id = getattr(message, "sender_id", None)
         if sender_id and sender_id in action.users:
             return "👋 joined the group"
         return "👤 added a user"
     elif isinstance(action, MessageActionChatDeleteUser):
-        sender_id = getattr(message, 'sender_id', None)
+        sender_id = getattr(message, "sender_id", None)
         if sender_id == action.user_id:
             return "💨 left the group"
         return "🚫 removed a user"
 
     return "Service message"
 
-def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optional[Dict[int, str]] = None) -> str:
+
+def format_message_preview(
+    message: Any, chat_type: ChatType, topic_map: Optional[Dict[int, str]] = None
+) -> str:
     if not message:
         return "No messages"
 
@@ -77,10 +82,10 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
         if action_text:
             return action_text
 
-    text = getattr(message, 'message', '')
+    text = getattr(message, "message", "")
 
     # Handle Media Previews
-    media = getattr(message, 'media', None)
+    media = getattr(message, "media", None)
     media_text = ""
 
     if media:
@@ -88,19 +93,23 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
             media_text = "📷 Photo"
         elif isinstance(media, MessageMediaPoll):
             poll = media.poll
-            poll_question = getattr(poll, 'question', None)
-            topic = getattr(poll_question, 'text', 'Unknown Poll') if poll_question else 'Unknown Poll'
+            poll_question = getattr(poll, "question", None)
+            topic = (
+                getattr(poll_question, "text", "Unknown Poll")
+                if poll_question
+                else "Unknown Poll"
+            )
             text_preview = f"Poll: {topic}"
             if chat_type == ChatType.GROUP or chat_type == ChatType.TOPIC:
-                 sender = getattr(message, 'sender', None)
-                 if sender:
-                     name = utils.get_display_name(sender)
-                     return f"{name}: {text_preview}"
+                sender = getattr(message, "sender", None)
+                if sender:
+                    name = utils.get_display_name(sender)
+                    return f"{name}: {text_preview}"
             return text_preview
         elif isinstance(media, MessageMediaDocument):
-            if hasattr(media, 'document'):
+            if hasattr(media, "document"):
                 # Check attributes
-                for attr in getattr(media.document, 'attributes', []):
+                for attr in getattr(media.document, "attributes", []):
                     if isinstance(attr, DocumentAttributeSticker):
                         emoji = attr.alt or ""
                         media_text = f"{emoji} Sticker" if emoji else "Sticker"
@@ -109,11 +118,11 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
                         media_text = "📹 Video"
                         break
                     elif isinstance(attr, DocumentAttributeAudio):
-                        if getattr(attr, 'voice', False):
+                        if getattr(attr, "voice", False):
                             media_text = "🎤 Voice Message"
                         else:
-                            performer = getattr(attr, 'performer', '')
-                            title = getattr(attr, 'title', '')
+                            performer = getattr(attr, "performer", "")
+                            title = getattr(attr, "title", "")
                             if performer and title:
                                 media_text = f"🎵 {performer} - {title}"
                             elif title:
@@ -134,27 +143,29 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     elif not text and not media_text:
         text = "Media/Sticker"
 
-    text = html_unescape(text) # UNESCAPE HTML entities like &quot;
-    text = text.replace('\n', ' ')
+    text = html_unescape(text)  # UNESCAPE HTML entities like &quot;
+    text = text.replace("\n", " ")
 
     # Removed MAX_LENGTH truncation to allow full message on frontend
 
     prefix = ""
     if chat_type == ChatType.GROUP:
-        sender = getattr(message, 'sender', None)
+        sender = getattr(message, "sender", None)
         if sender:
             name = utils.get_display_name(sender)
             prefix = f"{name}: "
     elif chat_type == ChatType.FORUM and topic_map and message:
-        reply_to = getattr(message, 'reply_to', None)
+        reply_to = getattr(message, "reply_to", None)
         if reply_to:
-            tid = getattr(reply_to, 'reply_to_msg_id', None) or getattr(reply_to, 'reply_to_top_id', None)
+            tid = getattr(reply_to, "reply_to_msg_id", None) or getattr(
+                reply_to, "reply_to_top_id", None
+            )
             if tid is not None:
                 topic_name = topic_map.get(tid)
                 if topic_name:
-                     prefix = f"{topic_name}: "
+                    prefix = f"{topic_name}: "
     elif chat_type == ChatType.TOPIC:
-        sender = getattr(message, 'sender', None)
+        sender = getattr(message, "sender", None)
         if sender:
             name = utils.get_display_name(sender)
             prefix = f"{name}: "

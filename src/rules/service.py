@@ -11,40 +11,55 @@ from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
 
+
 class RuleService:
-    def __init__(self,
-                 rule_repo: RuleRepository,
-                 action_repo: ActionRepository,
-                 chat_repo: ChatRepository,
-                 settings_repo: SettingsRepository):
+    def __init__(
+        self,
+        rule_repo: RuleRepository,
+        action_repo: ActionRepository,
+        chat_repo: ChatRepository,
+        settings_repo: SettingsRepository,
+    ):
         self.rule_repo = rule_repo
         self.action_repo = action_repo
         self.chat_repo = chat_repo
         self.settings_repo = settings_repo
 
-    async def is_autoread_enabled(self, chat_id: int, topic_id: Optional[int] = None) -> bool:
+    async def is_autoread_enabled(
+        self, chat_id: int, topic_id: Optional[int] = None
+    ) -> bool:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
 
         # Priority 1: Check for a specific topic rule if we are in a topic
         if topic_id is not None:
             specific_rule = next(
-                (r for r in rules if r.topic_id == topic_id and r.rule_type == RuleType.AUTOREAD),
-                None
+                (
+                    r
+                    for r in rules
+                    if r.topic_id == topic_id and r.rule_type == RuleType.AUTOREAD
+                ),
+                None,
             )
             if specific_rule:
                 return specific_rule.enabled
 
         # Priority 2: Check for a chat-wide (global) rule
         global_rule = next(
-            (r for r in rules if r.topic_id is None and r.rule_type == RuleType.AUTOREAD),
-            None
+            (
+                r
+                for r in rules
+                if r.topic_id is None and r.rule_type == RuleType.AUTOREAD
+            ),
+            None,
         )
         if global_rule:
             return global_rule.enabled
 
         return False
 
-    async def check_global_autoread_rules(self, message: Message, unread_count: int) -> str:
+    async def check_global_autoread_rules(
+        self, message: Message, unread_count: int
+    ) -> str:
         """
         Checks global settings and returns the reason if it should be autoread.
         Returns empty string if no rule matches.
@@ -70,8 +85,10 @@ class RuleService:
 
         # 4. Autoread Bots
         if settings.autoread_bots:
-            bots_input = [b.strip() for b in settings.autoread_bots.split(',') if b.strip()]
-            target_usernames = {b.lstrip('@').lower() for b in bots_input}
+            bots_input = [
+                b.strip() for b in settings.autoread_bots.split(",") if b.strip()
+            ]
+            target_usernames = {b.lstrip("@").lower() for b in bots_input}
 
             sender_username = (message.sender_username or "").lower()
             if sender_username and sender_username in target_usernames:
@@ -103,7 +120,9 @@ class RuleService:
         # Assuming unread_count is effectively 1 since it's a real-time new message
         if not should_read:
             # We treat the event as if unread_count=1 for the check logic
-            reason = await self.check_global_autoread_rules(event.message_model, unread_count=1)
+            reason = await self.check_global_autoread_rules(
+                event.message_model, unread_count=1
+            )
             if reason:
                 should_read = True
 
@@ -117,22 +136,24 @@ class RuleService:
             # But wait, previously we had `if chat.unread_count > 1: return ""`.
             # We should probably keep that safety.
             if should_read and "global" in reason:
-                 chat = await self.chat_repo.get_chat(event.chat_id)
-                 if chat and chat.unread_count > 1:
-                     should_read = False
+                chat = await self.chat_repo.get_chat(event.chat_id)
+                if chat and chat.unread_count > 1:
+                    should_read = False
 
         if should_read:
             await self.chat_repo.mark_as_read(event.chat_id, event.topic_id)
             event.is_read = True
 
-            await self.action_repo.add_log(ActionLog(
-                action="autoread",
-                chat_id=event.chat_id,
-                chat_name=event.chat_name,
-                reason=reason,
-                date=datetime.now(),
-                link=event.link
-            ))
+            await self.action_repo.add_log(
+                ActionLog(
+                    action="autoread",
+                    chat_id=event.chat_id,
+                    chat_name=event.chat_name,
+                    reason=reason,
+                    date=datetime.now(),
+                    link=event.link,
+                )
+            )
 
     async def run_startup_scan(self):
         """
@@ -152,16 +173,22 @@ class RuleService:
                             # Apply Explicit Rules (or inherited Forum rules)
                             # Explicit rules override everything (Backlog is ignored)
                             if await self.is_autoread_enabled(chat.id, topic.id):
-                                logger.info("startup_autoread_topic", chat_id=chat.id, topic_id=topic.id)
-                                await self.chat_repo.mark_as_read(chat.id, topic.id)
-                                await self.action_repo.add_log(ActionLog(
-                                    action="startup_read",
+                                logger.info(
+                                    "startup_autoread_topic",
                                     chat_id=chat.id,
-                                    chat_name=f"{chat.name} (Topic {topic.id})",
-                                    reason="autoread_rule_startup",
-                                    date=datetime.now(),
-                                    link=f"/forum/{chat.id}"
-                                ))
+                                    topic_id=topic.id,
+                                )
+                                await self.chat_repo.mark_as_read(chat.id, topic.id)
+                                await self.action_repo.add_log(
+                                    ActionLog(
+                                        action="startup_read",
+                                        chat_id=chat.id,
+                                        chat_name=f"{chat.name} (Topic {topic.id})",
+                                        reason="autoread_rule_startup",
+                                        date=datetime.now(),
+                                        link=f"/forum/{chat.id}",
+                                    )
+                                )
 
                     # Case 2: Standard Chat
                     else:
@@ -179,39 +206,53 @@ class RuleService:
                             msgs = await self.chat_repo.get_messages(chat.id, limit=1)
                             if msgs:
                                 msg = msgs[0]
-                                reason = await self.check_global_autoread_rules(msg, chat.unread_count)
+                                reason = await self.check_global_autoread_rules(
+                                    msg, chat.unread_count
+                                )
                                 if reason:
                                     should_read = True
 
                         if should_read:
-                            logger.info("startup_autoread_chat", chat_id=chat.id, reason=reason)
+                            logger.info(
+                                "startup_autoread_chat", chat_id=chat.id, reason=reason
+                            )
                             await self.chat_repo.mark_as_read(chat.id)
-                            await self.action_repo.add_log(ActionLog(
-                                action="startup_read",
-                                chat_id=chat.id,
-                                chat_name=chat.name,
-                                reason=reason,
-                                date=datetime.now(),
-                                link=f"/chat/{chat.id}"
-                            ))
+                            await self.action_repo.add_log(
+                                ActionLog(
+                                    action="startup_read",
+                                    chat_id=chat.id,
+                                    chat_name=chat.name,
+                                    reason=reason,
+                                    date=datetime.now(),
+                                    link=f"/chat/{chat.id}",
+                                )
+                            )
 
                     # Slight delay to prevent flooding
                     await asyncio.sleep(0.1)
 
                 except Exception as e:
-                    logger.error("startup_scan_chat_error", chat_id=chat.id, error=str(e))
+                    logger.error(
+                        "startup_scan_chat_error", chat_id=chat.id, error=str(e)
+                    )
 
             logger.info("startup_scan_completed")
 
         except Exception as e:
             logger.error("startup_scan_failed", error=str(e))
 
-    async def toggle_autoread(self, chat_id: int, topic_id: Optional[int], enabled: bool) -> Rule:
+    async def toggle_autoread(
+        self, chat_id: int, topic_id: Optional[int], enabled: bool
+    ) -> Rule:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
 
         autoread_rule = next(
-            (r for r in rules if r.rule_type == RuleType.AUTOREAD and r.topic_id == topic_id),
-            None
+            (
+                r
+                for r in rules
+                if r.rule_type == RuleType.AUTOREAD and r.topic_id == topic_id
+            ),
+            None,
         )
 
         if autoread_rule:
@@ -224,7 +265,7 @@ class RuleService:
                 rule_type=RuleType.AUTOREAD,
                 chat_id=chat_id,
                 topic_id=topic_id,
-                enabled=enabled
+                enabled=enabled,
             )
             rule_id = await self.rule_repo.add(new_rule)
             new_rule.id = rule_id
