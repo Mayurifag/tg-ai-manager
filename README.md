@@ -33,20 +33,10 @@ Edit `.env` and paste your `TG_API_ID` and `TG_API_HASH`.
 
 ## Running
 
-### **Install dependencies**
-
-Ensure all dependencies, including development ones, are installed.
+### **Using Docker Compose (Development Environment)**
 
 ~~~bash
-uv sync --dev
-~~~
-
-### **Run with Live Reload (Development)**
-
-Use `hypercorn` with the `--reload` flag for development, which will monitor file changes and restart the server.
-
-~~~bash
-uv run hypercorn src.app:app --reload -b 0.0.0.0:8000
+make
 ~~~
 
 ### **Access Web Interface**
