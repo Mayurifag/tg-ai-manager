@@ -53,21 +53,8 @@ class EventHandlersMixin:
             if topic_name:
                 display_chat_name = f"{topic_name} - {chat_name}"
 
-            preview = domain_msg.text
-            if not preview and domain_msg.has_media:
-                 if domain_msg.is_sticker: preview = f"{domain_msg.sticker_emoji or ''} Sticker"
-                 elif domain_msg.is_video: preview = "📹 Video"
-                 elif domain_msg.is_audio:
-                     if domain_msg.is_voice: preview = "🎤 Voice"
-                     else: preview = f"🎵 {domain_msg.audio_performer or ''} - {domain_msg.audio_title or 'Music'}"
-                 elif domain_msg.is_poll:
-                     preview = f"Poll: {domain_msg.poll_question or 'Unknown Poll'}"
-                 else: preview = "📷 Media"
-
-            # Note: We keep SystemEvent previews short as they are for the sidebar feed,
-            # while the main chat list uses the mapper's full text.
-            if len(preview) > 75:
-                 preview = preview[:75] + '...'
+            # DRY: Use shared model method, no truncation here (frontend handles it)
+            preview = domain_msg.get_preview_text()
 
             sys_event = SystemEvent(
                 type="message",
@@ -95,10 +82,9 @@ class EventHandlersMixin:
             except: pass
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
-            preview = domain_msg.text
-            if not preview and domain_msg.has_media:
-                 preview = "Media/Sticker"
-            if len(preview) > 75: preview = preview[:75] + '...'
+
+            # DRY: Use shared model method, no truncation here
+            preview = domain_msg.get_preview_text()
 
             topic_id = self._extract_topic_id(event.message)
             topic_name = None

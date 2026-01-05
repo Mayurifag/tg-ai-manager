@@ -44,32 +44,23 @@ class ChatOperationsMixin:
         results = []
         for d in dialogs:
             chat_type = map_telethon_dialog_to_chat_type(d)
-            unread_topics_count = None
-            calculated_unread_count = d.unread_count
-            topic_map = {}
 
-            if chat_type == ChatType.FORUM:
-                response = await self._fetch_forum_topics_response(d.entity, limit=20)
-                if response:
-                    active_topics = response.topics
-                    for t in active_topics:
-                        topic_map[t.id] = t.title
-                    unread_topics = [t for t in active_topics if t.unread_count > 0]
-                    if unread_topics:
-                        unread_topics_count = len(unread_topics)
-                        calculated_unread_count = sum(t.unread_count for t in unread_topics)
+            # Optimization: Use the dialog's native unread_count.
+            # We no longer scan forum topics here to avoid N+1 network calls.
+            unread_count = d.unread_count
+            unread_topics_count = None
+
+            # Lazy load: Just get the URL if valid, don't download
+            image_url = await self._get_chat_image(d.entity, d.id)
 
             msg = getattr(d, 'message', None)
             if msg:
                 self._cache_message_chat(msg.id, d.id)
 
-            preview = format_message_preview(msg, chat_type, topic_map)
-
-            # Lazy load: Just get the URL if valid, don't download
-            image_url = await self._get_chat_image(d.entity, d.id)
+            preview = format_message_preview(msg, chat_type, {})
 
             results.append(Chat(
-                id=d.id, name=d.name, unread_count=calculated_unread_count,
+                id=d.id, name=d.name, unread_count=unread_count,
                 type=chat_type, unread_topics_count=unread_topics_count,
                 last_message_preview=preview, image_url=image_url,
                 is_pinned=d.pinned
@@ -116,17 +107,6 @@ class ChatOperationsMixin:
                     last_message_preview = "No messages"
             except Exception as e:
                 logger.warning("fetch_latest_message_failed", chat_id=chat_id, error=str(e))
-
-            if c_type == ChatType.FORUM:
-                try:
-                    topics_res = await self._fetch_forum_topics_response(entity, limit=20)
-                    if topics_res:
-                        unread_topics = [t for t in topics_res.topics if t.unread_count > 0]
-                        if unread_topics:
-                            unread_topics_count = len(unread_topics)
-                            unread_count = sum(t.unread_count for t in unread_topics)
-                except Exception as e:
-                    logger.warning("fetch_forum_stats_failed", chat_id=chat_id, error=str(e))
 
             return Chat(
                 id=chat_id,
@@ -175,12 +155,17 @@ class ChatOperationsMixin:
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         try:
             entity = await self.client.get_entity(chat_id)
+            # We keep the logic here as requested to show previews,
+            # but this is only called when viewing a specific forum.
             response = await self._fetch_forum_topics_response(entity, limit=limit)
             topics = []
             if not response: return topics
-            top_message_ids = [t.top_message for t in response.topics]
+
+            valid_topics = [t for t in response.topics if not isinstance(t, types.ForumTopicDeleted)]
+
+            top_message_ids = [t.top_message for t in valid_topics]
             messages_map = await self._get_top_messages_map(entity, top_message_ids)
-            for t in response.topics:
+            for t in valid_topics:
                 last_msg = messages_map.get(t.top_message)
                 preview = format_message_preview(last_msg, ChatType.TOPIC)
                 topics.append(Chat(
@@ -211,14 +196,21 @@ class ChatOperationsMixin:
         try:
             entity = await self.client.get_entity(chat_id)
             if topic_id:
-                msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
-                max_id = msgs[0].id if msgs else topic_id
+                try:
+                    msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
+                    max_id = msgs[0].id if msgs else topic_id
 
-                await self.client(functions.messages.ReadDiscussionRequest(
-                    peer=entity,
-                    msg_id=topic_id,
-                    read_max_id=max_id
-                ))
+                    await self.client(functions.messages.ReadDiscussionRequest(
+                        peer=entity,
+                        msg_id=topic_id,
+                        read_max_id=max_id
+                    ))
+                except Exception as e:
+                    # Ignore if the topic is invalid (e.g. deleted), log others
+                    if "TOPIC_ID_INVALID" in str(e):
+                        logger.warning("mark_read_topic_invalid", chat_id=chat_id, topic_id=topic_id)
+                    else:
+                        raise e
             else:
                  await self.client.send_read_acknowledge(entity)
         except Exception as e:

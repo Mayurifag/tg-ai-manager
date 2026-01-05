@@ -54,6 +54,28 @@ class Message:
     # Service Messages
     is_service: bool = False
 
+    def get_preview_text(self) -> str:
+        """Returns a text representation of the message, handling media fallbacks."""
+        if self.text:
+            return self.text
+
+        if self.has_media:
+            if self.is_sticker:
+                return f"{self.sticker_emoji or ''} Sticker"
+            elif self.is_video:
+                return "📹 Video"
+            elif self.is_audio:
+                if self.is_voice:
+                    return "🎤 Voice"
+                performer = self.audio_performer or ""
+                title = self.audio_title or "Music"
+                return f"🎵 {performer} - {title}" if performer else f"🎵 {title}"
+            elif self.is_poll:
+                return f"Poll: {self.poll_question or 'Unknown Poll'}"
+            return "📷 Media"
+
+        return "Message"
+
 @dataclass
 class SystemEvent:
     type: str # "message", "edited", "deleted", "action"

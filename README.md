@@ -55,5 +55,7 @@ Open <http://localhost:8000>
 
 ## TODO
 
+- on startup - go through all unreaded chats/topics and autoread if they have to be autoreaden
+- checking topics autoreading
 - Forums needs to fetch all messages? see if its optimizable or paralleled
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/)? Seems I do not need this for now
