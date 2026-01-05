@@ -55,7 +55,7 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- live events - get back to 5
+- live events - get back to 5. Should we care about "edited" events? I dont care about them?
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
 - saving msgs in valkey/[dramatiq](https://dramatiq.io/) for performance to have less internet queries. think this much.
