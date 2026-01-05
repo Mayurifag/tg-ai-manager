@@ -15,17 +15,12 @@ T = TypeVar("T")
 class BaseValkeyLogRepository(Generic[T]):
     """
     Shared logic for logging time-series data to Valkey (Redis) using ZSETs.
-    Handles serialization, insertion with scoring, and time-based auto-expiration.
+    Handles serialization, insertion with scoring, and manual cleanup.
     """
     def __init__(self, redis_url: str, key_prefix: str, ttl_seconds: int):
         self.redis = Redis.from_url(redis_url, decode_responses=True)
         self.key_prefix = key_prefix
         self.ttl_seconds = ttl_seconds
-
-        # Optimization: Track cleanup locally to avoid ZREMRANGEBYSCORE calls on every insert
-        self._last_cleanup_time = 0.0
-        # Cleanup at most once every 10% of TTL or 5 minutes, whichever is smaller
-        self._cleanup_interval = min(300, max(60, ttl_seconds // 10))
 
     def _serialize(self, obj: Any) -> Any:
         """Recursively convert datetime objects to ISO format."""
@@ -47,21 +42,17 @@ class BaseValkeyLogRepository(Generic[T]):
             # 2. Add to Sorted Set
             await self.redis.zadd(self.key_prefix, {data_str: score})
 
-            # 3. Conditional Cleanup
-            now = time.time()
-            if now - self._last_cleanup_time > self._cleanup_interval:
-                await self._cleanup_old_items(now)
-
         except Exception as e:
             logger.error(f"{self.key_prefix}_add_failed", error=str(e))
 
-    async def _cleanup_old_items(self, now: float) -> None:
+    async def cleanup_expired(self) -> None:
+        """Removes items older than ttl_seconds."""
         try:
+            now = time.time()
             cutoff = now - self.ttl_seconds
             removed = await self.redis.zremrangebyscore(self.key_prefix, "-inf", cutoff)
             if removed > 0:
-                logger.debug(f"{self.key_prefix}_cleanup", removed_count=removed)
-            self._last_cleanup_time = now
+                logger.info(f"{self.key_prefix}_cleanup", removed_count=removed)
         except Exception as e:
             logger.error(f"{self.key_prefix}_cleanup_failed", error=str(e))
 
@@ -76,8 +67,8 @@ class BaseValkeyLogRepository(Generic[T]):
 
 class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepository):
     def __init__(self, redis_url: str):
-        # 24 Hours (86400 seconds) TTL
-        super().__init__(redis_url, key_prefix="action_log", ttl_seconds=86400)
+        # 3 Hours TTL (10800 seconds)
+        super().__init__(redis_url, key_prefix="action_log", ttl_seconds=10800)
         self.sequence_key = "action_log_seq"
 
     async def add_log(self, log: ActionLog) -> None:
@@ -87,8 +78,6 @@ class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepositor
             log.id = log_id
 
             # Convert to dict for storage
-            # We construct dict manually to ensure flattened structure matching previous impl if needed,
-            # or just use asdict. Using asdict is cleaner.
             log_dict = asdict(log)
 
             await self._add_item(log_dict, log.date.timestamp())
@@ -107,12 +96,11 @@ class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepositor
 
 class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepository):
     def __init__(self, redis_url: str):
-        # 1 Hour (3600 seconds) TTL
-        super().__init__(redis_url, key_prefix="system_events", ttl_seconds=3600)
+        # 3 Hours TTL (10800 seconds)
+        super().__init__(redis_url, key_prefix="system_events", ttl_seconds=10800)
 
     async def add_event(self, event: SystemEvent) -> None:
         # We don't need to persist 'rendered_html' as it is transient/large
-        # and re-generated or unused in sidebar history.
         event_copy = asdict(event)
         event_copy['rendered_html'] = None
 

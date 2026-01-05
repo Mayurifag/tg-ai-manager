@@ -25,14 +25,14 @@ def _get_tg_adapter() -> TelethonAdapter:
         )
     return _tg_adapter
 
-def _get_action_repo() -> ValkeyActionRepository:
+def get_action_repo() -> ValkeyActionRepository:
     global _action_repo
     if _action_repo is None:
         settings = get_settings()
         _action_repo = ValkeyActionRepository(settings.VALKEY_URL)
     return _action_repo
 
-def _get_event_repo() -> ValkeyEventRepository:
+def get_event_repo() -> ValkeyEventRepository:
     global _event_repo
     if _event_repo is None:
         settings = get_settings()
@@ -50,8 +50,8 @@ def get_chat_interactor() -> ChatInteractor:
     if _interactor is None:
         _interactor = ChatInteractor(
             _get_tg_adapter(),
-            _get_action_repo(),
-            _get_event_repo()
+            get_action_repo(),
+            get_event_repo()
         )
     return _interactor
 
@@ -61,7 +61,7 @@ def get_rule_service() -> RuleService:
         rule_repo = SqliteRuleRepository() # Defaults to data.db
         _rule_service = RuleService(
             rule_repo,
-            _get_action_repo(),
+            get_action_repo(),
             _get_tg_adapter(),
             _get_settings_repo()
         )
