@@ -3,7 +3,7 @@ import os
 from quart import Quart
 from src.web.routes import register_routes
 from src.web.sse import broadcast_event, shutdown_event, connected_queues
-from src.container import get_chat_interactor, get_rule_service
+from src.container import get_chat_interactor, get_rule_service, get_action_repo, get_event_repo
 from src.jinja_filters import file_mtime_filter
 from src.infrastructure.logging import configure_logging, get_logger
 
@@ -44,6 +44,9 @@ def create_app() -> Quart:
         rule_service = get_rule_service()
         asyncio.create_task(rule_service.run_startup_scan())
 
+        # Start cleanup job
+        asyncio.create_task(job_cleanup_valkey())
+
     @app.after_serving
     async def shutdown():
         logger.info("application_shutdown")
@@ -73,3 +76,22 @@ def create_app() -> Quart:
         return {'recent_events': events}
 
     return app
+
+async def job_cleanup_valkey():
+    """Background task to clean old logs and events."""
+    action_repo = get_action_repo()
+    event_repo = get_event_repo()
+
+    logger.info("cleanup_job_started")
+    while not shutdown_event.is_set():
+        try:
+            await action_repo.cleanup_expired()
+            await event_repo.cleanup_expired()
+        except Exception as e:
+            logger.error("cleanup_job_error", error=str(e))
+
+        # Run every hour to ensure data adheres to the 3h TTL
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=3600)
+        except asyncio.TimeoutError:
+            pass
