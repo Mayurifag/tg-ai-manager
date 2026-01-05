@@ -12,11 +12,13 @@ logger = get_logger(__name__)
 
 T = TypeVar("T")
 
+
 class BaseValkeyLogRepository(Generic[T]):
     """
     Shared logic for logging time-series data to Valkey (Redis) using ZSETs.
     Handles serialization, insertion with scoring, and manual cleanup.
     """
+
     def __init__(self, redis_url: str, key_prefix: str, ttl_seconds: int):
         self.redis = Redis.from_url(redis_url, decode_responses=True)
         self.key_prefix = key_prefix
@@ -65,6 +67,7 @@ class BaseValkeyLogRepository(Generic[T]):
             logger.error(f"{self.key_prefix}_fetch_failed", error=str(e))
             return []
 
+
 class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepository):
     def __init__(self, redis_url: str):
         # 3 Hours TTL (10800 seconds)
@@ -89,10 +92,11 @@ class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepositor
         results = []
         for d in dicts:
             # Reconstruct datetime
-            if 'date' in d and isinstance(d['date'], str):
-                d['date'] = datetime.fromisoformat(d['date'])
+            if "date" in d and isinstance(d["date"], str):
+                d["date"] = datetime.fromisoformat(d["date"])
             results.append(ActionLog(**d))
         return results
+
 
 class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepository):
     def __init__(self, redis_url: str):
@@ -102,7 +106,7 @@ class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepositor
     async def add_event(self, event: SystemEvent) -> None:
         # We don't need to persist 'rendered_html' as it is transient/large
         event_copy = asdict(event)
-        event_copy['rendered_html'] = None
+        event_copy["rendered_html"] = None
 
         await self._add_item(event_copy, event.date.timestamp())
 
@@ -111,15 +115,15 @@ class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepositor
         results = []
         for d in dicts:
             # Recursively reconstruct datatypes
-            if 'date' in d and isinstance(d['date'], str):
-                d['date'] = datetime.fromisoformat(d['date'])
+            if "date" in d and isinstance(d["date"], str):
+                d["date"] = datetime.fromisoformat(d["date"])
 
             # Reconstruct nested Message object if present
-            if d.get('message_model'):
-                msg_data = d['message_model']
-                if 'date' in msg_data and isinstance(msg_data['date'], str):
-                    msg_data['date'] = datetime.fromisoformat(msg_data['date'])
-                d['message_model'] = Message(**msg_data)
+            if d.get("message_model"):
+                msg_data = d["message_model"]
+                if "date" in msg_data and isinstance(msg_data["date"], str):
+                    msg_data["date"] = datetime.fromisoformat(msg_data["date"])
+                d["message_model"] = Message(**msg_data)
 
             results.append(SystemEvent(**d))
         return results

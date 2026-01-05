@@ -3,11 +3,17 @@ import os
 from quart import Quart
 from src.web.routes import register_routes
 from src.web.sse import broadcast_event, shutdown_event, connected_queues
-from src.container import get_chat_interactor, get_rule_service, get_action_repo, get_event_repo
+from src.container import (
+    get_chat_interactor,
+    get_rule_service,
+    get_action_repo,
+    get_event_repo,
+)
 from src.jinja_filters import file_mtime_filter
 from src.infrastructure.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
 
 def create_app() -> Quart:
     # Configure structured logging
@@ -73,9 +79,10 @@ def create_app() -> Quart:
         """
         interactor = get_chat_interactor()
         events = await interactor.get_recent_events()
-        return {'recent_events': events}
+        return {"recent_events": events}
 
     return app
+
 
 async def job_cleanup_valkey():
     """Background task to clean old logs and events."""

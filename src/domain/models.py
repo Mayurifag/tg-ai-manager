@@ -3,12 +3,14 @@ from typing import Optional
 from enum import Enum
 from datetime import datetime
 
+
 class ChatType(str, Enum):
     USER = "user"
     GROUP = "group"
     CHANNEL = "channel"
     FORUM = "forum"
     TOPIC = "topic"
+
 
 @dataclass
 class Chat:
@@ -21,6 +23,7 @@ class Chat:
     image_url: Optional[str] = None
     icon_emoji: Optional[str] = None
     is_pinned: bool = False
+
 
 @dataclass
 class Message:
@@ -47,7 +50,7 @@ class Message:
     is_voice: bool = False
     audio_title: Optional[str] = None
     audio_performer: Optional[str] = None
-    audio_duration: Optional[int] = None # Seconds
+    audio_duration: Optional[int] = None  # Seconds
     # Poll fields
     is_poll: bool = False
     poll_question: Optional[str] = None
@@ -76,9 +79,10 @@ class Message:
 
         return "Message"
 
+
 @dataclass
 class SystemEvent:
-    type: str # "message", "edited", "deleted", "action"
+    type: str  # "message", "edited", "deleted", "action"
     text: str
     chat_name: str
     topic_name: Optional[str] = None
@@ -89,6 +93,7 @@ class SystemEvent:
     message_model: Optional[Message] = None
     rendered_html: Optional[str] = None
     is_read: bool = False
+
 
 @dataclass
 class ActionLog:

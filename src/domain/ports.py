@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Callable, Awaitable
 from src.domain.models import Chat, Message, SystemEvent, ActionLog
 
+
 class ChatRepository(ABC):
     @abstractmethod
     async def connect(self):
@@ -25,7 +26,13 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_messages(self, chat_id: int, limit: int = 20, topic_id: Optional[int] = None, offset_id: int = 0) -> List[Message]:
+    async def get_messages(
+        self,
+        chat_id: int,
+        limit: int = 20,
+        topic_id: Optional[int] = None,
+        offset_id: int = 0,
+    ) -> List[Message]:
         pass
 
     @abstractmethod
@@ -62,6 +69,7 @@ class ChatRepository(ABC):
         """Marks the chat or specific topic as read."""
         pass
 
+
 class ActionRepository(ABC):
     @abstractmethod
     async def add_log(self, log: ActionLog) -> None:
@@ -70,6 +78,7 @@ class ActionRepository(ABC):
     @abstractmethod
     async def get_logs(self, limit: int = 50) -> List[ActionLog]:
         pass
+
 
 class EventRepository(ABC):
     @abstractmethod

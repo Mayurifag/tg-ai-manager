@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     TG_API_ID: int
     TG_API_HASH: str
@@ -12,5 +13,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
 
+
 def get_settings():
-    return Settings() # type: ignore
+    return Settings()  # type: ignore

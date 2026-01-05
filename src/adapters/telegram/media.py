@@ -1,10 +1,16 @@
 import os
 from typing import Optional, Any
 from telethon import utils
-from telethon.tl.types import MessageMediaDocument, DocumentAttributeSticker, DocumentAttributeAudio, DocumentAttributeVideo
+from telethon.tl.types import (
+    MessageMediaDocument,
+    DocumentAttributeSticker,
+    DocumentAttributeAudio,
+    DocumentAttributeVideo,
+)
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
+
 
 class MediaMixin:
     def __init__(self):
@@ -39,8 +45,10 @@ class MediaMixin:
         Refactored: Now returns the URL string if the entity has a photo,
         without checking disk or downloading.
         """
-        if hasattr(entity, 'photo') and entity.photo:
-            if getattr(entity.photo, 'photo_id', None) or getattr(entity.photo, 'photo_small', None):
+        if hasattr(entity, "photo") and entity.photo:
+            if getattr(entity.photo, "photo_id", None) or getattr(
+                entity.photo, "photo_small", None
+            ):
                 return f"/media/avatar/{chat_id}"
         return None
 
@@ -74,7 +82,9 @@ class MediaMixin:
                 logger.debug("avatar_entity_not_found", chat_id=chat_id)
                 return None
 
-            result = await self.client.download_profile_photo(entity, file=path, download_big=False)
+            result = await self.client.download_profile_photo(
+                entity, file=path, download_big=False
+            )
             if result:
                 return path
             return None
@@ -90,20 +100,24 @@ class MediaMixin:
                 return None
             message = messages[0]
 
-            if not message or not getattr(message, 'media', None):
+            if not message or not getattr(message, "media", None):
                 return None
 
             ext = "jpg"
             guessed_ext = utils.get_extension(message.media)
             if guessed_ext:
-                ext = guessed_ext.lstrip('.')
+                ext = guessed_ext.lstrip(".")
 
-            if hasattr(message.media, 'document'):
-                 if hasattr(message.media.document, 'mime_type'):
-                     if 'webp' in message.media.document.mime_type: ext = "webp"
-                     elif 'audio/ogg' in message.media.document.mime_type: ext = "ogg"
-                     elif 'audio/mpeg' in message.media.document.mime_type: ext = "mp3"
-                     elif 'video/mp4' in message.media.document.mime_type: ext = "mp4"
+            if hasattr(message.media, "document"):
+                if hasattr(message.media.document, "mime_type"):
+                    if "webp" in message.media.document.mime_type:
+                        ext = "webp"
+                    elif "audio/ogg" in message.media.document.mime_type:
+                        ext = "ogg"
+                    elif "audio/mpeg" in message.media.document.mime_type:
+                        ext = "mp3"
+                    elif "video/mp4" in message.media.document.mime_type:
+                        ext = "mp4"
 
             filename = f"media_{chat_id}_{message_id}.{ext}"
             path = os.path.join(self.images_dir, filename)
@@ -116,23 +130,31 @@ class MediaMixin:
             is_video = False
 
             if isinstance(message.media, MessageMediaDocument):
-                 for attr in getattr(message.media.document, 'attributes', []):
-                      if isinstance(attr, DocumentAttributeSticker): is_sticker = True
-                      if isinstance(attr, DocumentAttributeAudio): is_audio = True
-                      if isinstance(attr, DocumentAttributeVideo): is_video = True
+                for attr in getattr(message.media.document, "attributes", []):
+                    if isinstance(attr, DocumentAttributeSticker):
+                        is_sticker = True
+                    if isinstance(attr, DocumentAttributeAudio):
+                        is_audio = True
+                    if isinstance(attr, DocumentAttributeVideo):
+                        is_video = True
 
             result = None
             if is_sticker or is_audio or is_video:
-                 result = await self.client.download_media(message, file=path)
+                result = await self.client.download_media(message, file=path)
             else:
-                 result = await self.client.download_media(message, file=path, thumb='m')
-                 if not result:
-                     result = await self.client.download_media(message, file=path)
+                result = await self.client.download_media(message, file=path, thumb="m")
+                if not result:
+                    result = await self.client.download_media(message, file=path)
 
             if result:
-                 final_filename = os.path.basename(result)
-                 return f"/cache/{final_filename}"
+                final_filename = os.path.basename(result)
+                return f"/cache/{final_filename}"
 
         except Exception as e:
-            logger.error("download_media_failed", chat_id=chat_id, message_id=message_id, error=str(e))
+            logger.error(
+                "download_media_failed",
+                chat_id=chat_id,
+                message_id=message_id,
+                error=str(e),
+            )
         return None

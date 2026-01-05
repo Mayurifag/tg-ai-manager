@@ -4,11 +4,13 @@ from typing import Callable, TypeVar, Any
 
 T = TypeVar("T")
 
+
 class BaseSqliteRepository:
     """
     Base repository handling SQLite connection creation and
     async execution offloading.
     """
+
     def __init__(self, db_path: str = "data.db"):
         self.db_path = db_path
 

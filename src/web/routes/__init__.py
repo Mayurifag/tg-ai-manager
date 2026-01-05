@@ -6,6 +6,7 @@ from src.web.routes.media import media_bp
 from src.web.routes.sse import sse_bp
 from src.web.routes.settings import settings_bp
 
+
 def register_routes(app: Quart):
     app.register_blueprint(chat_bp)
     app.register_blueprint(forum_bp)

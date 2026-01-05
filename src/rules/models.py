@@ -3,9 +3,11 @@ from typing import Optional
 from enum import Enum
 from datetime import datetime
 
+
 class RuleType(str, Enum):
     AUTOREAD = "autoread"
     # Future: SKIP, DELETE, REPLY, etc.
+
 
 @dataclass
 class Rule:
@@ -16,6 +18,7 @@ class Rule:
     enabled: bool = True
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+
 
 @dataclass
 class AutoReadRule(Rule):
