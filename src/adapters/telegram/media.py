@@ -65,7 +65,15 @@ class MediaMixin:
             return path
 
         try:
-            entity = await self.client.get_entity(chat_id)
+            # Try to resolve entity. If not found (e.g. unknown PeerUser), this raises ValueError.
+            try:
+                entity = await self.client.get_entity(chat_id)
+            except ValueError:
+                # Common for users not in session cache (lazy loading side effect)
+                # We log this as debug to avoid spamming errors for every unknown user.
+                logger.debug("avatar_entity_not_found", chat_id=chat_id)
+                return None
+
             result = await self.client.download_profile_photo(entity, file=path, download_big=False)
             if result:
                 return path

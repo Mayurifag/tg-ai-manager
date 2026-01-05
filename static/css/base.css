@@ -75,6 +75,9 @@ body {
     margin-bottom: 20px;
     padding-bottom: 10px;
     border-bottom: 1px solid #333;
+    /* Ensure flex container handles layout properly */
+    display: flex;
+    flex-direction: column;
 }
 
 #event-feed-list {
@@ -98,6 +101,11 @@ body {
     font-size: 0.85rem;
     border-left: 3px solid #555;
     animation: fadeIn 0.3s ease-in-out;
+
+    /* Fix overlap issues: ensure content stays inside the box */
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 @keyframes fadeIn {
@@ -116,6 +124,7 @@ body {
     margin-bottom: 4px;
     font-size: 0.75rem;
     color: #aaa;
+    flex-shrink: 0;
 }
 
 .event-type {
@@ -132,10 +141,15 @@ body {
 
 .event-text {
     color: #ddd;
-    white-space: nowrap;
+    line-height: 1.3;
+
+    /* Improved text handling: Allow multiple lines but truncate with ellipsis */
+    display: -webkit-box;
+    -webkit-line-clamp: 4; /* Show up to 4 lines */
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    line-height: 1.2;
+    white-space: normal;
+    word-break: break-word; /* Prevent long words from overflowing */
 }
 
 .settings-header {

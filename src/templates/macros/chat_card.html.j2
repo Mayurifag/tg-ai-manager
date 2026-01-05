@@ -67,15 +67,7 @@
     {% if chat.unread_count > 0 %}
     <div class="meta">
         <div class="unread">
-            {% if chat.type.value == 'forum' %}
-            {% if chat.unread_topics_count and chat.unread_topics_count > 0 %}
-            {{ chat.unread_count }} ({{ chat.unread_topics_count }} topics)
-            {% else %}
             {{ chat.unread_count }}
-            {% endif %}
-            {% else %}
-            {{ chat.unread_count }}
-            {% endif %}
         </div>
     </div>
     {% endif %}

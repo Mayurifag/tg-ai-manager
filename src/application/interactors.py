@@ -8,7 +8,8 @@ class ChatInteractor:
     def __init__(self, repository: ChatRepository, action_repo: ActionRepository):
         self.repository = repository
         self.action_repo = action_repo
-        self.recent_events = deque(maxlen=5)
+        # Increased to 10 as requested
+        self.recent_events = deque(maxlen=10)
 
     async def initialize(self):
         await self.repository.connect()
