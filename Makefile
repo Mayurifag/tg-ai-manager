@@ -22,5 +22,4 @@ logs:
 # Clean up artifacts (optional)
 clean:
 	rm -rf __pycache__
-	rm -rf .pytest_cache
 	rm -rf cache/*
