@@ -55,10 +55,10 @@
         </div>
 
         <div class="setting-group">
-            <label>Autoread Bots / Users (Partial Name Match)</label>
+            <label>Autoread Bots / Users (Usernames Only)</label>
             <input type="text" name="autoread_bots" value="{{ settings.autoread_bots }}"
-                placeholder="@lolsBotCatcherBot, BotName">
-            <div class="desc">Comma separated. Matches if sender's name contains these strings.</div>
+                placeholder="@BotFather, @OtherBot">
+            <div class="desc">Comma separated list of usernames. You can include or omit the '@' symbol.</div>
         </div>
 
         <div class="setting-group">
