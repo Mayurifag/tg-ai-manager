@@ -1,4 +1,21 @@
 services:
+  app:
+    build:
+      context: .
+      dockerfile: dev.Dockerfile
+    container_name: tg_ai_manager_app
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - TG_API_ID=${TG_API_ID}
+      - TG_API_HASH=${TG_API_HASH}
+      - VALKEY_URL=redis://valkey:6379/0
+    depends_on:
+      valkey:
+        condition: service_healthy
+
   valkey:
     image: valkey/valkey:8
     container_name: tg_ai_manager_valkey

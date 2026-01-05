@@ -55,7 +55,6 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- docker-compose and dockerfile
-- Valkey - log events and actions with autoexpire
+- valkey check if autoexpire every 1h works for data old then 1h. Single job has to be done, no need for two jobs. Make valkey save data on disk
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
