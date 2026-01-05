@@ -6,6 +6,6 @@ __pycache__/
 *.session-journal
 
 /cache/
-/actions.db
-/rules.db
-/settings.db
+/data.db
+/data.db-shm
+/data.db-wal

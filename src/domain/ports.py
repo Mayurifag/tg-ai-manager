@@ -70,3 +70,12 @@ class ActionRepository(ABC):
     @abstractmethod
     async def get_logs(self, limit: int = 50) -> List[ActionLog]:
         pass
+
+class EventRepository(ABC):
+    @abstractmethod
+    async def add_event(self, event: SystemEvent) -> None:
+        pass
+
+    @abstractmethod
+    async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
+        pass
