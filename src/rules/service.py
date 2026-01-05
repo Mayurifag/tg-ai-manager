@@ -76,12 +76,15 @@ class RuleService:
         if settings.autoread_self and msg.is_outgoing:
             return "global_self"
 
-        # 4. Autoread Bots
+        # 4. Autoread Bots (By Username only)
         if settings.autoread_bots:
-            bots = [b.strip().lower() for b in settings.autoread_bots.split(',') if b.strip()]
-            sender_name = (msg.sender_name or "").lower()
-            if any(b in sender_name for b in bots):
-                return f"global_bot_{sender_name}"
+            bots_input = [b.strip() for b in settings.autoread_bots.split(',') if b.strip()]
+            # Normalize: remove leading @ and lower case
+            target_usernames = {b.lstrip('@').lower() for b in bots_input}
+
+            sender_username = (msg.sender_username or "").lower()
+            if sender_username and sender_username in target_usernames:
+                return f"global_bot_{sender_username}"
 
         # 5. Autoread Regex
         if settings.autoread_regex and msg.text:
@@ -114,6 +117,9 @@ class RuleService:
         if should_read:
             # Perform actual read operation
             await self.chat_repo.mark_as_read(event.chat_id, event.topic_id)
+
+            # Set flag on event so frontend knows not to increment unread counter
+            event.is_read = True
 
             chat_name = event.chat_name
 

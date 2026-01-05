@@ -30,6 +30,7 @@ class Message:
     sender_name: str
     is_outgoing: bool
     sender_id: Optional[int] = None
+    sender_username: Optional[str] = None
     avatar_url: Optional[str] = None
     sender_color: Optional[str] = None
     sender_initials: Optional[str] = None
@@ -65,6 +66,7 @@ class SystemEvent:
     link: Optional[str] = None
     message_model: Optional[Message] = None
     rendered_html: Optional[str] = None
+    is_read: bool = False
 
 @dataclass
 class ActionLog:

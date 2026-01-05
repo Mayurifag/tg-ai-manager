@@ -110,6 +110,7 @@ class MessageParserMixin:
 
         sender_name = "Unknown"
         sender_id = 0
+        sender_username = None
         avatar_url = None
         sender_initials = "?"
         sender_color = "#ccc"
@@ -126,6 +127,7 @@ class MessageParserMixin:
         if sender:
              sender_id = sender.id
              sender_name = utils.get_display_name(sender)
+             sender_username = getattr(sender, 'username', None)
              avatar_url = await self._get_chat_image(sender, sender_id)
 
         sender_color = self._get_sender_color(sender, sender_id)
@@ -149,6 +151,7 @@ class MessageParserMixin:
         return Message(
             id=msg.id, text=text, date=msg.date or datetime.now(), sender_name=sender_name,
             is_outgoing=getattr(msg, 'out', False), sender_id=sender_id,
+            sender_username=sender_username,
             avatar_url=avatar_url, sender_color=sender_color,
             sender_initials=sender_initials, reply_to_msg_id=reply_to_msg_id,
             reply_to_text=reply_to_text, reply_to_sender_name=reply_to_sender,

@@ -131,22 +131,30 @@
                 if (previewEl) previewEl.textContent = data.text;
 
                 const chatCard = cardWrapper.querySelector('.chat-card');
-                let unreadBadge = chatCard.querySelector('.unread');
 
-                if (unreadBadge) {
-                    let count = parseInt(unreadBadge.textContent);
-                    if (!isNaN(count)) unreadBadge.textContent = count + 1;
-                } else {
-                    let metaDiv = chatCard.querySelector('.meta');
-                    if (!metaDiv) {
-                        metaDiv = document.createElement('div');
-                        metaDiv.className = 'meta';
-                        chatCard.appendChild(metaDiv);
+                // --- Logic Update for is_read ---
+                if (!data.is_read) {
+                    let unreadBadge = chatCard.querySelector('.unread');
+                    if (unreadBadge) {
+                        let count = parseInt(unreadBadge.textContent);
+                        if (!isNaN(count)) unreadBadge.textContent = count + 1;
+                    } else {
+                        let metaDiv = chatCard.querySelector('.meta');
+                        if (!metaDiv) {
+                            metaDiv = document.createElement('div');
+                            metaDiv.className = 'meta';
+                            chatCard.appendChild(metaDiv);
+                        }
+                        const newBadge = document.createElement('div');
+                        newBadge.className = 'unread';
+                        newBadge.textContent = '1';
+                        metaDiv.appendChild(newBadge);
                     }
-                    const newBadge = document.createElement('div');
-                    newBadge.className = 'unread';
-                    newBadge.textContent = '1';
-                    metaDiv.appendChild(newBadge);
+                } else {
+                    // If autoread, verify we don't have a stray badge?
+                    // Usually we don't remove existing badge because backlog logic blocks autoread.
+                    // But if the chat was 0 unread, and this message is autoread,
+                    // we simply do NOTHING to the badge (it stays absent).
                 }
 
                 const isPinned = cardWrapper.getAttribute('data-is-pinned') === 'true';
