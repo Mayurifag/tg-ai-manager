@@ -6,7 +6,7 @@ from src.rules.ports import RuleRepository
 from src.infrastructure.db import BaseSqliteRepository
 
 class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
-    def __init__(self, db_path: str = "rules.db"):
+    def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
         self._init_db()
 
@@ -24,6 +24,14 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_topic ON rules(chat_id, topic_id)")
+
+            # Schema Versioning (Simple check to ensure table exists)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_versions (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
     async def get_by_chat_and_topic(self, chat_id: int, topic_id: Optional[int] = None) -> List[Rule]:

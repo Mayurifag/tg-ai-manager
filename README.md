@@ -1,12 +1,12 @@
 # Telegram AI Manager
 
-A LOT OF WORK TO BE DONE IN THIS REPO!
+A LOT OF WORK TO BE DONE IN THIS REPO! ASLO ITS VIBE-CODED PRETTY MUCH!!
 
 Personal assisstant for telegram accounts with tons of (yet developing)
 features like auto-read/skipping ads or trash messages or finding information in
 those shitty city chats, auto-replying/likes, etc. Might manage multiple user
 accounts via MTProto API. In future I might also add local models which might be
-learned on the context of specific chat.
+learned on the context of specific chat and user might ask questions to it.
 
 Managed via web interface, which deployed to VPS using docker image and env
 variables. Built using Telethon. Async event-driven architecture.
@@ -55,7 +55,7 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- live events - get back to 5. Should we care about "edited" events? I dont care about them?
+- docker-compose and dockerfile
+- Valkey - log events and actions with autoexpire
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
-- saving msgs in valkey/[dramatiq](https://dramatiq.io/) for performance to have less internet queries. think this much.

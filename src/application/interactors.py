@@ -1,15 +1,16 @@
 from typing import List, Optional, Callable, Awaitable
-from collections import deque
-from datetime import datetime
-from src.domain.ports import ChatRepository, ActionRepository
+from src.domain.ports import ChatRepository, ActionRepository, EventRepository
 from src.domain.models import Chat, Message, SystemEvent, ActionLog, ChatType
+from datetime import datetime
 
 class ChatInteractor:
-    def __init__(self, repository: ChatRepository, action_repo: ActionRepository):
+    def __init__(self,
+                 repository: ChatRepository,
+                 action_repo: ActionRepository,
+                 event_repo: EventRepository):
         self.repository = repository
         self.action_repo = action_repo
-        # Increased to 10 as requested
-        self.recent_events = deque(maxlen=10)
+        self.event_repo = event_repo
 
     async def initialize(self):
         await self.repository.connect()
@@ -76,9 +77,13 @@ class ChatInteractor:
 
     async def subscribe_to_events(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         async def wrapped_callback(event: SystemEvent):
-            self.recent_events.appendleft(event)
+            # Persist event to Valkey
+            await self.event_repo.add_event(event)
+            # Forward to original callback (SSE broadcast)
             await callback(event)
+
         self.repository.add_event_listener(wrapped_callback)
 
-    def get_recent_events(self) -> List[SystemEvent]:
-        return list(self.recent_events)
+    async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
+        """Fetches recent system events from persistence layer."""
+        return await self.event_repo.get_recent_events(limit)

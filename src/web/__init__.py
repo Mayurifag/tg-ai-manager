@@ -13,8 +13,7 @@ def create_app() -> Quart:
     # Configure structured logging
     configure_logging()
 
-    # Set the project root explicitly to ensure templates and static files are resolved correctly
-    # relative to the project root, rather than src/web/
+    # Set the project root explicitly
     root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 
     app = Quart(__name__, root_path=root_path, template_folder="src/templates")
@@ -34,8 +33,7 @@ def create_app() -> Quart:
         interactor = get_chat_interactor()
         await interactor.initialize()
 
-        # We wrap broadcast_event to ensure it runs within an app context,
-        # which is required for render_template to work.
+        # We wrap broadcast_event to ensure it runs within an app context
         async def _context_aware_broadcast(event):
             async with app.app_context():
                 await broadcast_event(event)
@@ -65,8 +63,13 @@ def create_app() -> Quart:
         connected_queues.clear()
 
     @app.context_processor
-    def inject_recent_events():
+    async def inject_recent_events():
+        """
+        Injects recent events into the template context.
+        Async context processors are supported in Quart.
+        """
         interactor = get_chat_interactor()
-        return {'recent_events': interactor.get_recent_events()}
+        events = await interactor.get_recent_events()
+        return {'recent_events': events}
 
     return app

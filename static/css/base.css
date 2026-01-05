@@ -145,7 +145,7 @@ body {
 
     /* Improved text handling: Allow multiple lines but truncate with ellipsis */
     display: -webkit-box;
-    -webkit-line-clamp: 4; /* Show up to 4 lines */
+    -webkit-line-clamp: 3; /* Changed from 4 to 3 */
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: normal;

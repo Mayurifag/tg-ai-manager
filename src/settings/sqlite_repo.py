@@ -3,15 +3,12 @@ from src.settings.models import GlobalSettings
 from src.settings.ports import SettingsRepository
 
 class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
-    def __init__(self, db_path: str = "settings.db"):
+    def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
         self._init_db()
 
     def _init_db(self):
         with self._connect() as conn:
-            # We removed autoread_only_new.
-            # SQLite doesn't support DROP COLUMN easily, so for a new setup this is fine.
-            # For existing setup, the extra column will just be ignored by the code below.
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS global_settings (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -31,7 +28,6 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
     async def get_settings(self) -> GlobalSettings:
         def _fetch():
             with self._connect() as conn:
-                # We simply don't select autoread_only_new even if it exists in old DBs
                 try:
                     cursor = conn.execute("""
                         SELECT autoread_service_messages, autoread_polls,
@@ -50,7 +46,6 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                             autoread_self=bool(row[4])
                         )
                 except Exception:
-                    # Fallback if table structure is very different (shouldn't happen with IF EXISTS)
                     pass
                 return GlobalSettings()
         return await self._execute(_fetch)
@@ -58,8 +53,6 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
     async def save_settings(self, settings: GlobalSettings) -> None:
         def _save():
             with self._connect() as conn:
-                # Handle potential missing column in older DBs by just trying the update
-                # In a real migration scenario we'd alter table, but here we just update what matches
                 conn.execute("""
                     UPDATE global_settings
                     SET autoread_service_messages = ?,

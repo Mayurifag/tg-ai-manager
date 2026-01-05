@@ -28,6 +28,7 @@
                 <div id="event-feed-list">
                     {% if recent_events %}
                     {% for event in recent_events %}
+                    {% if event.type not in ['read', 'edited'] %}
                     <div class="event-item type-{{ event.type }}">
                         <div class="event-header">
                             <span class="event-type">{{ event.type | upper }}</span>
@@ -37,6 +38,7 @@
                         </div>
                         <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
                     </div>
+                    {% endif %}
                     {% endfor %}
                     {% else %}
                     <div class="empty-feed">No recent events</div>
@@ -73,8 +75,14 @@
             evtSource.onmessage = function (e) {
                 const data = JSON.parse(e.data);
 
+                // Dispatch global event for other components (e.g., clearing badges in index.html, updating chat view)
                 const customEvent = new CustomEvent('tg:event', { detail: data });
                 document.dispatchEvent(customEvent);
+
+                // Filter out 'read' and 'edited' events from the visual sidebar feed
+                if (data.type === 'read' || data.type === 'edited') {
+                    return;
+                }
 
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
