@@ -116,6 +116,12 @@
 
         if (!data.chat_id) return;
 
+        // Handle Read events (from API or Startup Scan)
+        if (data.type === 'read') {
+            await reloadCard(data.chat_id);
+            return;
+        }
+
         if (data.type === 'message') {
             const list = document.getElementById('chat-list-container');
             const cardWrapper = list.querySelector(`.chat-card-wrapper[data-chat-id="${data.chat_id}"]`);
@@ -150,11 +156,6 @@
                         newBadge.textContent = '1';
                         metaDiv.appendChild(newBadge);
                     }
-                } else {
-                    // If autoread, verify we don't have a stray badge?
-                    // Usually we don't remove existing badge because backlog logic blocks autoread.
-                    // But if the chat was 0 unread, and this message is autoread,
-                    // we simply do NOTHING to the badge (it stays absent).
                 }
 
                 const isPinned = cardWrapper.getAttribute('data-is-pinned') === 'true';

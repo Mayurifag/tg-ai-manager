@@ -1,9 +1,10 @@
 from typing import List, Optional, Any, Dict
+from datetime import datetime
 from telethon import functions, utils, types
 from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
 from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
 
-from src.domain.models import Chat, ChatType, Message
+from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.adapters.telethon_mappers import map_telethon_dialog_to_chat_type, format_message_preview
 from src.infrastructure.logging import get_logger
 
@@ -18,6 +19,8 @@ class ChatOperationsMixin:
     def _cache_message_chat(self, msg_id: int, chat_id: int): raise NotImplementedError
     async def _parse_message(self, msg: Any, replies_map: Dict[int, Any] | None = None, chat_id: Optional[int] = None) -> Message: raise NotImplementedError
     def _extract_text(self, msg: Any) -> str: raise NotImplementedError
+    # We assume the mixing class has _dispatch from EventHandlersMixin
+    async def _dispatch(self, event: SystemEvent): raise NotImplementedError
 
     async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
         try:
@@ -44,13 +47,9 @@ class ChatOperationsMixin:
         results = []
         for d in dialogs:
             chat_type = map_telethon_dialog_to_chat_type(d)
-
-            # Optimization: Use the dialog's native unread_count.
-            # We no longer scan forum topics here to avoid N+1 network calls.
             unread_count = d.unread_count
             unread_topics_count = None
 
-            # Lazy load: Just get the URL if valid, don't download
             image_url = await self._get_chat_image(d.entity, d.id)
 
             msg = getattr(d, 'message', None)
@@ -65,6 +64,32 @@ class ChatOperationsMixin:
                 last_message_preview=preview, image_url=image_url,
                 is_pinned=d.pinned
             ))
+        return results
+
+    async def get_all_unread_chats(self) -> List[Chat]:
+        """
+        Iterates over all dialogs to find those with unread messages.
+        Note: This can be heavy if the user has thousands of chats.
+        """
+        results = []
+        try:
+            # Iterate through dialogs.
+            # Note: iter_dialogs might take time for large accounts.
+            async for d in self.client.iter_dialogs(limit=None, ignore_migrated=True):
+                if d.unread_count > 0 or d.unread_mentions_count > 0:
+                    chat_type = map_telethon_dialog_to_chat_type(d)
+
+                    # Basic chat object
+                    chat = Chat(
+                        id=d.id,
+                        name=d.name,
+                        unread_count=d.unread_count,
+                        type=chat_type
+                    )
+                    results.append(chat)
+        except Exception as e:
+            logger.error("get_all_unread_chats_failed", error=str(e))
+
         return results
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
@@ -155,8 +180,6 @@ class ChatOperationsMixin:
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         try:
             entity = await self.client.get_entity(chat_id)
-            # We keep the logic here as requested to show previews,
-            # but this is only called when viewing a specific forum.
             response = await self._fetch_forum_topics_response(entity, limit=limit)
             topics = []
             if not response: return topics
@@ -178,6 +201,38 @@ class ChatOperationsMixin:
             logger.error("get_forum_topics_failed", chat_id=chat_id, error=str(e))
             return []
 
+    async def get_unread_topics(self, chat_id: int) -> List[Chat]:
+        """
+        Fetches all topics that have unread messages.
+        We have to iterate fairly deeply to ensure we get them all,
+        but typically 'limit' in GetForumTopicsRequest acts on the topic list order.
+        Topics with new messages usually bubble up, so a limit of 50 or 100 should cover active ones.
+        """
+        try:
+            entity = await self.client.get_entity(chat_id)
+            # Fetch a reasonable amount of topics to find unread ones.
+            # Usually recent topics are at the top.
+            response = await self.client(functions.messages.GetForumTopicsRequest(
+                peer=entity, offset_date=None, offset_id=0, offset_topic=0, limit=100, q=''
+            ))
+
+            topics = []
+            if not response: return topics
+
+            for t in response.topics:
+                if isinstance(t, types.ForumTopicDeleted): continue
+                if t.unread_count > 0:
+                    topics.append(Chat(
+                        id=t.id,
+                        name=t.title,
+                        unread_count=t.unread_count,
+                        type=ChatType.TOPIC
+                    ))
+            return topics
+        except Exception as e:
+            logger.error("get_unread_topics_failed", chat_id=chat_id, error=str(e))
+            return []
+
     async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
         try:
             entity = await self.client.get_entity(chat_id)
@@ -195,8 +250,13 @@ class ChatOperationsMixin:
     async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
         try:
             entity = await self.client.get_entity(chat_id)
+            chat_name = utils.get_display_name(entity)
+            topic_name = None
+
             if topic_id:
                 try:
+                    # We need the max_id to mark as read properly.
+                    # This fetches the latest message in that topic to use as the read pointer.
                     msgs = await self.client.get_messages(entity, limit=1, reply_to=topic_id)
                     max_id = msgs[0].id if msgs else topic_id
 
@@ -205,13 +265,31 @@ class ChatOperationsMixin:
                         msg_id=topic_id,
                         read_max_id=max_id
                     ))
+
+                    # Try fetching topic name for event
+                    topic_name = await self.get_topic_name(chat_id, topic_id)
                 except Exception as e:
-                    # Ignore if the topic is invalid (e.g. deleted), log others
                     if "TOPIC_ID_INVALID" in str(e):
                         logger.warning("mark_read_topic_invalid", chat_id=chat_id, topic_id=topic_id)
                     else:
                         raise e
             else:
                  await self.client.send_read_acknowledge(entity)
+
+            # Broadcast event to frontend to clear badge
+            event = SystemEvent(
+                type="read",
+                text="Marked as read",
+                chat_name=chat_name,
+                topic_name=topic_name,
+                chat_id=chat_id,
+                topic_id=topic_id,
+                is_read=True,
+                link=f"/chat/{chat_id}"
+            )
+            # Safe dispatch if the mixing class has it (TelethonAdapter does)
+            if hasattr(self, '_dispatch'):
+                await self._dispatch(event)
+
         except Exception as e:
             logger.error("mark_as_read_failed", chat_id=chat_id, topic_id=topic_id, error=str(e))

@@ -16,6 +16,11 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def get_all_unread_chats(self) -> List[Chat]:
+        """Returns all chats with unread messages."""
+        pass
+
+    @abstractmethod
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
         pass
 
@@ -25,6 +30,11 @@ class ChatRepository(ABC):
 
     @abstractmethod
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
+        pass
+
+    @abstractmethod
+    async def get_unread_topics(self, chat_id: int) -> List[Chat]:
+        """Returns all topics with unread messages in a forum."""
         pass
 
     @abstractmethod

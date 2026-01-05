@@ -3,7 +3,7 @@ import os
 from quart import Quart
 from src.web.routes import register_routes
 from src.web.sse import broadcast_event, shutdown_event, connected_queues
-from src.container import get_chat_interactor
+from src.container import get_chat_interactor, get_rule_service
 from src.jinja_filters import file_mtime_filter
 from src.infrastructure.logging import configure_logging, get_logger
 
@@ -41,6 +41,10 @@ def create_app() -> Quart:
                 await broadcast_event(event)
 
         await interactor.subscribe_to_events(_context_aware_broadcast)
+
+        # Trigger startup scan in background
+        rule_service = get_rule_service()
+        asyncio.create_task(rule_service.run_startup_scan())
 
     @app.after_serving
     async def shutdown():
