@@ -38,6 +38,11 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
+        """Downloads or retrieves cached avatar for a chat."""
+        pass
+
+    @abstractmethod
     def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         """Register a callback for system events."""
         pass

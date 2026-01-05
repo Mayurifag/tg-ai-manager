@@ -64,6 +64,8 @@ class ChatOperationsMixin:
                 self._cache_message_chat(msg.id, d.id)
 
             preview = format_message_preview(msg, chat_type, topic_map)
+
+            # Lazy load: Just get the URL if valid, don't download
             image_url = await self._get_chat_image(d.entity, d.id)
 
             results.append(Chat(

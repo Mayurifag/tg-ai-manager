@@ -20,7 +20,7 @@
             {% endif %}
         </div>
         {% elif chat.image_url %}
-        <img src="{{ chat.image_url }}" class="avatar" alt="Avatar">
+        <img src="{{ chat.image_url }}" class="avatar" alt="Avatar" loading="lazy">
         {% else %}
         <div class="avatar">{{ chat.name[0] | upper }}</div>
         {% endif %}
@@ -34,13 +34,31 @@
                 <span class="pinned-indicator" title="Pinned Chat">📌</span>
                 {% endif %}
                 <span class="badge">{{ chat.type.value }}</span>
+
+                {# "Mark Read" Button moved to header line #}
+                {% if chat.unread_count > 0 %}
+                <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
+                    data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
+                    mark read
+                </button>
+                {% endif %}
             </div>
             {% else %}
-            <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
+            <div class="chat-header">
+                <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
+
+                {# "Mark Read" Button for topics #}
+                {% if chat.unread_count > 0 %}
+                <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
+                    data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
+                    mark read
+                </button>
+                {% endif %}
+            </div>
             {% endif %}
 
             <div class="preview">
-                {{ chat.last_message_preview or 'No messages' }}
+                {{ (chat.last_message_preview or 'No messages') | safe }}
             </div>
         </div>
     </div>
@@ -48,11 +66,6 @@
     {# --- Meta/Unread Count --- #}
     {% if chat.unread_count > 0 %}
     <div class="meta">
-        <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
-            data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
-            mark read
-        </button>
-
         <div class="unread">
             {% if chat.type.value == 'forum' %}
             {% if chat.unread_topics_count and chat.unread_topics_count > 0 %}

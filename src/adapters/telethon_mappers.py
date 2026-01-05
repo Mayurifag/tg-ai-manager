@@ -16,7 +16,7 @@ from telethon.tl.types import (
     MessageActionChatCreate,
     MessageActionChannelCreate,
     MessageActionGameScore,
-    MessageMediaPoll, # <-- Added MessageMediaPoll
+    MessageMediaPoll,
     PeerUser
 )
 from telethon import utils
@@ -75,9 +75,6 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if isinstance(message, MessageService):
         action_text = get_message_action_text(message)
         if action_text:
-            # We skip the "User: " prefix logic below because service messages often read better as "<User> <Action>"
-            # But the caller of this function might expect just the text to combine.
-            # To match the sidebar style "Name: Text", we return just the action text.
             return action_text
 
     text = getattr(message, 'message', '')
@@ -89,13 +86,11 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if media:
         if isinstance(media, MessageMediaPhoto):
             media_text = "📷 Photo"
-        elif isinstance(media, MessageMediaPoll): # <-- Handle Polls for Preview
+        elif isinstance(media, MessageMediaPoll):
             poll = media.poll
-            # question is a DataJSON structure, need to get .text from it
             poll_question = getattr(poll, 'question', None)
             topic = getattr(poll_question, 'text', 'Unknown Poll') if poll_question else 'Unknown Poll'
             text_preview = f"Poll: {topic}"
-            # Polls usually don't have text outside of the media object, so we return this as the main preview
             if chat_type == ChatType.GROUP or chat_type == ChatType.TOPIC:
                  sender = getattr(message, 'sender', None)
                  if sender:
@@ -127,7 +122,6 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
                                 media_text = "🎵 Music"
                         break
 
-                # If still empty, generic document
                 if not media_text:
                     media_text = "📄 Document"
 
@@ -135,6 +129,7 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     if not text and media_text:
         text = media_text
     elif text and media_text:
+        # We now keep the text as is, even if media is present
         pass
     elif not text and not media_text:
         text = "Media/Sticker"
@@ -142,9 +137,7 @@ def format_message_preview(message: Any, chat_type: ChatType, topic_map: Optiona
     text = html_unescape(text) # UNESCAPE HTML entities like &quot;
     text = text.replace('\n', ' ')
 
-    MAX_LENGTH = 100
-    if len(text) > MAX_LENGTH:
-        text = text[:(MAX_LENGTH - 3)] + "..."
+    # Removed MAX_LENGTH truncation to allow full message on frontend
 
     prefix = ""
     if chat_type == ChatType.GROUP:

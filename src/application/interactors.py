@@ -70,6 +70,9 @@ class ChatInteractor:
     async def get_media_path(self, chat_id: int, message_id: int) -> Optional[str]:
         return await self.repository.download_media(chat_id, message_id)
 
+    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
+        return await self.repository.get_chat_avatar(chat_id)
+
     async def subscribe_to_events(self, callback: Callable[[SystemEvent], Awaitable[None]]):
         async def wrapped_callback(event: SystemEvent):
             self.recent_events.appendleft(event)

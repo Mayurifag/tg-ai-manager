@@ -10,7 +10,7 @@ from src.adapters.telegram.chat_operations import ChatOperationsMixin
 from src.adapters.telegram.event_handlers import EventHandlersMixin
 
 class TelethonAdapter(
-    MediaMixin,           # Provides: _get_chat_image, download_media
+    MediaMixin,           # Provides: _get_chat_image, download_media, cleanup_startup_cache
     MessageParserMixin,   # Provides: _parse_message, _cache_message_chat. Consumes: _get_chat_image
     ChatOperationsMixin,  # Provides: get_chats, get_topic_name. Consumes: _parse_message
     EventHandlersMixin,   # Provides: add_event_listener. Consumes: get_topic_name
@@ -25,6 +25,9 @@ class TelethonAdapter(
 
         # Ensure cache directory exists
         os.makedirs(self.images_dir, exist_ok=True)
+
+        # Cleanup old avatars on startup
+        self.cleanup_startup_cache()
 
     async def connect(self):
         if not self.client.is_connected():
