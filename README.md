@@ -55,7 +55,8 @@ Open <http://localhost:8000>
 
 ## TODO
 
+- live events - get back to 5
 - on startup - go through all unreaded chats/topics and autoread if they have to be autoreaden
 - checking topics autoreading
-- Forums needs to fetch all messages? see if its optimizable or paralleled
-- saving msgs in valkey/[dramatiq](https://dramatiq.io/)? Seems I do not need this for now
+- performance issues. seems i am throttled by telegram but not sure
+- saving msgs in valkey/[dramatiq](https://dramatiq.io/) for performance to have less internet queries. think this much.
