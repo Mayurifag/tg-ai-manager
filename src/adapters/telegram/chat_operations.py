@@ -1,5 +1,5 @@
+import traceback
 from typing import List, Optional, Any, Dict
-from datetime import datetime
 from telethon import functions, utils, types
 from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
 from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
@@ -19,8 +19,6 @@ class ChatOperationsMixin:
     def _cache_message_chat(self, msg_id: int, chat_id: int): raise NotImplementedError
     async def _parse_message(self, msg: Any, replies_map: Dict[int, Any] | None = None, chat_id: Optional[int] = None) -> Message: raise NotImplementedError
     def _extract_text(self, msg: Any) -> str: raise NotImplementedError
-    # We assume the mixing class has _dispatch from EventHandlersMixin
-    async def _dispatch(self, event: SystemEvent): raise NotImplementedError
 
     async def _fetch_forum_topics_response(self, peer: Any, limit: int) -> Optional[Any]:
         try:
@@ -292,4 +290,4 @@ class ChatOperationsMixin:
                 await self._dispatch(event)
 
         except Exception as e:
-            logger.error("mark_as_read_failed", chat_id=chat_id, topic_id=topic_id, error=str(e))
+            logger.error("mark_as_read_failed", chat_id=chat_id, topic_id=topic_id, error=repr(e), traceback=traceback.format_exc())
