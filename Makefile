@@ -7,10 +7,9 @@ all: run
 up:
 	docker compose up -d valkey
 
-# Start infrastructure and run the application
-# Depends on 'up' to ensure DB is ready
-run: up
-	uv run hypercorn src.app:app --reload --bind 127.0.0.1:8000
+# Start the full stack (App + Valkey) with live rebuilds
+run:
+	docker compose up --build
 
 # Stop all containers
 stop:
@@ -24,3 +23,4 @@ logs:
 clean:
 	rm -rf __pycache__
 	rm -rf .pytest_cache
+	rm -rf cache/*

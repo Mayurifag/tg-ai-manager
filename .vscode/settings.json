@@ -16,5 +16,6 @@
     "codeWebChat.ignorePatterns": [
         "/uv.lock"
     ],
-    "codeWebChat.editContextSystemInstructions": "You're making code for my project. NEVER add comments or descriptions in code."
+    "codeWebChat.editContextSystemInstructions": "You're making code for my project. NEVER add comments or descriptions in code.",
+    "python.defaultInterpreterPath": "/usr/local/bin/python"
 }

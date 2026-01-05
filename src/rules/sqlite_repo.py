@@ -95,6 +95,8 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                     rule.updated_at.isoformat()
                 ))
                 conn.commit()
+                if cursor.lastrowid is None:
+                    raise ValueError("Database insert failed: no ID returned")
                 return cursor.lastrowid
         return await self._execute(_insert)
 
