@@ -14,7 +14,7 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv python install
 # Install main + dev (watchfiles) dependencies
 # We remove --frozen so it auto-updates lockfile if you changed pyproject.toml
-RUN uv sync --no-install-project --extra dev
+RUN uv sync --no-install-project
 
 # 3. Add venv to PATH so we can run 'hypercorn' directly
 ENV PATH="/venv/bin:$PATH"

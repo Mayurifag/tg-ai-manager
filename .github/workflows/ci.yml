@@ -22,14 +22,14 @@ jobs:
           version: "latest"
           enable-cache: true
 
-      - name: Install dependencies (Dev Only)
-        run: uv sync --only-group dev
+      - name: Install dev dependencies only
+        run: uv sync --frozen --only-group dev
 
       - name: Run Ruff (Lint)
-        run: uv run ruff check src
+        run: uv run --no-sync ruff check src
 
       - name: Run Ruff (Format Check)
-        run: uv run ruff format --check src
+        run: uv run --no-sync ruff format --check src
 
   build-and-push:
     needs: lint
