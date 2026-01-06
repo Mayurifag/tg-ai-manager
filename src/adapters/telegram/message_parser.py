@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from typing import Optional, Dict, Any
 from html import escape as html_escape

@@ -1,4 +1,3 @@
-import sqlite3
 from typing import List, Optional
 from datetime import datetime
 from src.rules.models import Rule, RuleType

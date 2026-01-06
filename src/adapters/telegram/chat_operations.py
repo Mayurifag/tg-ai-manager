@@ -1,7 +1,7 @@
 import traceback
 from typing import List, Optional, Any, Dict
 from telethon import functions, utils, types
-from telethon.tl.functions.messages import GetPeerDialogsRequest, GetForumTopicsRequest
+from telethon.tl.functions.messages import GetPeerDialogsRequest
 from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
 
 from src.domain.models import Chat, ChatType, Message, SystemEvent
@@ -65,7 +65,7 @@ class ChatOperationsMixin:
                     for m in msgs:
                         if m:
                             messages_map[m.id] = m
-            except Exception as e:
+            except Exception:
                 pass
         return messages_map
 
@@ -222,7 +222,7 @@ class ChatOperationsMixin:
                     for r in replied_msgs:
                         if r:
                             replies_map[r.id] = r
-                except Exception as e:
+                except Exception:
                     pass
 
             result_messages = []

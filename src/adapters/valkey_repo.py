@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import datetime
-from typing import List, TypeVar, Generic, Dict, Any, Optional
+from typing import List, TypeVar, Generic, Dict, Any
 from dataclasses import asdict, is_dataclass
 from redis.asyncio import Redis
 from src.domain.ports import ActionRepository, EventRepository
