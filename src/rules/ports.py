@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from src.rules.models import Rule, RuleType
+from src.rules.models import Rule
 
 
 class RuleRepository(ABC):

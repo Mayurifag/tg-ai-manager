@@ -17,7 +17,6 @@ from telethon.tl.types import (
     MessageActionChannelCreate,
     MessageActionGameScore,
     MessageMediaPoll,
-    PeerUser,
 )
 from telethon import utils
 from html import unescape as html_unescape

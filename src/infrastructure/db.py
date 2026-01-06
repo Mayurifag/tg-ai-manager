@@ -1,6 +1,6 @@
 import sqlite3
 import asyncio
-from typing import Callable, TypeVar, Any
+from typing import Callable, TypeVar
 
 T = TypeVar("T")
 

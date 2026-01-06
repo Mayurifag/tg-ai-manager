@@ -1,6 +1,6 @@
 import re
 import asyncio
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 from src.rules.models import Rule, AutoReadRule, RuleType
 from src.rules.ports import RuleRepository

@@ -1,8 +1,7 @@
-import asyncio
 import traceback
 from typing import Callable, Awaitable, List, Optional, Any, Dict
 from datetime import datetime
-from telethon import events, utils, types
+from telethon import utils, types
 from telethon.tl.types import MessageActionChatEditPhoto, MessageActionChatDeletePhoto
 from src.domain.models import SystemEvent, Message
 from src.adapters.telethon_mappers import get_message_action_text
@@ -61,7 +60,7 @@ class EventHandlersMixin:
             try:
                 chat = await event.get_chat()
                 chat_name = utils.get_display_name(chat)
-            except:
+            except Exception:
                 pass
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
@@ -104,7 +103,7 @@ class EventHandlersMixin:
             try:
                 chat = await event.get_chat()
                 chat_name = utils.get_display_name(chat)
-            except:
+            except Exception:
                 pass
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
@@ -159,7 +158,7 @@ class EventHandlersMixin:
                 try:
                     entity = await self.client.get_entity(chat_id)
                     chat_name = utils.get_display_name(entity)
-                except:
+                except Exception:
                     chat_name = f"Chat {chat_id}"
             else:
                 logger.debug(
@@ -205,7 +204,7 @@ class EventHandlersMixin:
             try:
                 chat = await event.get_chat()
                 chat_name = utils.get_display_name(chat)
-            except:
+            except Exception:
                 pass
 
             text = "Unknown action"
