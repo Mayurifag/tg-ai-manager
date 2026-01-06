@@ -45,5 +45,7 @@ Open <http://localhost:8000>
 
 ## TODO
 
+- add migrations tool on start of container for sqlite and/or redis
+- Make global_settings to users. We will have users table. TG_API_ID and TG_API_HASH wont be used anymore, we use db. Add encryption with generated key from app_data. Session will be persisted on disk.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
