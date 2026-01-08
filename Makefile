@@ -14,13 +14,11 @@ run:
 # Run the production image from registry
 # - Pulls latest image
 # - Maps host port 14123 to container port 8000
-# - Uses .env for credentials
 # - --rm ensures container and anonymous volumes are deleted on exit
 run-prod:
 	docker pull ghcr.io/mayurifag/tg-ai-manager:latest
 	docker run --rm -it \
 		-p 14123:8000 \
-		--env-file .env \
 		--name tg_ai_manager_prod \
 		ghcr.io/mayurifag/tg-ai-manager:latest
 

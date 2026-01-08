@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from quart import Quart
 from src.web.routes import register_routes
 from src.web.sse import broadcast_event, shutdown_event, connected_queues
@@ -12,7 +13,31 @@ from src.container import (
 from src.jinja_filters import file_mtime_filter
 from src.infrastructure.logging import configure_logging, get_logger
 
+# Alembic Imports
+from alembic import command
+from alembic.config import Config as AlembicConfig
+
 logger = get_logger(__name__)
+
+
+def run_migrations(root_path: str):
+    """Executes Alembic migrations programmatically."""
+    try:
+        logger.info("running_migrations")
+        alembic_ini_path = os.path.join(root_path, "alembic.ini")
+        alembic_cfg = AlembicConfig(alembic_ini_path)
+
+        # Ensure we point to the correct script location relative to root
+        script_location = os.path.join(root_path, "migrations")
+        alembic_cfg.set_main_option("script_location", script_location)
+
+        # Run upgrade head
+        command.upgrade(alembic_cfg, "head")
+        logger.info("migrations_completed")
+    except Exception as e:
+        logger.error("migrations_failed", error=str(e))
+        # Decide if we should exit here. Usually yes, if DB is invalid.
+        sys.exit(1)
 
 
 def create_app() -> Quart:
@@ -33,6 +58,11 @@ def create_app() -> Quart:
     @app.before_serving
     async def startup():
         logger.info("application_startup")
+
+        # 1. Run Database Migrations
+        # Running synchronously is fine here as it blocks startup until DB is ready
+        run_migrations(root_path)
+
         # Reset shutdown event
         shutdown_event.clear()
 

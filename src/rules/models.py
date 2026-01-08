@@ -6,20 +6,19 @@ from datetime import datetime
 
 class RuleType(str, Enum):
     AUTOREAD = "autoread"
-    # Future: SKIP, DELETE, REPLY, etc.
 
 
 @dataclass
 class Rule:
     id: Optional[int] = None
+    user_id: int = 1
     rule_type: RuleType = RuleType.AUTOREAD
     chat_id: int = 0
     topic_id: Optional[int] = None  # None means applies to whole chat
-    enabled: bool = True
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
 
 @dataclass
 class AutoReadRule(Rule):
-    pass  # Currently no extra fields, but ready for future extensions
+    pass

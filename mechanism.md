@@ -1,18 +1,8 @@
 # Messages queue
 
-## To show on web interface
+## To add for global autoskip
 
-We have to queue all messages and events
-
-## To autoread or skip or delete or else
-
-Before message goes to AI we can:
-
-- Skip if author is user account itself (this actually covers case of Saved Messages chat)
-- Skip if message has specific link or regexp on words
-- Skip if author is specific user. @lolsBotCatcherBot i.e. - Should I just skip all bots messages? Yes for now I guess.
-- Skip if event is pinning or editing or deletion, we just have to parse only msgs events
-- Photo changed, game scores, forum topic actions
+- Skip if event is group enabling/disabling private messages.
 
 ## Not to forget
 
@@ -21,5 +11,3 @@ Before message goes to AI we can:
 - What if we have completely new chat? We have to follow only whole logics.
   Maybe we can actually implement new logics which will autodelete and autoban
   scam messages. Not sure of this. Maybe waywayway later on future.
-
-Skip if event is group enabling/disabling private messages.
