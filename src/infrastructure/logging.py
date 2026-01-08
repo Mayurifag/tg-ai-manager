@@ -5,6 +5,17 @@ import sys
 
 def configure_logging():
     """Configure structlog for JSON output to stdout (Docker-friendly)."""
+
+    # Configure standard logging to capture library logs (like Telethon)
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=logging.INFO,
+    )
+
+    # Explicitly set Telethon logger to INFO to see connection attempts
+    logging.getLogger("telethon").setLevel(logging.INFO)
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

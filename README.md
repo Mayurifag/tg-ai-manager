@@ -23,14 +23,6 @@ added in future. There is also logging of actions done by manager.
    - Create a new application (values don't matter much)
    - Copy `App api_id` and `App api_hash`
 
-3. **Configure Environment**
-
-~~~bash
-cp .env.example .env
-~~~
-
-Edit `.env` and paste your `TG_API_ID` and `TG_API_HASH`.
-
 ## Running
 
 ### **Using Docker Compose (Development Environment)**
@@ -45,7 +37,8 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- add migrations tool on start of container for sqlite and/or redis
-- Make global_settings to users. We will have users table. TG_API_ID and TG_API_HASH wont be used anymore, we use db. Add encryption with generated key from app_data. Session will be persisted on disk.
+- Resend code - disable for 30s or how much needed until send code via sms
+- Cryptography for all needed fields. On first startup we might generate the encrypted key.
+- **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure

@@ -8,18 +8,41 @@
 
 {% block content %}
 <div class="header">
-    <h1>Global Settings</h1>
+    <h1>Global User Settings</h1>
 </div>
 
 <div style="max-width: 600px; background: #1e1e20; padding: 20px; border-radius: 8px; border: 1px solid #333;">
-    <h3 style="margin-top: 0; margin-bottom: 20px; color: #6ab7ff;">Smart Autoread Rules</h3>
-    <p style="color: #888; font-size: 0.9rem; margin-bottom: 20px; border-left: 2px solid #ff9800; padding-left: 10px;">
-        ℹ️ <strong>Note:</strong> Global rules below only trigger if the incoming message is the
-        <strong>only new message</strong> in the chat. If you have unread backlog, these rules are skipped to keep your
-        history intact.
-    </p>
-
     <form id="settings-form">
+
+        <h3 style="margin-top: 0; color: #6ab7ff;">Account</h3>
+        <p style="color: #888; font-size: 0.9rem; margin-bottom: 20px;">
+            {% if settings.username %}
+            Logged in as <strong style="color: #fff;">{{ settings.username }}</strong>
+            {% else %}
+            Not logged in
+            {% endif %}
+        </p>
+
+        <div class="setting-group">
+            <label>API ID (Read-only)</label>
+            <input type="text" value="{{ settings.api_id or '' }}" disabled style="opacity: 0.6; cursor: not-allowed;">
+        </div>
+
+        <div class="setting-group">
+            <label>API Hash (Read-only)</label>
+            <input type="text" value="{{ settings.api_hash or '' }}" disabled
+                style="opacity: 0.6; cursor: not-allowed;">
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 30px 0;">
+
+        <h3 style="color: #6ab7ff;">Smart Autoread Rules</h3>
+        <p
+            style="color: #888; font-size: 0.9rem; margin-bottom: 20px; border-left: 2px solid #ff9800; padding-left: 10px;">
+            ℹ️ <strong>Note:</strong> Global rules below only trigger if the incoming message is the
+            <strong>only new message</strong> in the chat.
+        </p>
+
         <div class="setting-row">
             <label class="toggle-switch">
                 <input type="checkbox" name="autoread_service_messages" {% if settings.autoread_service_messages
@@ -55,10 +78,10 @@
         </div>
 
         <div class="setting-group">
-            <label>Autoread Bots / Users (Usernames Only)</label>
+            <label>Autoread Bots / Users (Usernames)</label>
             <input type="text" name="autoread_bots" value="{{ settings.autoread_bots }}"
                 placeholder="@BotFather, @OtherBot">
-            <div class="desc">Comma separated list of usernames. You can include or omit the '@' symbol.</div>
+            <div class="desc">Comma separated list of usernames.</div>
         </div>
 
         <div class="setting-group">
@@ -112,7 +135,8 @@
         margin-bottom: 8px;
     }
 
-    .setting-group input[type="text"] {
+    .setting-group input[type="text"],
+    .setting-group input[type="number"] {
         width: 100%;
         background: #2a2a2c;
         border: 1px solid #444;
@@ -195,6 +219,7 @@
 
         const formData = new FormData(e.target);
         const data = {
+            // No credential update here
             autoread_service_messages: formData.get('autoread_service_messages') === 'on',
             autoread_polls: formData.get('autoread_polls') === 'on',
             autoread_self: formData.get('autoread_self') === 'on',
@@ -213,13 +238,15 @@
                 setTimeout(() => {
                     btn.textContent = "Save Settings";
                     btn.disabled = false;
-                }, 2000);
+                }, 1000);
             } else {
                 btn.textContent = "Error";
+                btn.disabled = false;
             }
         } catch (err) {
             console.error(err);
             btn.textContent = "Error";
+            btn.disabled = false;
         }
     });
 </script>

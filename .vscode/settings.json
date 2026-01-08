@@ -4,14 +4,16 @@
         "**/.venv": true,
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
-        "**/cache": true
+        "**/cache": true,
+        "**/.ruff_cache": true,
     },
     "search.exclude": {
         "**/__pycache__": true,
         "**/.venv": true,
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
-        "**/cache": true
+        "**/cache": true,
+        "**/.ruff_cache": true,
     },
     "codeWebChat.ignorePatterns": [
         "/uv.lock"

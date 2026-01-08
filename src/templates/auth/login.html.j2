@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="color-scheme" content="dark">
+    <title>Login - Telegram Manager</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <!-- QR Code Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: #0e0e10;
+        }
+
+        .login-card {
+            background: #1a1a1c;
+            padding: 40px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            width: 380px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        h2 {
+            margin-top: 0;
+            color: #fff;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            background: #2a2a2c;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #1976d2;
+        }
+
+        button.secondary {
+            background: #333;
+            color: #ccc;
+            margin-top: 10px;
+        }
+
+        button.secondary:hover {
+            background: #444;
+        }
+
+        .error {
+            color: #f44336;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            display: none;
+            background: rgba(244, 67, 54, 0.1);
+            padding: 8px;
+            border-radius: 4px;
+        }
+
+        .step {
+            display: none;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        .hint {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .info-msg {
+            background: rgba(33, 150, 243, 0.1);
+            color: #6ab7ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            display: none;
+            border-left: 3px solid #2196f3;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #333;
+        }
+
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            cursor: pointer;
+            color: #888;
+            font-weight: 500;
+        }
+
+        .tab.active {
+            color: #2196f3;
+            border-bottom: 2px solid #2196f3;
+        }
+
+        /* QR specific */
+        #qrcode {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            width: fit-content;
+            margin: 0 auto 20px auto;
+        }
+
+        .qr-placeholder {
+            text-align: center;
+            color: #666;
+            margin-bottom: 20px;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-card">
+        <h2>Telegram Login</h2>
+        <div class="error" id="error-msg"></div>
+        <div class="info-msg" id="info-msg"></div>
+
+        <!-- Credentials Inputs (Shared) -->
+        <div id="credentials-step">
+            <label class="hint">API ID (from my.telegram.org)</label>
+            <input type="number" id="api_id" placeholder="123456" required>
+
+            <label class="hint">API Hash</label>
+            <input type="text" id="api_hash" placeholder="abcdef..." required>
+        </div>
+
+        <!-- Auth Method Tabs -->
+        <div class="tabs" id="method-tabs">
+            <div class="tab active" onclick="switchTab('phone')">Phone Number</div>
+            <div class="tab" onclick="switchTab('qr')">QR Code</div>
+        </div>
+
+        <!-- Step 1: Phone -->
+        <div id="step-1-phone" class="step active">
+            <label class="hint">Phone Number (e.g. +123456789)</label>
+            <input type="text" id="phone" placeholder="+123456789">
+            <button onclick="sendCode()">Send Code</button>
+        </div>
+
+        <!-- Step 1: QR -->
+        <div id="step-1-qr" class="step">
+            <div class="qr-placeholder" id="qr-status-text">Click button to generate QR</div>
+            <div id="qrcode" style="display: none;"></div>
+            <button onclick="generateQR()" id="btn-gen-qr">Generate QR Code</button>
+        </div>
+
+        <!-- Step 2: Code (SMS/App) -->
+        <div id="step-2-code" class="step">
+            <label class="hint" id="code-hint">Enter the code</label>
+            <input type="text" id="code" placeholder="12345" autocomplete="off">
+
+            <button onclick="verifyCode()">Sign In</button>
+            <button onclick="resendCode()" class="secondary" id="resend-btn">Resend Code</button>
+        </div>
+
+        <!-- Step 3: 2FA Password -->
+        <div id="step-3-password" class="step">
+            <label class="hint">Two-Step Verification</label>
+            <p id="password-hint-text"
+                style="color: #4caf50; font-size: 0.85rem; margin-top: -5px; margin-bottom: 10px;"></p>
+            <input type="password" id="password" placeholder="Cloud Password">
+            <button onclick="verifyPassword()">Verify Password</button>
+        </div>
+    </div>
+
+    <script>
+        let currentMethod = 'phone';
+        let qrPollInterval = null;
+
+        function switchTab(method) {
+            currentMethod = method;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            if (method === 'phone') {
+                document.querySelector('.tab:nth-child(1)').classList.add('active');
+                document.getElementById('step-1-phone').classList.add('active');
+                document.getElementById('step-1-qr').classList.remove('active');
+            } else {
+                document.querySelector('.tab:nth-child(2)').classList.add('active');
+                document.getElementById('step-1-phone').classList.remove('active');
+                document.getElementById('step-1-qr').classList.add('active');
+            }
+            hideError();
+        }
+
+        function hideError() {
+            document.getElementById('error-msg').style.display = 'none';
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('error-msg');
+            el.innerText = msg;
+            el.style.display = 'block';
+        }
+
+        // --- Phone Logic ---
+
+        async function sendCode() {
+            const btn = document.querySelector('#step-1-phone button');
+            btn.disabled = true;
+            btn.innerText = "Sending...";
+            hideError();
+
+            const api_id = document.getElementById('api_id').value;
+            const api_hash = document.getElementById('api_hash').value;
+            const phone = document.getElementById('phone').value;
+
+            if (!api_id || !api_hash || !phone) {
+                showError("Please fill in all fields.");
+                btn.disabled = false;
+                btn.innerText = "Send Code";
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/auth/send_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_id, api_hash, phone })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    document.getElementById('credentials-step').style.display = 'none';
+                    document.getElementById('method-tabs').style.display = 'none';
+                    document.getElementById('step-1-phone').classList.remove('active');
+                    document.getElementById('step-2-code').classList.add('active');
+                    updateInfo(data.code_type);
+                } else {
+                    showError(data.error || "Failed to send code");
+                }
+            } catch (e) {
+                console.error(e);
+                showError("Network Error");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Send Code";
+            }
+        }
+
+        async function resendCode() {
+            const resendBtn = document.getElementById('resend-btn');
+            resendBtn.disabled = true;
+            resendBtn.innerText = "Requesting next method...";
+            hideError();
+
+            try {
+                const res = await fetch('/api/auth/resend_code', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    updateInfo(data.code_type);
+                } else {
+                    showError(data.error || "Resend failed");
+                }
+            } catch (e) {
+                showError("Network Error");
+            } finally {
+                resendBtn.disabled = false;
+                resendBtn.innerText = "Resend Code";
+            }
+        }
+
+        async function verifyCode() {
+            const btn = document.querySelector('#step-2-code button');
+            btn.disabled = true;
+            btn.innerText = "Verifying...";
+            hideError();
+            const code = document.getElementById('code').value;
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    if (data.status === 'needs_password') {
+                        goToPasswordStep();
+                    } else {
+                        window.location.href = '/';
+                    }
+                } else {
+                    showError(data.error || "Invalid Code");
+                    btn.disabled = false;
+                    btn.innerText = "Sign In";
+                }
+            } catch (e) {
+                showError("Network Error");
+                btn.disabled = false;
+                btn.innerText = "Sign In";
+            }
+        }
+
+        // --- QR Logic ---
+
+        async function generateQR() {
+            const btn = document.getElementById('btn-gen-qr');
+            const api_id = document.getElementById('api_id').value;
+            const api_hash = document.getElementById('api_hash').value;
+
+            if (!api_id || !api_hash) {
+                showError("API ID and Hash required.");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerText = "Generating...";
+            hideError();
+
+            try {
+                const res = await fetch('/api/auth/qr/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_id, api_hash })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    if (data.status === 'authorized') {
+                        window.location.href = '/';
+                        return;
+                    }
+
+                    document.getElementById('credentials-step').style.display = 'none';
+                    document.getElementById('method-tabs').style.display = 'none';
+                    document.getElementById('qr-status-text').innerText = "Scan with your Telegram App";
+
+                    // Render QR
+                    const qrContainer = document.getElementById('qrcode');
+                    qrContainer.innerHTML = "";
+                    qrContainer.style.display = 'block';
+                    new QRCode(qrContainer, {
+                        text: data.url,
+                        width: 200,
+                        height: 200
+                    });
+
+                    btn.style.display = 'none';
+                    startQRPoll();
+
+                } else {
+                    showError(data.error || "QR Gen Failed");
+                    btn.disabled = false;
+                    btn.innerText = "Generate QR Code";
+                }
+            } catch (e) {
+                showError("Network Error");
+                btn.disabled = false;
+                btn.innerText = "Generate QR Code";
+            }
+        }
+
+        function startQRPoll() {
+            if (qrPollInterval) clearInterval(qrPollInterval);
+            qrPollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/auth/qr/status');
+                    const data = await res.json();
+
+                    if (data.status === 'authorized') {
+                        clearInterval(qrPollInterval);
+                        window.location.href = '/';
+                    } else if (data.status === 'needs_password') {
+                        clearInterval(qrPollInterval);
+                        document.getElementById('step-1-qr').classList.remove('active');
+                        goToPasswordStep();
+                    } else if (data.status === 'expired') {
+                        clearInterval(qrPollInterval);
+                        showError("QR Code Expired. Reload page.");
+                    }
+                } catch (e) {
+                    console.error("Poll error", e);
+                }
+            }, 2000);
+        }
+
+        // --- Shared 2FA Logic ---
+
+        async function goToPasswordStep() {
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.getElementById('step-3-password').classList.add('active');
+
+            // Fetch Hint
+            try {
+                const res = await fetch('/api/auth/hint');
+                const data = await res.json();
+                if (data.hint) {
+                    document.getElementById('password-hint-text').innerText = "Hint: " + data.hint;
+                }
+            } catch (e) { }
+        }
+
+        async function verifyPassword() {
+            const btn = document.querySelector('#step-3-password button');
+            btn.disabled = true;
+            btn.innerText = "Verifying...";
+            hideError();
+
+            const password = document.getElementById('password').value;
+
+            try {
+                const res = await fetch('/api/auth/2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    window.location.href = '/';
+                } else {
+                    showError(data.error || "Invalid Password");
+                    btn.disabled = false;
+                    btn.innerText = "Verify Password";
+                }
+            } catch (e) {
+                showError("Network Error");
+                btn.disabled = false;
+                btn.innerText = "Verify Password";
+            }
+        }
+
+        function updateInfo(type) {
+            const infoEl = document.getElementById('info-msg');
+            let msg = "";
+            if (type === 'Telegram App') {
+                msg = "Code sent to <b>Telegram App</b>.<br>Check 'Service Notifications' chat.";
+            } else if (type === 'SMS') {
+                msg = "Code sent via <b>SMS</b>.";
+            } else if (type === 'Phone Call') {
+                msg = "Incoming <b>Phone Call</b> with code.";
+            } else {
+                msg = `Code sent via: ${type}`;
+            }
+            infoEl.innerHTML = msg;
+            infoEl.style.display = 'block';
+        }
+    </script>
+</body>
+
+</html>
