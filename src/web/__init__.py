@@ -126,20 +126,25 @@ async def job_background_maintenance():
     logger.info("maintenance_job_started")
     while not shutdown_event.is_set():
         try:
-            # Clean Valkey Logs
+            # 1. Always safe to clean local DB logs (Valkey) if available
+            # Note: If valkey is down, these will log errors but not crash app
             await action_repo.cleanup_expired()
             await event_repo.cleanup_expired()
 
-            # Clean File Cache
-            await interactor.run_storage_maintenance()
-
-            # Refresh Premium Status
-            is_premium = await interactor.get_self_premium_status()
+            # 2. Check User Status before attempting Telegram operations
             user = await user_repo.get_user(1)
-            if user and user.is_premium != is_premium:
-                user.is_premium = is_premium
-                await user_repo.save_user(user)
-                logger.info("premium_status_updated", status=is_premium)
+            if user and user.is_authenticated():
+                # Clean File Cache
+                await interactor.run_storage_maintenance()
+
+                # Refresh Premium Status
+                is_premium = await interactor.get_self_premium_status()
+                if user.is_premium != is_premium:
+                    user.is_premium = is_premium
+                    await user_repo.save_user(user)
+                    logger.info("premium_status_updated", status=is_premium)
+            else:
+                logger.info("maintenance_skipped_no_authenticated_user")
 
         except Exception as e:
             logger.error("maintenance_job_error", error=str(e))
