@@ -40,8 +40,8 @@ class EventHandlersMixin:
     def _extract_topic_id(self, message: Any) -> Optional[int]:
         raise NotImplementedError
 
-    async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
-        raise NotImplementedError
+    # get_topic_name removed: Implemented in ChatOperationsMixin
+    # If we define it here as raise NotImplementedError, it blocks MRO if this Mixin is first.
 
     def _cache_message_chat(self, msg_id: int, chat_id: int):
         raise NotImplementedError
@@ -79,7 +79,11 @@ class EventHandlersMixin:
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+                # Expects implementation in sibling Mixin (ChatOperationsMixin)
+                if hasattr(self, "get_topic_name"):
+                    topic_name = await getattr(self, "get_topic_name")(
+                        event.chat_id, topic_id
+                    )
 
             display_chat_name = chat_name
             if topic_name:
@@ -126,7 +130,11 @@ class EventHandlersMixin:
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+                # Expects implementation in sibling Mixin
+                if hasattr(self, "get_topic_name"):
+                    topic_name = await getattr(self, "get_topic_name")(
+                        event.chat_id, topic_id
+                    )
 
             display_chat_name = chat_name
             if topic_name:
@@ -168,6 +176,7 @@ class EventHandlersMixin:
             chat_name = "Unknown"
             if chat_id:
                 try:
+                    # 'client' is injected via Adapter
                     entity = await self.client.get_entity(chat_id)
                     chat_name = utils.get_display_name(entity)
                 except Exception:
@@ -259,19 +268,20 @@ class EventHandlersMixin:
                 if not chat_id:
                     return
 
-                # 2. Extract Reaction Data directly from the update object
-                # UpdateMessageReactions contains a 'reactions' field of type MessageReactions
-                # We can re-use the parser method if we wrap it in a mock object or just call the extraction logic directly
-
-                # Mock object to reuse _extract_reactions
+                # 2. Reuse extract logic via Mock object
                 class MockMsg:
                     def __init__(self, r):
                         self.reactions = r
 
                 mock_msg = MockMsg(event.reactions)
-                reactions_list = self._extract_reactions(mock_msg)
 
-                # 3. Create partial message model (only ID and reactions needed for frontend update)
+                # _extract_reactions is implemented in MessageParserMixin
+                if hasattr(self, "_extract_reactions"):
+                    reactions_list = getattr(self, "_extract_reactions")(mock_msg)
+                else:
+                    reactions_list = []
+
+                # 3. Create partial message model
                 msg_model = Message(
                     id=event.msg_id,
                     text="",
@@ -284,7 +294,7 @@ class EventHandlersMixin:
                 sys_event = SystemEvent(
                     type="reaction_update",
                     text="",
-                    chat_name="",  # Not needed for reaction updates
+                    chat_name="",
                     chat_id=chat_id,
                     message_model=msg_model,
                 )
