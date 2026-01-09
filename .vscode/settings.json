@@ -5,7 +5,7 @@
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
         "**/cache": true,
-        "**/.ruff_cache": true,
+        "**/.ruff_cache": true
     },
     "search.exclude": {
         "**/__pycache__": true,
@@ -13,11 +13,20 @@
         "**/manager_session.session": true,
         "**/manager_session.session-journal": true,
         "**/cache": true,
-        "**/.ruff_cache": true,
+        "**/.ruff_cache": true
     },
     "codeWebChat.ignorePatterns": [
         "/uv.lock"
     ],
     "codeWebChat.editContextSystemInstructions": "You're making code for my project. NEVER add comments or descriptions in code.",
-    "python.defaultInterpreterPath": "/usr/local/bin/python"
+    "python.defaultInterpreterPath": "/usr/local/bin/python",
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+        }
+    },
+    "ruff.importStrategy": "fromEnvironment"
 }

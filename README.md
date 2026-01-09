@@ -21,22 +21,20 @@ added in future. There is also logging of actions done by manager.
    - Login with your phone number
    - Go to "API development tools"
    - Create a new application (values don't matter much)
-   - Copy `App api_id` and `App api_hash`
-
-## Running
-
-### **Using Docker Compose (Development Environment)**
-
-~~~bash
-make
-~~~
+   - Copy `App api_id` and `App api_hash` and add them into `.env`
+3. Launch app `make`.
 
 ### **Access Web Interface**
 
 Open <http://localhost:8000>
 
+If its exposed to external internet or you are running production image, it MUST
+BE PROTECTED via some app like tinyauth.
+
 ## TODO
 
+- In src/adapters/telegram/chat_operations.py, the method get_all_unread_chats iterates over client.iter_dialogs(limit=None).
+The Problem: If a user has 5,000+ chats (common for power users), this will block the event loop or take a massive amount of time on startup/scan.
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure

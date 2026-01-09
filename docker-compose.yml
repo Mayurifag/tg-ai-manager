@@ -8,6 +8,7 @@ services:
       - .:/app
     ports:
       - "127.0.0.1:8000:8000"
+    env_file: .env
     environment:
       - VALKEY_URL=redis://valkey:6379/0
       - DB_PATH=data.db
