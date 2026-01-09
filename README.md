@@ -33,9 +33,11 @@ BE PROTECTED via some app like tinyauth.
 
 ## TODO
 
-- Pictures - read previews as webp. Ability to render full webp on click like on imageboards
 - Reposts are not seen. Quotes are not seen on frontend. Reacts on repost are not working correctly. Optimistic updates might be not needed??
+- Pictures - read previews as webp. Ability to render full webp on click like on imageboards
 - Load pred messages fix - wrong place of loads, slow, etc.
+- autoread if single message - Multiple media messages count as single message or not?
+- Can i do something if I done anything like reading on another client? Only autofetch every n seconds?
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
