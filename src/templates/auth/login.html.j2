@@ -6,7 +6,6 @@
     <meta name="color-scheme" content="dark">
     <title>Login - Telegram Manager</title>
     <link rel="stylesheet" href="/static/css/base.css">
-    <!-- QR Code Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         body {
@@ -24,12 +23,12 @@
             border: 1px solid #333;
             width: 380px;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            text-align: center;
         }
 
         h2 {
             margin-top: 0;
             color: #fff;
-            text-align: center;
             margin-bottom: 20px;
         }
 
@@ -54,6 +53,7 @@
             font-size: 1rem;
             cursor: pointer;
             font-weight: bold;
+            margin-top: 10px;
         }
 
         button:hover {
@@ -85,7 +85,6 @@
             display: block;
         }
 
-        /* QR specific */
         #qrcode {
             background: white;
             padding: 15px;
@@ -108,24 +107,11 @@
         <h2>Telegram Login</h2>
         <div class="error" id="error-msg"></div>
 
-        <!-- Credentials Inputs -->
-        <div id="credentials-step" class="step active">
-            <label class="hint">API ID (from my.telegram.org)</label>
-            <input type="number" id="api_id" placeholder="123456" required>
-
-            <label class="hint">API Hash</label>
-            <input type="text" id="api_hash" placeholder="abcdef..." required>
-
-            <button onclick="generateQR()" id="btn-gen-qr">Generate QR Code</button>
-        </div>
-
-        <!-- Step 2: QR -->
-        <div id="qr-step" class="step">
-            <div class="qr-placeholder" id="qr-status-text">Scan with your Telegram App</div>
+        <div id="qr-step" class="step active">
+            <div class="qr-placeholder" id="qr-status-text">Generating QR...</div>
             <div id="qrcode"></div>
         </div>
 
-        <!-- Step 3: 2FA Password -->
         <div id="password-step" class="step">
             <label class="hint">Two-Step Verification</label>
             <p id="password-hint-text"
@@ -148,27 +134,14 @@
             el.style.display = 'block';
         }
 
-        // --- QR Logic ---
-
         async function generateQR() {
-            const btn = document.getElementById('btn-gen-qr');
-            const api_id = document.getElementById('api_id').value;
-            const api_hash = document.getElementById('api_hash').value;
-
-            if (!api_id || !api_hash) {
-                showError("API ID and Hash required.");
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerText = "Generating...";
             hideError();
 
             try {
                 const res = await fetch('/api/auth/qr/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_id, api_hash })
+                    body: JSON.stringify({})
                 });
                 const data = await res.json();
 
@@ -178,10 +151,8 @@
                         return;
                     }
 
-                    document.getElementById('credentials-step').classList.remove('active');
-                    document.getElementById('qr-step').classList.add('active');
+                    document.getElementById('qr-status-text').innerText = "Scan with your Telegram App";
 
-                    // Render QR
                     const qrContainer = document.getElementById('qrcode');
                     qrContainer.innerHTML = "";
                     new QRCode(qrContainer, {
@@ -194,13 +165,11 @@
 
                 } else {
                     showError(data.error || "QR Gen Failed");
-                    btn.disabled = false;
-                    btn.innerText = "Generate QR Code";
+                    document.getElementById('qr-status-text').innerText = "Error generating QR";
                 }
             } catch (e) {
                 showError("Network Error");
-                btn.disabled = false;
-                btn.innerText = "Generate QR Code";
+                document.getElementById('qr-status-text').innerText = "Connection Error";
             }
         }
 
@@ -227,13 +196,10 @@
             }, 2000);
         }
 
-        // --- Shared 2FA Logic ---
-
         async function goToPasswordStep() {
             document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
             document.getElementById('password-step').classList.add('active');
 
-            // Fetch Hint
             try {
                 const res = await fetch('/api/auth/hint');
                 const data = await res.json();
@@ -272,6 +238,8 @@
                 btn.innerText = "Verify Password";
             }
         }
+
+        window.addEventListener('load', generateQR);
     </script>
 </body>
 

@@ -1,14 +1,13 @@
 import traceback
-from quart import Blueprint, render_template, request, jsonify, redirect
+from quart import Blueprint, render_template, jsonify, redirect, request
 from telethon import utils
 from src.container import get_user_repo, reload_tg_adapter, _get_tg_adapter
 from src.users.models import User
 from src.infrastructure.logging import get_logger
+from src.config import get_settings
 
 logger = get_logger(__name__)
 auth_bp = Blueprint("auth", __name__)
-
-_auth_state = {}
 
 
 @auth_bp.route("/login", methods=["GET"])
@@ -23,21 +22,16 @@ async def login_page():
     return await render_template("auth/login.html.j2")
 
 
-# --- QR Flow ---
-
-
 @auth_bp.route("/api/auth/qr/start", methods=["POST"])
 async def qr_start():
     try:
-        data = await request.get_json()
-        api_id = int(data.get("api_id"))
-        api_hash = data.get("api_hash")
+        settings = get_settings()
 
-        _auth_state["api_id"] = api_id
-        _auth_state["api_hash"] = api_hash
-
-        # Initialize Adapter
-        reload_tg_adapter(api_id, api_hash, session_string=None)
+        reload_tg_adapter(
+            api_id=settings.TG_API_ID,
+            api_hash=settings.TG_API_HASH,
+            session_string=None,
+        )
         adapter = _get_tg_adapter()
 
         url = await adapter.start_qr_login()
@@ -64,9 +58,6 @@ async def qr_status():
     return jsonify({"status": status})
 
 
-# --- 2FA / Password ---
-
-
 @auth_bp.route("/api/auth/hint", methods=["GET"])
 async def get_password_hint():
     adapter = _get_tg_adapter()
@@ -89,11 +80,9 @@ async def login_2fa():
         return jsonify({"error": str(e)}), 400
 
 
-# --- Helper ---
-
-
 async def _finalize_login(adapter):
     session_string = adapter.get_session_string()
+    settings = get_settings()
 
     me = await adapter.client.get_me()
     username = getattr(me, "username", None)
@@ -107,11 +96,10 @@ async def _finalize_login(adapter):
 
     updated_user = User(
         id=1,
-        api_id=_auth_state["api_id"],
-        api_hash=_auth_state["api_hash"],
+        api_id=settings.TG_API_ID,
+        api_hash=settings.TG_API_HASH,
         username=username,
         session_string=session_string,
-        # Preserve settings
         autoread_service_messages=existing_user.autoread_service_messages
         if existing_user
         else False,
@@ -124,5 +112,4 @@ async def _finalize_login(adapter):
     )
 
     await repo.save_user(updated_user)
-    _auth_state.clear()
     logger.info("auth_login_completed", username=username)

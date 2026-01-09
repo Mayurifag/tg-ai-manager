@@ -36,6 +36,8 @@ RUN uv sync --no-install-project --no-dev
 # Copy Application Code
 COPY src ./src
 COPY static ./static
+COPY migrations ./migrations
+COPY alembic.ini .
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Install project

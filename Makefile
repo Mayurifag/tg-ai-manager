@@ -1,30 +1,27 @@
-.PHONY: all up run stop clean logs run-prod
+.PHONY: all up up-prod down logs clean
 
 # Default target
-all: run
-
-# Start infrastructure (Valkey) in detached mode
-up:
-	docker compose up -d valkey
+all: up
 
 # Start the full stack (App + Valkey) with live rebuilds
-run:
+up:
 	docker compose up --build
 
 # Run the production image from registry
 # - Pulls latest image
 # - Maps host port 14123 to container port 8000
 # - --rm ensures container and anonymous volumes are deleted on exit
-run-prod:
+up-prod:
 	docker pull ghcr.io/mayurifag/tg-ai-manager:latest
 	docker run --rm -it \
 		-p 14123:8000 \
+		--env-file .env \
 		--name tg_ai_manager_prod \
 		ghcr.io/mayurifag/tg-ai-manager:latest
 
 # Stop all containers
-stop:
-	docker compose down
+down:
+	docker compose down --remove-orphans
 
 # View logs from docker containers
 logs:
