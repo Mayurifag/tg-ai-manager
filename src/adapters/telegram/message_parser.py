@@ -88,19 +88,14 @@ class MessageParserMixin:
         if not hasattr(msg, "reactions") or not msg.reactions:
             return results
 
-        # msg.reactions is a MessageReactions object
-        # results is a list of ReactionCount
         reaction_counts = getattr(msg.reactions, "results", [])
         recent_reactions = getattr(msg.reactions, "recent_reactions", []) or []
 
-        # Identify which reactions *I* have sent by checking recent_reactions
-        # This is a fallback if `chosen=True` is missing in ReactionCount
         my_reaction_emojis: Set[str] = set()
         my_reaction_docs: Set[int] = set()
 
         if self._self_id and recent_reactions:
             for rr in recent_reactions:
-                # Check if the peer matches my ID
                 peer_id = None
                 if isinstance(rr.peer_id, PeerUser):
                     peer_id = rr.peer_id.user_id
@@ -110,7 +105,6 @@ class MessageParserMixin:
                     peer_id = rr.peer_id.chat_id
 
                 if peer_id == self._self_id:
-                    # Capture the reaction
                     if isinstance(rr.reaction, ReactionEmoji):
                         my_reaction_emojis.add(rr.reaction.emoticon)
                     elif isinstance(rr.reaction, ReactionCustomEmoji):
@@ -123,14 +117,12 @@ class MessageParserMixin:
 
             if isinstance(rc.reaction, ReactionEmoji):
                 emoji_str = rc.reaction.emoticon
-                # Fallback check
                 if not is_chosen and emoji_str in my_reaction_emojis:
                     is_chosen = True
 
             elif isinstance(rc.reaction, ReactionCustomEmoji):
                 custom_id = rc.reaction.document_id
                 emoji_str = "⭐"
-                # Fallback check
                 if not is_chosen and custom_id in my_reaction_docs:
                     is_chosen = True
 
@@ -249,12 +241,11 @@ class MessageParserMixin:
                 reply_to_sender = (
                     utils.get_display_name(r_sender) if r_sender else "User"
                 )
-            # Support basic reply mapping if map not provided but ID exists
             elif reply_to_msg_id:
-                # We can't fetch text here easily without N+1, so we leave it None or handle elsewhere
                 pass
 
         reactions = self._extract_reactions(msg)
+        grouped_id = getattr(msg, "grouped_id", None)
 
         return Message(
             id=msg.id,
@@ -283,4 +274,5 @@ class MessageParserMixin:
             poll_question=poll_question,
             is_service=is_service,
             reactions=reactions,
+            grouped_id=grouped_id,
         )

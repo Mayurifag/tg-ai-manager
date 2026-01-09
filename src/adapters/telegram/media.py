@@ -51,7 +51,8 @@ class MediaMixin:
         if not self.images_dir or not os.path.exists(self.images_dir):
             return
 
-        limit_mb = int(os.getenv("CACHE_MAX_SIZE_MB", "500"))
+        # Default limit changed to 1GB (1024MB)
+        limit_mb = int(os.getenv("CACHE_MAX_SIZE_MB", "1024"))
         limit_bytes = limit_mb * 1024 * 1024
 
         await asyncio.to_thread(self._cleanup_sync, limit_bytes)
@@ -150,7 +151,14 @@ class MediaMixin:
             logger.error("avatar_download_failed", chat_id=chat_id, error=str(e))
             return None
 
-    async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
+    async def download_media(
+        self, chat_id: int, message_id: int, size_type: str = "preview"
+    ) -> Optional[str]:
+        """
+        Downloads media.
+        size_type="preview" -> thumb='m' (default), saves as media_{id}_{msg_id}.ext
+        size_type="full" -> thumb=None (highest res), saves as media_{id}_{msg_id}_full.ext
+        """
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, ids=[message_id])
@@ -177,9 +185,12 @@ class MediaMixin:
                     elif "video/mp4" in message.media.document.mime_type:
                         ext = "mp4"
 
-            filename = f"media_{chat_id}_{message_id}.{ext}"
+            # Determine filename based on size_type
+            suffix = "_full" if size_type == "full" else ""
+            filename = f"media_{chat_id}_{message_id}{suffix}.{ext}"
             path = os.path.join(self.images_dir, filename)
 
+            # Return cached if exists
             if os.path.exists(path):
                 return f"/cache/{filename}"
 
@@ -197,12 +208,27 @@ class MediaMixin:
                         is_video = True
 
             result = None
+
+            # Logic for download arguments
             if is_sticker or is_audio or is_video:
+                # Stickers/Audio/Video usually don't have multiple 'thumb' sizes in the same way
+                # or require specific handling. For now, we download the main file.
                 result = await self.client.download_media(message, file=path)
             else:
-                result = await self.client.download_media(message, file=path, thumb="m")
-                if not result:
-                    result = await self.client.download_media(message, file=path)
+                # It is likely a Photo
+                if size_type == "full":
+                    # Download max size
+                    result = await self.client.download_media(
+                        message, file=path, thumb=None
+                    )
+                else:
+                    # Download preview
+                    result = await self.client.download_media(
+                        message, file=path, thumb="m"
+                    )
+                    # Fallback if 'm' thumb doesn't exist (e.g. small images)
+                    if not result:
+                        result = await self.client.download_media(message, file=path)
 
             if result:
                 final_filename = os.path.basename(result)
@@ -224,19 +250,14 @@ class MediaMixin:
         filename = f"emoji_{document_id}.webp"  # Use webp/webm mostly
         path = os.path.join(self.images_dir, filename)
 
-        # Check if already exists (any extension)
-        # Simplified: Check specific likely extensions or just the ID prefix
-        # For now, simplistic approach
         if os.path.exists(path):
             return f"/cache/{filename}"
 
-        # Check for webm variant
         webm_path = path.replace(".webp", ".webm")
         if os.path.exists(webm_path):
             return f"/cache/{os.path.basename(webm_path)}"
 
         try:
-            # Fetch the document info
             result = await self.client(
                 functions.messages.GetCustomEmojiDocumentsRequest(
                     document_id=[document_id]
@@ -248,7 +269,6 @@ class MediaMixin:
 
             document = result[0]
 
-            # Determine extension
             ext = "webp"
             if document.mime_type == "video/webm":
                 ext = "webm"
