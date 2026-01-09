@@ -1,14 +1,16 @@
+import asyncio
 import traceback
-from typing import List, Optional, Any, Dict
-from telethon import functions, utils, types
+from typing import Any, Dict, List, Optional
+
+from telethon import functions, types, utils
 from telethon.tl.functions.messages import GetPeerDialogsRequest
 from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
 
-from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.adapters.telethon_mappers import (
-    map_telethon_dialog_to_chat_type,
     format_message_preview,
+    map_telethon_dialog_to_chat_type,
 )
+from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -101,25 +103,36 @@ class ChatOperationsMixin:
 
     async def get_all_unread_chats(self) -> List[Chat]:
         """
-        Iterates over all dialogs to find those with unread messages.
-        Note: This can be heavy if the user has thousands of chats.
+        Iterates over all dialogs (Main + Archive) to find those with unread messages.
+        Includes non-blocking yields to keep the event loop responsive.
         """
         results = []
         try:
-            # Iterate through dialogs.
-            # Note: iter_dialogs might take time for large accounts.
-            async for d in self.client.iter_dialogs(limit=None, ignore_migrated=True):
-                if d.unread_count > 0 or d.unread_mentions_count > 0:
-                    chat_type = map_telethon_dialog_to_chat_type(d)
+            # We iterate over folder 0 (Main) and folder 1 (Archive)
+            folders = [0, 1]
 
-                    # Basic chat object
-                    chat = Chat(
-                        id=d.id,
-                        name=d.name,
-                        unread_count=d.unread_count,
-                        type=chat_type,
-                    )
-                    results.append(chat)
+            for folder_id in folders:
+                count = 0
+                async for d in self.client.iter_dialogs(
+                    limit=None, ignore_migrated=True, folder=folder_id
+                ):
+                    count += 1
+                    # Yield control to event loop every 50 items to prevent blocking
+                    if count % 50 == 0:
+                        await asyncio.sleep(0)
+
+                    if d.unread_count > 0 or d.unread_mentions_count > 0:
+                        chat_type = map_telethon_dialog_to_chat_type(d)
+
+                        # Basic chat object
+                        chat = Chat(
+                            id=d.id,
+                            name=d.name,
+                            unread_count=d.unread_count,
+                            type=chat_type,
+                        )
+                        results.append(chat)
+
         except Exception as e:
             logger.error("get_all_unread_chats_failed", error=str(e))
 

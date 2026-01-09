@@ -1,21 +1,22 @@
 import asyncio
 import os
 import sys
-from quart import Quart
-from src.web.routes import register_routes
-from src.web.sse import broadcast_event, shutdown_event, connected_queues
-from src.container import (
-    get_chat_interactor,
-    get_rule_service,
-    get_action_repo,
-    get_event_repo,
-)
-from src.jinja_filters import file_mtime_filter
-from src.infrastructure.logging import configure_logging, get_logger
 
 # Alembic Imports
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from quart import Quart
+
+from src.container import (
+    get_action_repo,
+    get_chat_interactor,
+    get_event_repo,
+    get_rule_service,
+)
+from src.infrastructure.logging import configure_logging, get_logger
+from src.jinja_filters import file_mtime_filter
+from src.web.routes import register_routes
+from src.web.sse import broadcast_event, connected_queues, shutdown_event
 
 logger = get_logger(__name__)
 
@@ -80,8 +81,8 @@ def create_app() -> Quart:
         rule_service = get_rule_service()
         asyncio.create_task(rule_service.run_startup_scan())
 
-        # Start cleanup job
-        asyncio.create_task(job_cleanup_valkey())
+        # Start maintenance background job (Logs & File Cache)
+        asyncio.create_task(job_background_maintenance())
 
     @app.after_serving
     async def shutdown():
@@ -114,20 +115,25 @@ def create_app() -> Quart:
     return app
 
 
-async def job_cleanup_valkey():
-    """Background task to clean old logs and events."""
+async def job_background_maintenance():
+    """Background task to clean old logs and enforce cache limits."""
     action_repo = get_action_repo()
     event_repo = get_event_repo()
+    interactor = get_chat_interactor()
 
-    logger.info("cleanup_job_started")
+    logger.info("maintenance_job_started")
     while not shutdown_event.is_set():
         try:
+            # Clean Valkey Logs
             await action_repo.cleanup_expired()
             await event_repo.cleanup_expired()
-        except Exception as e:
-            logger.error("cleanup_job_error", error=str(e))
 
-        # Run every hour to ensure data adheres to the 3h TTL
+            # Clean File Cache
+            await interactor.run_storage_maintenance()
+        except Exception as e:
+            logger.error("maintenance_job_error", error=str(e))
+
+        # Run every hour
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=3600)
         except asyncio.TimeoutError:

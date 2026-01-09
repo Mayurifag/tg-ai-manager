@@ -1,7 +1,8 @@
-from typing import List, Optional, Callable, Awaitable
-from src.domain.ports import ChatRepository, ActionRepository, EventRepository
-from src.domain.models import Chat, Message, SystemEvent, ActionLog, ChatType
 from datetime import datetime
+from typing import Awaitable, Callable, List, Optional
+
+from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
+from src.domain.ports import ActionRepository, ChatRepository, EventRepository
 
 
 class ChatInteractor:
@@ -98,3 +99,7 @@ class ChatInteractor:
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
         """Fetches recent system events from persistence layer."""
         return await self.event_repo.get_recent_events(limit)
+
+    async def run_storage_maintenance(self):
+        """Triggers the repository storage cleanup."""
+        await self.repository.run_storage_maintenance()
