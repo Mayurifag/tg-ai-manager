@@ -13,6 +13,7 @@ dependencies = [
     "redis>=5.0.1",
     "hypercorn>=0.16.1",
     "alembic>=1.13.0",
+    "cryptography>=44.0.0",
 ]
 
 [dependency-groups]

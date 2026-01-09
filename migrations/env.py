@@ -1,4 +1,3 @@
-import asyncio
 import os
 import sys
 from logging.config import fileConfig
@@ -26,11 +25,12 @@ if config.config_file_name is not None:
 # target_metadata = None (We aren't using SQLAlchemy models for autogen yet)
 target_metadata = None
 
+
 def get_database_url():
     """Retrieve database URL from application settings."""
     settings = get_settings()
     db_path = settings.DB_PATH
-    
+
     # If absolute path, use sqlite:////path
     # If relative, use sqlite:///path
     if os.path.isabs(db_path):
@@ -54,7 +54,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    
+
     # Override the sqlalchemy.url in configuration
     configuration = config.get_section(config.config_ini_section) or {}
     configuration["sqlalchemy.url"] = get_database_url()
@@ -66,9 +66,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

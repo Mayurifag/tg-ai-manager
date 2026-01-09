@@ -21,7 +21,11 @@ def register_routes(app: Quart):
     @app.before_request
     async def login_required():
         # Allow static files and auth routes
-        if request.path.startswith("/static") or request.path.startswith("/api/auth") or request.path == "/login":
+        if (
+            request.path.startswith("/static")
+            or request.path.startswith("/api/auth")
+            or request.path == "/login"
+        ):
             return
 
         adapter = _get_tg_adapter()

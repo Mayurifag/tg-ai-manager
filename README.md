@@ -37,8 +37,6 @@ Open <http://localhost:8000>
 
 ## TODO
 
-- Resend code - disable for 30s or how much needed until send code via sms
-- Cryptography for all needed fields. On first startup we might generate the encrypted key.
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure
