@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="dark">
     <meta name="supported-color-scheme" content="dark">
     <title>{% block title %}Telegram Manager{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
     {% block head_extra %}{% endblock %}
 </head>
@@ -67,22 +68,113 @@
         </main>
     </div>
 
+    <!-- Lightbox Modal -->
+    <div id="lightbox" onclick="closeLightbox()">
+        <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
+
+        <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
+        <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
+
+        <div id="lightbox-loading">Loading full size...</div>
+        <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
+    </div>
+
     <script>
+        let currentLightboxIndex = -1;
+        let lightboxItems = [];
+
+        function refreshLightboxItems() {
+            // Find all elements classed as 'lightbox-trigger'
+            // We use Array.from to get a static list at the moment of call
+            // We reverse logic if message container is column-reverse?
+            // Actually, querySelectorAll returns in document order.
+            // If the chat is column-reverse, the first element in DOM is the bottom one.
+            // We usually want navigation to follow visual flow (Top to Bottom).
+            // So standard DOM order (Top to Bottom) is correct for visual flow.
+            const triggers = document.querySelectorAll('.lightbox-trigger');
+            lightboxItems = Array.from(triggers).map(el => ({
+                el: el,
+                src: el.src,
+                fullSrc: el.getAttribute('data-full-src')
+            }));
+        }
+
+        // Global Lightbox Functions
+        function openLightbox(element) {
+            refreshLightboxItems();
+
+            // Find index of clicked element
+            currentLightboxIndex = lightboxItems.findIndex(item => item.el === element);
+
+            if (currentLightboxIndex === -1) return;
+
+            updateLightboxView();
+
+            const lightbox = document.getElementById('lightbox');
+            lightbox.classList.add('active');
+        }
+
+        function updateLightboxView() {
+            const item = lightboxItems[currentLightboxIndex];
+            const img = document.getElementById('lightbox-img');
+            const loader = document.getElementById('lightbox-loading');
+
+            if (!item) return;
+
+            // Reset UI
+            img.style.display = 'none';
+            loader.style.display = 'block';
+
+            // Set source
+            img.onload = () => {
+                loader.style.display = 'none';
+                img.style.display = 'block';
+            };
+            img.onerror = () => {
+                console.log("Full load failed, falling back to preview");
+                img.src = item.src;
+                loader.style.display = 'none';
+                img.style.display = 'block';
+            };
+
+            // Use full resolution source
+            img.src = item.fullSrc;
+        }
+
+        function navigateLightbox(dir) {
+            const newIndex = currentLightboxIndex + dir;
+            if (newIndex >= 0 && newIndex < lightboxItems.length) {
+                currentLightboxIndex = newIndex;
+                updateLightboxView();
+            }
+        }
+
+        function closeLightbox() {
+            const lightbox = document.getElementById('lightbox');
+            lightbox.classList.remove('active');
+            const img = document.getElementById('lightbox-img');
+            setTimeout(() => img.src = "", 300);
+        }
+
+        // Keyboard Navigation
+        document.addEventListener('keydown', (e) => {
+            if (!document.getElementById('lightbox').classList.contains('active')) return;
+
+            if (e.key === 'Escape') closeLightbox();
+            if (e.key === 'ArrowLeft') navigateLightbox(-1);
+            if (e.key === 'ArrowRight') navigateLightbox(1);
+        });
+
         document.addEventListener('DOMContentLoaded', () => {
             const feedContainer = document.getElementById('event-feed-list');
             const evtSource = new EventSource("/api/events/stream");
 
             evtSource.onmessage = function (e) {
                 const data = JSON.parse(e.data);
-
-                // Dispatch global event for other components (e.g., clearing badges in index.html, updating chat view)
                 const customEvent = new CustomEvent('tg:event', { detail: data });
                 document.dispatchEvent(customEvent);
 
-                // Filter out 'read' and 'edited' events from the visual sidebar feed
-                if (data.type === 'read' || data.type === 'edited') {
-                    return;
-                }
+                if (data.type === 'read' || data.type === 'edited') return;
 
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
@@ -92,35 +184,25 @@
 
                 const header = document.createElement('div');
                 header.className = 'event-header';
-
                 const typeSpan = document.createElement('span');
                 typeSpan.className = 'event-type';
                 typeSpan.textContent = data.type.toUpperCase();
-
                 const chatSpan = document.createElement('span');
                 chatSpan.className = 'event-chat';
                 chatSpan.textContent = data.chat_name;
-                if (data.topic_name) {
-                    chatSpan.title = `${data.topic_name} - ${data.chat_name}`;
-                }
-
+                if (data.topic_name) chatSpan.title = `${data.topic_name} - ${data.chat_name}`;
                 header.appendChild(typeSpan);
                 header.appendChild(chatSpan);
 
                 const textDiv = document.createElement('div');
                 textDiv.className = 'event-text';
                 textDiv.textContent = data.text;
-                textDiv.title = data.text;
-
                 item.appendChild(header);
                 item.appendChild(textDiv);
 
                 feedContainer.insertBefore(item, feedContainer.firstChild);
-
                 const items = feedContainer.querySelectorAll('.event-item');
-                if (items.length > 10) {
-                    items[items.length - 1].remove();
-                }
+                if (items.length > 10) items[items.length - 1].remove();
             };
         });
     </script>

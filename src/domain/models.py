@@ -66,6 +66,9 @@ class Message:
     is_service: bool = False
     # Reactions
     reactions: List[Reaction] = field(default_factory=list)
+    # Grouping (Albums)
+    grouped_id: Optional[int] = None
+    album_parts: Optional[List["Message"]] = None  # Holds other messages in the group
 
     def get_preview_text(self) -> str:
         """Returns a text representation of the message, handling media fallbacks."""
@@ -85,6 +88,8 @@ class Message:
                 return f"🎵 {performer} - {title}" if performer else f"🎵 {title}"
             elif self.is_poll:
                 return f"Poll: {self.poll_question or 'Unknown Poll'}"
+            elif self.album_parts:
+                return "📷 Album"
             return "📷 Media"
 
         return "Message"

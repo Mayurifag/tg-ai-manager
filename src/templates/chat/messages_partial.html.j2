@@ -38,7 +38,35 @@
         </a>
         {% endif %}
 
-        {% if msg.has_media %}
+        {% if msg.album_parts %}
+        {# --- Album Grid Display --- #}
+        <div class="media-content">
+            {% set count = msg.album_parts | length %}
+            {% set grid_class = 'items-more' %}
+            {% if count == 1 %}{% set grid_class = 'items-1' %}
+            {% elif count == 2 %}{% set grid_class = 'items-2' %}
+            {% elif count == 3 %}{% set grid_class = 'items-3' %}
+            {% elif count == 4 %}{% set grid_class = 'items-4' %}
+            {% endif %}
+
+            <div class="album-grid {{ grid_class }}">
+                {% for part in msg.album_parts %}
+                <div class="album-item">
+                    {% if part.is_video %}
+                    <video controls preload="metadata" style="width: 100%; height: 100%; object-fit: cover;">
+                        <source src="/media/{{ chat_id }}/{{ part.id }}">
+                    </video>
+                    {% else %}
+                    <img src="/media/{{ chat_id }}/{{ part.id }}" class="lightbox-trigger"
+                        data-full-src="/media/{{ chat_id }}/{{ part.id }}/full" onclick="openLightbox(this)"
+                        loading="lazy">
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {% elif msg.has_media %}
         <div class="media-content" style="margin-bottom: 5px;">
             {% if msg.is_video %}
             <video controls preload="metadata"
@@ -85,10 +113,11 @@
             </div>
 
             {% else %}
-            {# Photos/General Media #}
-            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media"
+            {# Single Photo / General Media #}
+            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media lightbox-trigger"
+                data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full"
                 style="max-width: 250px; max-height: 300px; border-radius: 8px; display: block; cursor: pointer;"
-                onclick="window.open(this.src, '_blank')">
+                onclick="openLightbox(this)">
             {% endif %}
         </div>
         {% endif %}

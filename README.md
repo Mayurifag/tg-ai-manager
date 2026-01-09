@@ -21,7 +21,7 @@ added in future. There is also logging of actions done by manager.
    - Login with your phone number
    - Go to "API development tools"
    - Create a new application (values don't matter much)
-   - Copy `App api_id` and `App api_hash` and add them into `.env`
+   - Copy `api_id` and `api_hash` and add them into `.env`
 3. Launch app `make`.
 
 ### **Access Web Interface**
@@ -57,11 +57,12 @@ services:
 
 ## TODO
 
-- Reposts are not seen. Quotes are not seen on frontend. Reacts on repost are not working correctly. Optimistic updates might be not needed??
-- Pictures - read previews as webp. Ability to render full webp on click like on imageboards
-- Load pred messages fix - wrong place of loads, slow, etc.
-- autoread if single message - Multiple media messages count as single message or not?
+- Reacts and msgs - use apple emojis.
+- Animated custom emojis arent working
+- Posts of group inside this chat are not correctly reacted by app. Optimistic updates might be not needed??
+- Quotes are not seen on frontend.
+- Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine
 - Can i do something if I done anything like reading on another client? Only autofetch every n seconds?
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
-- performance issues after some time. seems i am throttled by telegram but not sure
+- performance issues after some time. seems i am throttled by telegram but not sure - maybe fixed
