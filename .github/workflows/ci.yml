@@ -66,3 +66,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
+
+      - name: Trigger deploy
+        env:
+          WATCHTOWER_TOKEN: ${{ secrets.WATCHTOWER_HTTP_API_TOKEN }}
+          WATCHTOWER_URL: ${{ secrets.WATCHTOWER_URL }}
+        run: |
+          curl -H "Authorization: Bearer $WATCHTOWER_TOKEN" $WATCHTOWER_URL
