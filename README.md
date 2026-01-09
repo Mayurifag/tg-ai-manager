@@ -35,6 +35,7 @@ BE PROTECTED via some app like tinyauth.
 
 ~~~yaml
 services:
+  # it actually that minimal config, single monolith image container
   tg-manager:
     image: ghcr.io/mayurifag/tg-ai-manager:latest
     ports:
@@ -47,12 +48,6 @@ services:
       - CACHE_MAX_SIZE_MB=500
     volumes:
       - ./tg_data:/app_data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/login"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
 ~~~
 
 ## TODO
