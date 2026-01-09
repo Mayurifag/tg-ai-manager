@@ -1,10 +1,19 @@
 import traceback
-from typing import Callable, Awaitable, List, Optional, Any, Dict
 from datetime import datetime
-from telethon import utils, types
-from telethon.tl.types import MessageActionChatEditPhoto, MessageActionChatDeletePhoto
-from src.domain.models import SystemEvent, Message
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from telethon import types, utils
+from telethon.tl.types import (
+    MessageActionChatDeletePhoto,
+    MessageActionChatEditPhoto,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    UpdateMessageReactions,
+)
+
 from src.adapters.telethon_mappers import get_message_action_text
+from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -23,6 +32,9 @@ class EventHandlersMixin:
         replies_map: Dict[int, Any] | None = None,
         chat_id: Optional[int] = None,
     ) -> Message:
+        raise NotImplementedError
+
+    def _extract_reactions(self, msg: Any) -> list[Reaction]:
         raise NotImplementedError
 
     def _extract_topic_id(self, message: Any) -> Optional[int]:
@@ -227,6 +239,60 @@ class EventHandlersMixin:
         except Exception as e:
             logger.error(
                 "handle_chat_action_error",
+                error=repr(e),
+                traceback=traceback.format_exc(),
+            )
+
+    async def _handle_raw_updates(self, event):
+        """Captures low-level updates like reactions."""
+        try:
+            if isinstance(event, UpdateMessageReactions):
+                # 1. Resolve Chat ID
+                chat_id = 0
+                if isinstance(event.peer, PeerUser):
+                    chat_id = event.peer.user_id
+                elif isinstance(event.peer, PeerChannel):
+                    chat_id = utils.get_peer_id(event.peer)
+                elif isinstance(event.peer, PeerChat):
+                    chat_id = utils.get_peer_id(event.peer)
+
+                if not chat_id:
+                    return
+
+                # 2. Extract Reaction Data directly from the update object
+                # UpdateMessageReactions contains a 'reactions' field of type MessageReactions
+                # We can re-use the parser method if we wrap it in a mock object or just call the extraction logic directly
+
+                # Mock object to reuse _extract_reactions
+                class MockMsg:
+                    def __init__(self, r):
+                        self.reactions = r
+
+                mock_msg = MockMsg(event.reactions)
+                reactions_list = self._extract_reactions(mock_msg)
+
+                # 3. Create partial message model (only ID and reactions needed for frontend update)
+                msg_model = Message(
+                    id=event.msg_id,
+                    text="",
+                    date=datetime.now(),
+                    sender_name="",
+                    is_outgoing=False,
+                    reactions=reactions_list,
+                )
+
+                sys_event = SystemEvent(
+                    type="reaction_update",
+                    text="",
+                    chat_name="",  # Not needed for reaction updates
+                    chat_id=chat_id,
+                    message_model=msg_model,
+                )
+                await self._dispatch(sys_event)
+
+        except Exception as e:
+            logger.error(
+                "handle_raw_update_error",
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )

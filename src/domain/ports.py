@@ -71,6 +71,16 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
+    async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
+        """Toggles a reaction on a message."""
+        pass
+
+    @abstractmethod
+    async def get_self_premium_status(self) -> bool:
+        """Checks if the current session user is premium (fetches fresh)."""
+        pass
+
+    @abstractmethod
     async def run_storage_maintenance(self) -> None:
         """Prunes cached files based on size limits (LRU/Oldest-first)."""
         pass

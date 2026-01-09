@@ -1,19 +1,21 @@
-import os
 import asyncio
-from typing import List, Callable, Awaitable, Dict, Optional
+import os
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
 from telethon.errors import (
     SessionPasswordNeededError,
 )
+from telethon.sessions import StringSession
 from telethon.tl.functions.account import GetPasswordRequest
-from src.domain.ports import ChatRepository
-from src.domain.models import SystemEvent
-from src.adapters.telegram.types import ITelethonClient
-from src.adapters.telegram.media import MediaMixin
-from src.adapters.telegram.message_parser import MessageParserMixin
+
 from src.adapters.telegram.chat_operations import ChatOperationsMixin
 from src.adapters.telegram.event_handlers import EventHandlersMixin
+from src.adapters.telegram.media import MediaMixin
+from src.adapters.telegram.message_parser import MessageParserMixin
+from src.adapters.telegram.types import ITelethonClient
+from src.domain.models import SystemEvent
+from src.domain.ports import ChatRepository
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -22,8 +24,8 @@ logger = get_logger(__name__)
 class TelethonAdapter(
     MediaMixin,
     MessageParserMixin,
-    ChatOperationsMixin,
     EventHandlersMixin,
+    ChatOperationsMixin,
     ChatRepository,
 ):
     def __init__(
@@ -38,6 +40,9 @@ class TelethonAdapter(
         self.api_hash = api_hash
         self.client: Optional[ITelethonClient] = None
 
+        # ID Cache for reaction checks
+        self._self_id: Optional[int] = None
+
         if self.api_id and self.api_hash:
             self.client = TelegramClient(self.session, self.api_id, self.api_hash)  # type: ignore
         else:
@@ -50,8 +55,8 @@ class TelethonAdapter(
         self._is_connected_flag = False
 
         # QR Login State
-        self._qr_login = None
-        self._qr_task = None
+        self._qr_login: Any = None
+        self._qr_task: Optional[asyncio.Task] = None
         self._qr_status = (
             "none"  # none, waiting, authorized, needs_password, expired, error
         )
@@ -77,6 +82,7 @@ class TelethonAdapter(
 
             if await self.client.is_user_authorized():
                 self._is_connected_flag = True
+                await self._fetch_self_id()
                 self._register_handlers()
             else:
                 self._is_connected_flag = False
@@ -84,6 +90,17 @@ class TelethonAdapter(
         except Exception as e:
             logger.error("connect_failed", error=str(e))
             self._is_connected_flag = False
+
+    async def _fetch_self_id(self):
+        """Cache the authenticated user ID for reaction parsing."""
+        try:
+            if self.client:
+                me = await self.client.get_me()
+                if me:
+                    self._self_id = me.id
+                    logger.info("self_id_cached", user_id=self._self_id)
+        except Exception as e:
+            logger.error("fetch_self_id_failed", error=str(e))
 
     def _register_handlers(self):
         if self.client and not self._event_handler_registered:
@@ -95,6 +112,8 @@ class TelethonAdapter(
                 self._handle_deleted_message, events.MessageDeleted()
             )
             self.client.add_event_handler(self._handle_chat_action, events.ChatAction())
+            # Handle Raw updates (e.g. reactions)
+            self.client.add_event_handler(self._handle_raw_updates)
             self._event_handler_registered = True
 
     async def disconnect(self):
@@ -126,6 +145,7 @@ class TelethonAdapter(
             logger.info("2fa_attempt")
             await self.client.sign_in(password=password)
             self._is_connected_flag = True
+            await self._fetch_self_id()
             self._register_handlers()
             logger.info("2fa_success")
         except Exception as e:
@@ -159,11 +179,17 @@ class TelethonAdapter(
         return self._qr_login.url
 
     async def _qr_wait_loop(self):
+        if not self._qr_login:
+            logger.error("qr_login_object_missing")
+            self._qr_status = "error"
+            return
+
         try:
             logger.info("qr_wait_loop_started")
             await self._qr_login.wait()
             self._qr_status = "authorized"
             self._is_connected_flag = True
+            await self._fetch_self_id()
             self._register_handlers()
             logger.info("qr_login_success")
         except SessionPasswordNeededError:

@@ -1,5 +1,6 @@
-from quart import Blueprint, render_template, request, jsonify, abort
-from src.container import get_chat_interactor, get_rule_service
+from quart import Blueprint, abort, jsonify, render_template, request
+
+from src.container import get_chat_interactor, get_rule_service, get_user_repo
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -22,9 +23,14 @@ async def actions_view():
 async def chat_view(chat_id: int):
     interactor = get_chat_interactor()
     rule_service = get_rule_service()
+    user_repo = get_user_repo()
+
     chat = await interactor.get_chat(chat_id)
     if not chat:
         abort(404)
+
+    user = await user_repo.get_user(1)
+    is_premium = user.is_premium if user else False
 
     # Load initial messages for regular chats (same as topics)
     messages = await interactor.get_chat_messages(chat_id, topic_id=None)
@@ -37,6 +43,7 @@ async def chat_view(chat_id: int):
         chat_id=chat_id,
         topic_id=None,
         autoread_enabled=autoread_enabled,
+        is_premium=is_premium,
     )
 
 
@@ -44,9 +51,15 @@ async def chat_view(chat_id: int):
 async def topic_view(chat_id: int, topic_id: int):
     interactor = get_chat_interactor()
     rule_service = get_rule_service()
+    user_repo = get_user_repo()
+
     chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id, topic_id)
+
+    user = await user_repo.get_user(1)
+    is_premium = user.is_premium if user else False
+
     return await render_template(
         "chat/chat.html.j2",
         messages=messages,
@@ -54,6 +67,7 @@ async def topic_view(chat_id: int, topic_id: int):
         chat_id=chat_id,
         topic_id=topic_id,
         autoread_enabled=autoread_enabled,
+        is_premium=is_premium,
     )
 
 
@@ -93,3 +107,21 @@ async def api_get_chat_card(chat_id: int):
         return "Chat not found", 404
 
     return await render_template("partials/chat_card_wrapper.html.j2", chat=chat)
+
+
+@chat_bp.route(
+    "/api/chat/<int(signed=True):chat_id>/message/<int(signed=True):msg_id>/reaction",
+    methods=["POST"],
+)
+async def toggle_reaction(chat_id: int, msg_id: int):
+    interactor = get_chat_interactor()
+    data = await request.get_json()
+    emoji = data.get("reaction")
+
+    if not emoji:
+        return jsonify({"error": "No reaction provided"}), 400
+
+    success = await interactor.toggle_reaction(chat_id, msg_id, emoji)
+    if success:
+        return jsonify({"status": "ok"})
+    return jsonify({"error": "Failed to set reaction"}), 500

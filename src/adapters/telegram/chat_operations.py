@@ -2,7 +2,7 @@ import asyncio
 import traceback
 from typing import Any, Dict, List, Optional
 
-from telethon import functions, types, utils
+from telethon import errors, functions, types, utils
 from telethon.tl.functions.messages import GetPeerDialogsRequest
 from telethon.tl.types import InputDialogPeer, MessageActionTopicCreate
 
@@ -165,9 +165,10 @@ class ChatOperationsMixin:
 
             try:
                 input_peer = utils.get_input_peer(entity)
+                # Pylance ignore: Telethon InputPeer unions are complex
                 res = await self.client(
-                    GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])
-                )  # type: ignore
+                    GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])  # type: ignore
+                )
                 if res.dialogs:
                     dialog = res.dialogs[0]
                     unread_count = dialog.unread_count
@@ -377,19 +378,19 @@ class ChatOperationsMixin:
                 await self.client.send_read_acknowledge(entity)
 
             # Broadcast event to frontend to clear badge
-            event = SystemEvent(
-                type="read",
-                text="Marked as read",
-                chat_name=chat_name,
-                topic_name=topic_name,
-                chat_id=chat_id,
-                topic_id=topic_id,
-                is_read=True,
-                link=f"/chat/{chat_id}",
-            )
-            # Safe dispatch if the mixing class has it (TelethonAdapter does)
+            # We call self._dispatch which comes from EventHandlersMixin in the Adapter
             if hasattr(self, "_dispatch"):
-                await self._dispatch(event)
+                event = SystemEvent(
+                    type="read",
+                    text="Marked as read",
+                    chat_name=chat_name,
+                    topic_name=topic_name,
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    is_read=True,
+                    link=f"/chat/{chat_id}",
+                )
+                await getattr(self, "_dispatch")(event)
 
         except Exception as e:
             logger.error(
@@ -399,3 +400,152 @@ class ChatOperationsMixin:
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )
+
+    async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
+        """
+        Toggles the reaction.
+        Attempts to STACK reactions (add to existing).
+        If user is not premium (or limit reached), falls back to REPLACING.
+        Explicitly fetches the message state after action to broadcast an update.
+        """
+        try:
+            entity = await self.client.get_entity(chat_id)
+
+            # 1. Prepare the Target Reaction Object
+            target_reaction = None
+            if emoji.isdigit():
+                # It's a Custom Emoji ID
+                target_reaction = types.ReactionCustomEmoji(document_id=int(emoji))
+            else:
+                # Standard Emoji
+                target_reaction = types.ReactionEmoji(emoticon=emoji)
+
+            # 2. Fetch current message to see existing reactions by ME
+            # We must fetch fresh to know what to keep/remove
+            msgs = await self.client.get_messages(entity, ids=[msg_id])
+            if not msgs:
+                return False
+            msg = msgs[0]
+
+            current_my_reactions = []
+            if hasattr(msg, "reactions") and msg.reactions:
+                for rc in msg.reactions.results:
+                    if getattr(rc, "chosen", False):
+                        current_my_reactions.append(rc.reaction)
+
+            # 3. Modify List (Toggle Logic)
+            new_reactions_list = []
+            found = False
+
+            for r in current_my_reactions:
+                # Check equality:
+                is_same = False
+                if isinstance(r, types.ReactionEmoji) and isinstance(
+                    target_reaction, types.ReactionEmoji
+                ):
+                    if r.emoticon == target_reaction.emoticon:
+                        is_same = True
+                elif isinstance(r, types.ReactionCustomEmoji) and isinstance(
+                    target_reaction, types.ReactionCustomEmoji
+                ):
+                    if r.document_id == target_reaction.document_id:
+                        is_same = True
+
+                if is_same:
+                    found = True
+                    # Remove it (don't add to new list)
+                else:
+                    new_reactions_list.append(r)
+
+            if not found:
+                new_reactions_list.append(target_reaction)
+
+            # 4. Try Stacking (Send Full List)
+            success = False
+            try:
+                # Pylance ignore: Reaction list typing mismatch
+                await self.client(
+                    functions.messages.SendReactionRequest(
+                        peer=entity,
+                        msg_id=msg_id,
+                        reaction=new_reactions_list,  # type: ignore
+                        add_to_recent=True,
+                    )
+                )
+                success = True
+            except errors.ReactionInvalidError:
+                # Fallback: Just send the single reaction (Replace all)
+                logger.info(
+                    "reaction_stack_failed_fallback_replace",
+                    chat_id=chat_id,
+                    msg_id=msg_id,
+                )
+                fallback_list = []
+                if not found:
+                    fallback_list = [target_reaction]
+
+                await self.client(
+                    functions.messages.SendReactionRequest(
+                        peer=entity,
+                        msg_id=msg_id,
+                        reaction=fallback_list,  # type: ignore
+                        add_to_recent=True,
+                    )
+                )
+                success = True
+
+            # 5. Force Fetch & Broadcast Update
+            if success:
+                try:
+                    updated_msgs = await self.client.get_messages(entity, ids=[msg_id])
+                    if updated_msgs:
+                        updated_msg = updated_msgs[0]
+                        # self._parse_message comes from MessageParserMixin which Adapter inherits
+                        if hasattr(self, "_parse_message") and hasattr(
+                            self, "_dispatch"
+                        ):
+                            parsed_msg = await getattr(self, "_parse_message")(
+                                updated_msg, chat_id=chat_id
+                            )
+
+                            event = SystemEvent(
+                                type="reaction_update",
+                                text="",
+                                chat_name="",
+                                chat_id=chat_id,
+                                message_model=parsed_msg,
+                            )
+                            await getattr(self, "_dispatch")(event)
+                except Exception as ex:
+                    # Log with full details
+                    logger.error(
+                        "post_reaction_fetch_failed",
+                        error=repr(ex),
+                        traceback=traceback.format_exc(),
+                    )
+
+            return success
+
+        except Exception as e:
+            logger.error(
+                "send_reaction_failed", error=str(e), chat_id=chat_id, msg_id=msg_id
+            )
+            return False
+
+    async def get_self_premium_status(self) -> bool:
+        """
+        Fetches the current user from the API to bypass local cache and check Premium status.
+        """
+        try:
+            if not self.client:
+                return False
+            # force fetch
+            users = await self.client(
+                functions.users.GetUsersRequest(id=[types.InputUserSelf()])
+            )
+            if users:
+                return getattr(users[0], "premium", False)
+            return False
+        except Exception as e:
+            logger.error("get_premium_status_failed", error=str(e))
+            return False

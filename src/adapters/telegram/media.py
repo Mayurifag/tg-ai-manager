@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import Any, Optional
 
-from telethon import utils
+from telethon import functions, utils
 from telethon.tl.types import (
     DocumentAttributeAudio,
     DocumentAttributeSticker,
@@ -34,7 +34,7 @@ class MediaMixin:
             # while media files start with 'media_'.
             # We delete everything that doesn't start with media_.
             for filename in os.listdir(self.images_dir):
-                if filename.startswith("media_"):
+                if filename.startswith("media_") or filename.startswith("emoji_"):
                     continue
 
                 file_path = os.path.join(self.images_dir, filename)
@@ -216,3 +216,53 @@ class MediaMixin:
                 error=str(e),
             )
         return None
+
+    async def get_custom_emoji_media(self, document_id: int) -> Optional[str]:
+        """
+        Downloads a custom emoji by its document ID.
+        """
+        filename = f"emoji_{document_id}.webp"  # Use webp/webm mostly
+        path = os.path.join(self.images_dir, filename)
+
+        # Check if already exists (any extension)
+        # Simplified: Check specific likely extensions or just the ID prefix
+        # For now, simplistic approach
+        if os.path.exists(path):
+            return f"/cache/{filename}"
+
+        # Check for webm variant
+        webm_path = path.replace(".webp", ".webm")
+        if os.path.exists(webm_path):
+            return f"/cache/{os.path.basename(webm_path)}"
+
+        try:
+            # Fetch the document info
+            result = await self.client(
+                functions.messages.GetCustomEmojiDocumentsRequest(
+                    document_id=[document_id]
+                )
+            )
+
+            if not result:
+                return None
+
+            document = result[0]
+
+            # Determine extension
+            ext = "webp"
+            if document.mime_type == "video/webm":
+                ext = "webm"
+            elif document.mime_type == "application/x-tgsticker":
+                ext = "tgs"
+
+            final_path = os.path.join(self.images_dir, f"emoji_{document_id}.{ext}")
+
+            await self.client.download_media(document, file=final_path)
+
+            return f"/cache/{os.path.basename(final_path)}"
+
+        except Exception as e:
+            logger.error(
+                "download_custom_emoji_failed", doc_id=document_id, error=str(e)
+            )
+            return None
