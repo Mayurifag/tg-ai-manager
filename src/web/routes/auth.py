@@ -1,10 +1,16 @@
+import asyncio
 import traceback
 
 from quart import Blueprint, jsonify, redirect, render_template, request
 from telethon import utils
 
 from src.config import get_settings
-from src.container import _get_tg_adapter, get_user_repo, reload_tg_adapter
+from src.container import (
+    _get_tg_adapter,
+    get_rule_service,
+    get_user_repo,
+    reload_tg_adapter,
+)
 from src.infrastructure.logging import get_logger
 from src.users.models import User
 
@@ -120,3 +126,8 @@ async def _finalize_login(adapter):
 
     await repo.save_user(updated_user)
     logger.info("auth_login_completed", username=username, premium=is_premium)
+
+    # Trigger a startup scan now that we are connected,
+    # to catch any unread messages that existed before/during login.
+    rule_service = get_rule_service()
+    asyncio.create_task(rule_service.run_startup_scan())
