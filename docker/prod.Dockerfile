@@ -13,10 +13,11 @@ ENV PATH="/venv/bin:$PATH"
 
 WORKDIR /app
 
-# Install Runtime Dependencies
+# Install Runtime Dependencies (curl added for healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Valkey binaries
@@ -40,10 +41,19 @@ COPY migrations ./migrations
 COPY alembic.ini .
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
+# Setup Entrypoint
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Install project
 RUN uv sync --no-dev
 
 EXPOSE 8000
 VOLUME ["/app_data"]
 
+# Healthcheck: pings the login page (returns 200 OK) to verify web server is responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/login || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

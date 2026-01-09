@@ -31,6 +31,30 @@ Open <http://localhost:8000>
 If its exposed to external internet or you are running production image, it MUST
 BE PROTECTED via some app like tinyauth.
 
+## Production Deployment reference (docker-compose file)
+
+~~~yaml
+services:
+  tg-manager:
+    image: ghcr.io/mayurifag/tg-ai-manager:latest
+    ports:
+      - "14123:8000"
+    environment:
+      # Must have:
+      - TG_API_ID=123456          # Replace with your ID
+      - TG_API_HASH=abcdef123...  # Replace with your Hash
+      # Optional:
+      - CACHE_MAX_SIZE_MB=500
+    volumes:
+      - ./tg_data:/app_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+~~~
+
 ## TODO
 
 - Reposts are not seen. Quotes are not seen on frontend. Reacts on repost are not working correctly. Optimistic updates might be not needed??
