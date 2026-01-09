@@ -1,6 +1,7 @@
-import structlog
 import logging
 import sys
+
+import structlog
 
 
 def configure_logging():
@@ -15,6 +16,7 @@ def configure_logging():
 
     # Explicitly set Telethon logger to INFO to see connection attempts
     logging.getLogger("telethon").setLevel(logging.INFO)
+    logging.getLogger("telethon.client.downloads").setLevel(logging.WARNING)
 
     structlog.configure(
         processors=[

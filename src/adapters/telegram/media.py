@@ -1,12 +1,15 @@
+import asyncio
 import os
-from typing import Optional, Any
+from typing import Any, Optional
+
 from telethon import utils
 from telethon.tl.types import (
-    MessageMediaDocument,
-    DocumentAttributeSticker,
     DocumentAttributeAudio,
+    DocumentAttributeSticker,
     DocumentAttributeVideo,
+    MessageMediaDocument,
 )
+
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -39,6 +42,61 @@ class MediaMixin:
                     os.remove(file_path)
         except Exception as e:
             logger.error("startup_cache_cleanup_failed", error=str(e))
+
+    async def run_storage_maintenance(self):
+        """
+        Enforces the disk usage limit for the cache directory.
+        Deletes oldest files (by modification time) until total size is under limit.
+        """
+        if not self.images_dir or not os.path.exists(self.images_dir):
+            return
+
+        limit_mb = int(os.getenv("CACHE_MAX_SIZE_MB", "500"))
+        limit_bytes = limit_mb * 1024 * 1024
+
+        await asyncio.to_thread(self._cleanup_sync, limit_bytes)
+
+    def _cleanup_sync(self, limit_bytes: int):
+        try:
+            files = []
+            total_size = 0
+
+            with os.scandir(self.images_dir) as entries:
+                for entry in entries:
+                    if entry.is_file():
+                        stat = entry.stat()
+                        total_size += stat.st_size
+                        files.append((entry.path, stat.st_mtime, stat.st_size))
+
+            if total_size <= limit_bytes:
+                return
+
+            # Sort by modification time (oldest first)
+            files.sort(key=lambda x: x[1])
+
+            deleted_count = 0
+            freed_bytes = 0
+
+            for path, _, size in files:
+                if total_size <= limit_bytes:
+                    break
+                try:
+                    os.remove(path)
+                    total_size -= size
+                    freed_bytes += size
+                    deleted_count += 1
+                except OSError as e:
+                    logger.error("cache_delete_failed", path=path, error=str(e))
+
+            if deleted_count > 0:
+                logger.info(
+                    "cache_maintenance_completed",
+                    deleted_files=deleted_count,
+                    freed_mb=round(freed_bytes / (1024 * 1024), 2),
+                )
+
+        except Exception as e:
+            logger.error("cache_maintenance_failed", error=str(e))
 
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
         """

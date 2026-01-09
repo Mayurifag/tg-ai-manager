@@ -33,8 +33,6 @@ BE PROTECTED via some app like tinyauth.
 
 ## TODO
 
-- In src/adapters/telegram/chat_operations.py, the method get_all_unread_chats iterates over client.iter_dialogs(limit=None).
-The Problem: If a user has 5,000+ chats (common for power users), this will block the event loop or take a massive amount of time on startup/scan.
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 - performance issues after some time. seems i am throttled by telegram but not sure

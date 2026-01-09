@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Callable, Awaitable
-from src.domain.models import Chat, Message, SystemEvent, ActionLog
+from typing import Awaitable, Callable, List, Optional
+
+from src.domain.models import ActionLog, Chat, Message, SystemEvent
 
 
 class ChatRepository(ABC):
@@ -67,6 +68,11 @@ class ChatRepository(ABC):
     @abstractmethod
     async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
         """Marks the chat or specific topic as read."""
+        pass
+
+    @abstractmethod
+    async def run_storage_maintenance(self) -> None:
+        """Prunes cached files based on size limits (LRU/Oldest-first)."""
         pass
 
 
