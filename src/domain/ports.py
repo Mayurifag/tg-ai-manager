@@ -51,8 +51,10 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
-    async def download_media(self, chat_id: int, message_id: int) -> Optional[str]:
-        """Downloads the media for a message and returns cache path."""
+    async def download_media(
+        self, chat_id: int, message_id: int, size_type: str = "preview"
+    ) -> Optional[str]:
+        """Downloads the media for a message. size_type: 'preview' or 'full'."""
         pass
 
     @abstractmethod

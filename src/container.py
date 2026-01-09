@@ -1,12 +1,13 @@
 import sqlite3
-from src.config import get_settings
+
 from src.adapters.telegram import TelethonAdapter
 from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
+from src.application.interactors import ChatInteractor
+from src.config import get_settings
+from src.infrastructure.security import CryptoManager
+from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
 from src.users.sqlite_repo import SqliteUserRepository
-from src.application.interactors import ChatInteractor
-from src.rules.service import RuleService
-from src.infrastructure.security import CryptoManager
 
 _tg_adapter: TelethonAdapter | None = None
 _action_repo: ValkeyActionRepository | None = None
@@ -46,16 +47,23 @@ def reload_tg_adapter(
     api_id: int = None, api_hash: str = None, session_string: str = None
 ):
     global _tg_adapter
+
+    # 1. Preserve existing listeners (SSE broadcast, Rule engine) from the old adapter
+    existing_listeners = []
     if _tg_adapter:
-        pass
+        existing_listeners = _tg_adapter.listeners
 
     settings = get_settings()
 
+    # 2. Create the new adapter
     _tg_adapter = TelethonAdapter(
         session_string=session_string,
         api_id=settings.TG_API_ID,
         api_hash=settings.TG_API_HASH,
     )
+
+    # 3. Restore listeners so events continue to flow
+    _tg_adapter.listeners = existing_listeners
 
     global _interactor
     if _interactor:
