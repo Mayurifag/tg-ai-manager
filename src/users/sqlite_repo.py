@@ -1,9 +1,10 @@
 from typing import Optional
+
+from src.config import get_settings
 from src.infrastructure.db import BaseSqliteRepository
+from src.infrastructure.security import CryptoManager
 from src.users.models import User
 from src.users.ports import UserRepository
-from src.infrastructure.security import CryptoManager
-from src.config import get_settings
 
 
 class SqliteUserRepository(BaseSqliteRepository, UserRepository):
@@ -20,7 +21,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         """
                         SELECT id, username, session_string,
                                autoread_service_messages, autoread_polls, autoread_self,
-                               autoread_bots, autoread_regex
+                               autoread_bots, autoread_regex, is_premium
                         FROM users WHERE id = ?
                     """,
                         (user_id,),
@@ -39,6 +40,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             autoread_self=bool(row[5]),
                             autoread_bots=row[6] or "",
                             autoread_regex=row[7] or "",
+                            is_premium=bool(row[8]),
                         )
                 except Exception:
                     pass
@@ -60,7 +62,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         UPDATE users
                         SET username = ?, session_string = ?,
                             autoread_service_messages = ?, autoread_polls = ?, autoread_self = ?,
-                            autoread_bots = ?, autoread_regex = ?
+                            autoread_bots = ?, autoread_regex = ?, is_premium = ?
                         WHERE id = ?
                         """,
                         (
@@ -71,6 +73,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             int(user.autoread_self),
                             user.autoread_bots,
                             user.autoread_regex,
+                            int(user.is_premium),
                             user.id,
                         ),
                     )
@@ -80,8 +83,8 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         INSERT INTO users (
                             id, username, session_string,
                             autoread_service_messages, autoread_polls, autoread_self,
-                            autoread_bots, autoread_regex
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            autoread_bots, autoread_regex, is_premium
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             user.id,
@@ -92,6 +95,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             int(user.autoread_self),
                             user.autoread_bots,
                             user.autoread_regex,
+                            int(user.is_premium),
                         ),
                     )
                 conn.commit()

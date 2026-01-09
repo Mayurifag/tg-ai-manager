@@ -1,10 +1,12 @@
 import traceback
-from quart import Blueprint, render_template, jsonify, redirect, request
+
+from quart import Blueprint, jsonify, redirect, render_template, request
 from telethon import utils
-from src.container import get_user_repo, reload_tg_adapter, _get_tg_adapter
-from src.users.models import User
-from src.infrastructure.logging import get_logger
+
 from src.config import get_settings
+from src.container import _get_tg_adapter, get_user_repo, reload_tg_adapter
+from src.infrastructure.logging import get_logger
+from src.users.models import User
 
 logger = get_logger(__name__)
 auth_bp = Blueprint("auth", __name__)
@@ -27,10 +29,11 @@ async def qr_start():
     try:
         settings = get_settings()
 
+        # Explicitly pass None type properly if needed, although Container handles default=None
         reload_tg_adapter(
             api_id=settings.TG_API_ID,
             api_hash=settings.TG_API_HASH,
-            session_string=None,
+            session_string=None,  # type: ignore
         )
         adapter = _get_tg_adapter()
 
@@ -91,6 +94,9 @@ async def _finalize_login(adapter):
     else:
         username = f"@{username}"
 
+    # Capture Premium Status
+    is_premium = getattr(me, "premium", False)
+
     repo = get_user_repo()
     existing_user = await repo.get_user(1)
 
@@ -100,6 +106,7 @@ async def _finalize_login(adapter):
         api_hash=settings.TG_API_HASH,
         username=username,
         session_string=session_string,
+        is_premium=is_premium,
         autoread_service_messages=existing_user.autoread_service_messages
         if existing_user
         else False,
@@ -112,4 +119,4 @@ async def _finalize_login(adapter):
     )
 
     await repo.save_user(updated_user)
-    logger.info("auth_login_completed", username=username)
+    logger.info("auth_login_completed", username=username, premium=is_premium)

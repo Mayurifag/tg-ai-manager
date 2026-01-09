@@ -97,6 +97,28 @@
         <div class="text">{{ msg.text | safe }}</div>
         {% endif %}
 
+        {# --- Reactions --- #}
+        <div class="reactions-container" id="reactions-{{ msg.id }}">
+            {% for r in msg.reactions %}
+            <div class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
+                data-emoji="{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}"
+                onclick="toggleReaction(this, {{ msg.id }}, '{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}')">
+                {% if r.custom_emoji_id %}
+                <img src="/media/custom_emoji/{{ r.custom_emoji_id }}"
+                    style="width: 20px; height: 20px; margin-right: 4px;">
+                {% else %}
+                <span>{{ r.emoji }}</span>
+                {% endif %}
+                <span class="reaction-count">{{ r.count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        {# --- Hover Poop --- #}
+        <div class="hover-reaction" onclick="toggleReaction(this, {{ msg.id }}, '💩')" title="React with 💩">
+            💩
+        </div>
+
         <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
     </div>
 </div>

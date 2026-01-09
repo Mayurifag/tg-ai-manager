@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Optional
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import List, Optional
 
 
 class ChatType(str, Enum):
@@ -23,6 +23,14 @@ class Chat:
     image_url: Optional[str] = None
     icon_emoji: Optional[str] = None
     is_pinned: bool = False
+
+
+@dataclass
+class Reaction:
+    emoji: str
+    count: int
+    is_chosen: bool
+    custom_emoji_id: Optional[int] = None
 
 
 @dataclass
@@ -56,6 +64,8 @@ class Message:
     poll_question: Optional[str] = None
     # Service Messages
     is_service: bool = False
+    # Reactions
+    reactions: List[Reaction] = field(default_factory=list)
 
     def get_preview_text(self) -> str:
         """Returns a text representation of the message, handling media fallbacks."""
@@ -82,7 +92,7 @@ class Message:
 
 @dataclass
 class SystemEvent:
-    type: str  # "message", "edited", "deleted", "action"
+    type: str  # "message", "edited", "deleted", "action", "reaction_update"
     text: str
     chat_name: str
     topic_name: Optional[str] = None

@@ -9,6 +9,7 @@ class User:
     api_hash: Optional[str] = None
     username: Optional[str] = None
     session_string: Optional[str] = None
+    is_premium: bool = False  # New field
 
     # Settings (Strict Booleans)
     autoread_service_messages: bool = False

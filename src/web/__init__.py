@@ -12,6 +12,7 @@ from src.container import (
     get_chat_interactor,
     get_event_repo,
     get_rule_service,
+    get_user_repo,
 )
 from src.infrastructure.logging import configure_logging, get_logger
 from src.jinja_filters import file_mtime_filter
@@ -116,10 +117,11 @@ def create_app() -> Quart:
 
 
 async def job_background_maintenance():
-    """Background task to clean old logs and enforce cache limits."""
+    """Background task to clean old logs, enforce cache limits, and refresh premium status."""
     action_repo = get_action_repo()
     event_repo = get_event_repo()
     interactor = get_chat_interactor()
+    user_repo = get_user_repo()
 
     logger.info("maintenance_job_started")
     while not shutdown_event.is_set():
@@ -130,6 +132,15 @@ async def job_background_maintenance():
 
             # Clean File Cache
             await interactor.run_storage_maintenance()
+
+            # Refresh Premium Status
+            is_premium = await interactor.get_self_premium_status()
+            user = await user_repo.get_user(1)
+            if user and user.is_premium != is_premium:
+                user.is_premium = is_premium
+                await user_repo.save_user(user)
+                logger.info("premium_status_updated", status=is_premium)
+
         except Exception as e:
             logger.error("maintenance_job_error", error=str(e))
 

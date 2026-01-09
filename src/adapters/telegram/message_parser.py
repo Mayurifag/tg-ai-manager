@@ -1,24 +1,32 @@
 from datetime import datetime
-from typing import Optional, Dict, Any
 from html import escape as html_escape
+from typing import Any, Dict, Optional, Set
+
 from telethon import utils
 from telethon.extensions import html
 from telethon.tl import types
 from telethon.tl.types import (
-    MessageMediaPoll,
-    MessageMediaDocument,
+    DocumentAttributeAudio,
     DocumentAttributeSticker,
     DocumentAttributeVideo,
-    DocumentAttributeAudio,
+    MessageMediaDocument,
+    MessageMediaPoll,
+    PeerChannel,
+    PeerChat,
+    PeerUser,
+    ReactionCustomEmoji,
+    ReactionEmoji,
 )
-from src.domain.models import Message
+
 from src.adapters.telethon_mappers import get_message_action_text
+from src.domain.models import Message, Reaction
 
 
 class MessageParserMixin:
     def __init__(self):
         self.client: Any = None
         self._msg_id_to_chat_id: Dict[int, int] = {}
+        self._self_id: Optional[int] = None  # Populated by Adapter
 
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
         raise NotImplementedError
@@ -74,6 +82,68 @@ class MessageParserMixin:
             except Exception:
                 return html_escape(raw_text)
         return ""
+
+    def _extract_reactions(self, msg: Any) -> list[Reaction]:
+        results = []
+        if not hasattr(msg, "reactions") or not msg.reactions:
+            return results
+
+        # msg.reactions is a MessageReactions object
+        # results is a list of ReactionCount
+        reaction_counts = getattr(msg.reactions, "results", [])
+        recent_reactions = getattr(msg.reactions, "recent_reactions", []) or []
+
+        # Identify which reactions *I* have sent by checking recent_reactions
+        # This is a fallback if `chosen=True` is missing in ReactionCount
+        my_reaction_emojis: Set[str] = set()
+        my_reaction_docs: Set[int] = set()
+
+        if self._self_id and recent_reactions:
+            for rr in recent_reactions:
+                # Check if the peer matches my ID
+                peer_id = None
+                if isinstance(rr.peer_id, PeerUser):
+                    peer_id = rr.peer_id.user_id
+                elif isinstance(rr.peer_id, PeerChannel):
+                    peer_id = rr.peer_id.channel_id
+                elif isinstance(rr.peer_id, PeerChat):
+                    peer_id = rr.peer_id.chat_id
+
+                if peer_id == self._self_id:
+                    # Capture the reaction
+                    if isinstance(rr.reaction, ReactionEmoji):
+                        my_reaction_emojis.add(rr.reaction.emoticon)
+                    elif isinstance(rr.reaction, ReactionCustomEmoji):
+                        my_reaction_docs.add(rr.reaction.document_id)
+
+        for rc in reaction_counts:
+            emoji_str = ""
+            custom_id = None
+            is_chosen = getattr(rc, "chosen", False)
+
+            if isinstance(rc.reaction, ReactionEmoji):
+                emoji_str = rc.reaction.emoticon
+                # Fallback check
+                if not is_chosen and emoji_str in my_reaction_emojis:
+                    is_chosen = True
+
+            elif isinstance(rc.reaction, ReactionCustomEmoji):
+                custom_id = rc.reaction.document_id
+                emoji_str = "⭐"
+                # Fallback check
+                if not is_chosen and custom_id in my_reaction_docs:
+                    is_chosen = True
+
+            if emoji_str or custom_id:
+                results.append(
+                    Reaction(
+                        emoji=emoji_str,
+                        count=rc.count,
+                        is_chosen=is_chosen,
+                        custom_emoji_id=custom_id,
+                    )
+                )
+        return results
 
     async def _parse_message(
         self,
@@ -179,6 +249,12 @@ class MessageParserMixin:
                 reply_to_sender = (
                     utils.get_display_name(r_sender) if r_sender else "User"
                 )
+            # Support basic reply mapping if map not provided but ID exists
+            elif reply_to_msg_id:
+                # We can't fetch text here easily without N+1, so we leave it None or handle elsewhere
+                pass
+
+        reactions = self._extract_reactions(msg)
 
         return Message(
             id=msg.id,
@@ -206,4 +282,5 @@ class MessageParserMixin:
             is_poll=is_poll,
             poll_question=poll_question,
             is_service=is_service,
+            reactions=reactions,
         )

@@ -61,6 +61,66 @@ Messages
 <script>
     const chatId = {{ chat_id }};
     const topicId = {{ topic_id or 'null' }};
+    const isPremium = {{ 'true' if is_premium else 'false' }};
+
+    // --- Optimistic Reaction Logic ---
+    async function toggleReaction(el, msgId, emoji) {
+        // Optimistic UI Update
+        const container = el.parentNode;
+        const isChosen = el.classList.contains('chosen');
+        const countSpan = el.querySelector('.reaction-count');
+        let count = parseInt(countSpan ? countSpan.textContent : '0');
+
+        // Logic based on Premium Status
+        // If Premium: We can toggle this specific emoji without affecting others (Stacking)
+        // If Not Premium: Selecting a new emoji removes ALL other 'chosen' emojis (Replacing)
+
+        if (!isPremium) {
+            // Uncheck all other chosen reactions in this container
+            const siblings = container.querySelectorAll('.reaction-pill.chosen');
+            siblings.forEach(sib => {
+                if (sib !== el) {
+                    sib.classList.remove('chosen');
+                    const sibCountSpan = sib.querySelector('.reaction-count');
+                    let sibCount = parseInt(sibCountSpan.textContent);
+                    if (sibCount > 0) sibCountSpan.textContent = sibCount - 1;
+                }
+            });
+        }
+
+        // Toggle the clicked element
+        if (isChosen) {
+            el.classList.remove('chosen');
+            if (count > 0) countSpan.textContent = count - 1;
+        } else {
+            el.classList.add('chosen');
+            countSpan.textContent = count + 1;
+
+            // Animation
+            el.style.transform = 'scale(1.2)';
+            setTimeout(() => el.style.transform = '', 150);
+        }
+
+        try {
+            const url = `/api/chat/${chatId}/message/${msgId}/reaction`;
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reaction: emoji.toString() })
+            });
+            // SSE 'reaction_update' will eventually enforce authoritative state
+        } catch (e) {
+            console.error('Failed to toggle reaction', e);
+            // Revert changes on error? Optional, but strict approach:
+            if (isChosen) {
+                el.classList.add('chosen');
+                countSpan.textContent = count;
+            } else {
+                el.classList.remove('chosen');
+                countSpan.textContent = count;
+            }
+        }
+    }
 
     document.getElementById('autoread-checkbox').addEventListener('change', async (e) => {
         const enabled = e.target.checked;
@@ -124,7 +184,7 @@ Messages
         } catch (e) {
             console.error(e);
             // Restore button if error
-             setTimeout(() => {
+            setTimeout(() => {
                 btn.style.opacity = '1';
                 btn.style.pointerEvents = 'auto';
             }, 500);
@@ -194,13 +254,38 @@ Messages
         }
     }
 
+    // Helper to build reaction HTML from JSON data
+    function buildReactionsHtml(msgId, reactions) {
+        let html = '';
+        reactions.forEach(r => {
+            const chosenClass = r.is_chosen ? 'chosen' : '';
+            const emojiVal = r.custom_emoji_id || r.emoji;
+
+            let innerContent = '';
+            if (r.custom_emoji_id) {
+                innerContent = `<img src="/media/custom_emoji/${r.custom_emoji_id}" style="width: 20px; height: 20px; margin-right: 4px;">`;
+            } else {
+                innerContent = `<span>${r.emoji}</span>`;
+            }
+
+            html += `
+            <div class="reaction-pill ${chosenClass}" data-emoji="${emojiVal}"
+                onclick="toggleReaction(this, ${msgId}, '${emojiVal}')">
+                ${innerContent}
+                <span class="reaction-count">${r.count}</span>
+            </div>`;
+        });
+        return html;
+    }
+
     document.addEventListener('tg:event', (e) => {
         const data = e.detail;
 
         if (data.chat_id !== chatId) return;
 
         if (currentTopicId && data.topic_id !== currentTopicId) {
-            return;
+            // If topic is defined but doesn't match, ignore (unless it's a generic chat update)
+            if (data.topic_id) return;
         }
 
         if (data.type === 'message') {
@@ -239,6 +324,14 @@ Messages
                 msgRow.style.transition = 'opacity 0.3s, height 0.3s';
                 msgRow.style.opacity = '0';
                 setTimeout(() => msgRow.remove(), 300);
+            }
+        }
+        else if (data.type === 'reaction_update' && data.message_model) {
+            const msgId = data.message_model.id;
+            const reactionsContainer = document.getElementById(`reactions-${msgId}`);
+            if (reactionsContainer) {
+                // Rebuild content
+                reactionsContainer.innerHTML = buildReactionsHtml(msgId, data.message_model.reactions);
             }
         }
     });

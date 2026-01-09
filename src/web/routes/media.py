@@ -1,6 +1,8 @@
 import os
-from quart import Blueprint, send_from_directory, redirect, send_file
-from src.container import get_chat_interactor
+
+from quart import Blueprint, redirect, send_file, send_from_directory
+
+from src.container import _get_tg_adapter, get_chat_interactor
 
 media_bp = Blueprint("media", __name__)
 
@@ -39,6 +41,20 @@ async def get_avatar(chat_id: int):
     # Return a 404 or a default placeholder if needed.
     # For now 404 so the frontend handles the error if desired,
     # though usually frontend just shows broken image.
+    return "", 404
+
+
+@media_bp.route("/media/custom_emoji/<int(signed=True):doc_id>")
+async def get_custom_emoji(doc_id: int):
+    # Direct access to adapter needed as this method is specific to media mixin
+    adapter = _get_tg_adapter()
+    if not adapter:
+        return "", 404
+
+    public_path = await adapter.get_custom_emoji_media(doc_id)
+    if public_path:
+        return redirect(public_path)
+
     return "", 404
 
 

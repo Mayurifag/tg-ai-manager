@@ -76,6 +76,9 @@ class ChatInteractor:
         )
         await self.action_repo.add_log(log)
 
+    async def toggle_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
+        return await self.repository.send_reaction(chat_id, msg_id, emoji)
+
     async def get_action_logs(self, limit: int = 50) -> List[ActionLog]:
         return await self.action_repo.get_logs(limit)
 
@@ -103,3 +106,6 @@ class ChatInteractor:
     async def run_storage_maintenance(self):
         """Triggers the repository storage cleanup."""
         await self.repository.run_storage_maintenance()
+
+    async def get_self_premium_status(self) -> bool:
+        return await self.repository.get_self_premium_status()
