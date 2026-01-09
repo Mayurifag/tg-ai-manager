@@ -6,6 +6,7 @@ from src.rules.sqlite_repo import SqliteRuleRepository
 from src.users.sqlite_repo import SqliteUserRepository
 from src.application.interactors import ChatInteractor
 from src.rules.service import RuleService
+from src.infrastructure.security import CryptoManager
 
 # Singleton instances
 _tg_adapter: TelethonAdapter | None = None
@@ -28,24 +29,29 @@ def _get_tg_adapter() -> TelethonAdapter:
     api_id = None
     api_hash = None
     session_string = None
+    crypto = CryptoManager()
 
     try:
         with sqlite3.connect(settings.DB_PATH) as conn:
             # We assume user ID 1 for single-tenant mode
-            cur = conn.execute("SELECT api_id, api_hash, session_string FROM users WHERE id = 1")
+            cur = conn.execute(
+                "SELECT api_id, api_hash, session_string FROM users WHERE id = 1"
+            )
             row = cur.fetchone()
             if row:
-                if row[0]: api_id = row[0]
-                if row[1]: api_hash = row[1]
-                session_string = row[2]
+                if row[0]:
+                    api_id = row[0]
+                if row[1]:
+                    # Decrypt API Hash
+                    api_hash = crypto.decrypt(row[1])
+                # Decrypt Session String
+                session_string = crypto.decrypt(row[2])
     except Exception as e:
         print(f"Error fetching credentials for adapter: {e}")
 
     # 2. Initialize Adapter
     # TelethonAdapter now gracefully handles None for api_id/hash
-    _tg_adapter = TelethonAdapter(
-        session_string, api_id, api_hash
-    )
+    _tg_adapter = TelethonAdapter(session_string, api_id, api_hash)
     return _tg_adapter
 
 
@@ -61,7 +67,7 @@ def reload_tg_adapter(api_id: int, api_hash: str, session_string: str = None):
             # but usually this called from async context where we can manage it.
             # Actually, we'll just replace the reference.
             pass
-        except:
+        except Exception:
             pass
 
     _tg_adapter = TelethonAdapter(session_string, api_id, api_hash)

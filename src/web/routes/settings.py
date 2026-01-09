@@ -1,6 +1,6 @@
 from quart import Blueprint, render_template, request, jsonify
 from src.users.models import User
-from src.container import get_user_repo
+from src.container import get_user_repo, _get_tg_adapter
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -10,7 +10,7 @@ async def settings_view():
     repo = get_user_repo()
     user = await repo.get_user(1)
     if not user:
-        user = User() # Default
+        user = User()  # Default
     return await render_template("settings/settings.html.j2", settings=user)
 
 
@@ -31,7 +31,6 @@ async def save_settings():
         api_hash=current_user.api_hash,
         username=current_user.username,
         session_string=current_user.session_string,
-
         # Update Settings
         autoread_service_messages=bool(data.get("autoread_service_messages", False)),
         autoread_polls=bool(data.get("autoread_polls", False)),
@@ -41,4 +40,18 @@ async def save_settings():
     )
 
     await repo.save_user(updated_user)
+    return jsonify({"status": "ok"})
+
+
+@settings_bp.route("/api/settings/reset", methods=["POST"])
+async def reset_account():
+    # 1. Disconnect Telegram Adapter
+    adapter = _get_tg_adapter()
+    if adapter:
+        await adapter.disconnect()
+
+    # 2. Delete User (and cascades to rules)
+    repo = get_user_repo()
+    await repo.delete_user(1)
+
     return jsonify({"status": "ok"})

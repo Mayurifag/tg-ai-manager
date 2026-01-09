@@ -91,7 +91,8 @@
             <div class="desc">Regular expression to match against message text.</div>
         </div>
 
-        <div style="margin-top: 30px; text-align: right;">
+        <div style="margin-top: 30px; display: flex; justify-content: space-between; align-items: center;">
+            <button type="button" class="reset-btn" id="reset-btn">Reset Account</button>
             <button type="submit" class="save-btn" id="save-btn">Save Settings</button>
         </div>
     </form>
@@ -160,6 +161,21 @@
 
     .save-btn:hover {
         background-color: #388e3c;
+    }
+
+    .reset-btn {
+        background-color: #c62828;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        font-size: 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .reset-btn:hover {
+        background-color: #d32f2f;
     }
 
     /* Switch CSS */
@@ -246,6 +262,34 @@
         } catch (err) {
             console.error(err);
             btn.textContent = "Error";
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', async () => {
+        if (!confirm("Are you sure? This will delete your account and all associated rules from this manager. This cannot be undone.")) {
+            return;
+        }
+
+        const btn = document.getElementById('reset-btn');
+        btn.textContent = "Resetting...";
+        btn.disabled = true;
+
+        try {
+            const res = await fetch('/api/settings/reset', {
+                method: 'POST'
+            });
+            if (res.ok) {
+                window.location.href = '/login';
+            } else {
+                alert("Failed to reset account.");
+                btn.textContent = "Reset Account";
+                btn.disabled = false;
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Network Error");
+            btn.textContent = "Reset Account";
             btn.disabled = false;
         }
     });

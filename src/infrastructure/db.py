@@ -20,6 +20,8 @@ class BaseSqliteRepository:
         # Enable Write-Ahead Logging for better concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        # Enable Foreign Keys for ON DELETE CASCADE
+        conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
     async def _execute(self, func: Callable[[], T]) -> T:

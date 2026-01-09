@@ -26,10 +26,10 @@ jobs:
         run: uv sync --frozen --only-group dev
 
       - name: Run Ruff (Lint)
-        run: uv run --no-sync ruff check src
+        run: uv run --no-sync ruff check
 
       - name: Run Ruff (Format Check)
-        run: uv run --no-sync ruff format --check src
+        run: uv run --no-sync ruff format --check
 
   build-and-push:
     needs: lint

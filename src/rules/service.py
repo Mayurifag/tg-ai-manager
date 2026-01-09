@@ -34,15 +34,23 @@ class RuleService:
         # Priority 1: Check for a specific topic rule
         if topic_id is not None:
             specific_rule = next(
-                (r for r in rules if r.topic_id == topic_id and r.rule_type == RuleType.AUTOREAD),
+                (
+                    r
+                    for r in rules
+                    if r.topic_id == topic_id and r.rule_type == RuleType.AUTOREAD
+                ),
                 None,
             )
             if specific_rule:
-                return True # If it exists, it is enabled
+                return True  # If it exists, it is enabled
 
         # Priority 2: Check for a chat-wide (global) rule
         global_rule = next(
-            (r for r in rules if r.topic_id is None and r.rule_type == RuleType.AUTOREAD),
+            (
+                r
+                for r in rules
+                if r.topic_id is None and r.rule_type == RuleType.AUTOREAD
+            ),
             None,
         )
         if global_rule:
@@ -74,9 +82,7 @@ class RuleService:
 
         # 4. Autoread Bots
         if user.autoread_bots:
-            bots_input = [
-                b.strip() for b in user.autoread_bots.split(",") if b.strip()
-            ]
+            bots_input = [b.strip() for b in user.autoread_bots.split(",") if b.strip()]
             target_usernames = {b.lstrip("@").lower() for b in bots_input}
 
             sender_username = (message.sender_username or "").lower()
@@ -133,7 +139,10 @@ class RuleService:
 
     async def run_startup_scan(self):
         # Prevent crash if adapter not connected yet
-        if not hasattr(self.chat_repo, 'is_connected') or not self.chat_repo.is_connected():
+        if (
+            not hasattr(self.chat_repo, "is_connected")
+            or not self.chat_repo.is_connected()
+        ):
             logger.warning("startup_scan_skipped_not_connected")
             return
 
@@ -148,7 +157,11 @@ class RuleService:
                         topics = await self.chat_repo.get_unread_topics(chat.id)
                         for topic in topics:
                             if await self.is_autoread_enabled(chat.id, topic.id):
-                                logger.info("startup_autoread_topic", chat_id=chat.id, topic_id=topic.id)
+                                logger.info(
+                                    "startup_autoread_topic",
+                                    chat_id=chat.id,
+                                    topic_id=topic.id,
+                                )
                                 await self.chat_repo.mark_as_read(chat.id, topic.id)
                                 await self.action_repo.add_log(
                                     ActionLog(
@@ -171,12 +184,16 @@ class RuleService:
                             msgs = await self.chat_repo.get_messages(chat.id, limit=1)
                             if msgs:
                                 msg = msgs[0]
-                                reason = await self.check_global_autoread_rules(msg, chat.unread_count)
+                                reason = await self.check_global_autoread_rules(
+                                    msg, chat.unread_count
+                                )
                                 if reason:
                                     should_read = True
 
                         if should_read:
-                            logger.info("startup_autoread_chat", chat_id=chat.id, reason=reason)
+                            logger.info(
+                                "startup_autoread_chat", chat_id=chat.id, reason=reason
+                            )
                             await self.chat_repo.mark_as_read(chat.id)
                             await self.action_repo.add_log(
                                 ActionLog(
@@ -190,7 +207,9 @@ class RuleService:
                             )
                     await asyncio.sleep(0.1)
                 except Exception as e:
-                    logger.error("startup_scan_chat_error", chat_id=chat.id, error=str(e))
+                    logger.error(
+                        "startup_scan_chat_error", chat_id=chat.id, error=str(e)
+                    )
             logger.info("startup_scan_completed")
         except Exception as e:
             logger.error("startup_scan_failed", error=str(e))
@@ -203,7 +222,11 @@ class RuleService:
         """
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
         existing = next(
-            (r for r in rules if r.rule_type == RuleType.AUTOREAD and r.topic_id == topic_id),
+            (
+                r
+                for r in rules
+                if r.rule_type == RuleType.AUTOREAD and r.topic_id == topic_id
+            ),
             None,
         )
 
@@ -211,7 +234,7 @@ class RuleService:
             # Create if not exists
             if not existing:
                 new_rule = AutoReadRule(
-                    user_id=1, # Default user
+                    user_id=1,  # Default user
                     rule_type=RuleType.AUTOREAD,
                     chat_id=chat_id,
                     topic_id=topic_id,
