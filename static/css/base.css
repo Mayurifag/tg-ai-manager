@@ -85,10 +85,13 @@ img.emoji {
 .sidebar-content {
     flex: 1;
     overflow-y: auto;
+    /* Margin for sticky footer effect */
+    margin-bottom: 10px;
 }
 
 .sidebar-settings {
-    margin-top: 20px;
+    /* Pinned to bottom via flex layout */
+    margin-top: auto;
     padding-top: 20px;
     border-top: 1px solid #333;
 }
@@ -235,48 +238,6 @@ img.emoji {
 
 .header {
     margin-bottom: 1rem;
-}
-
-/* Raw Feed Section */
-.raw-feed-container {
-    margin-top: auto;
-    border-top: 1px solid #333;
-    padding-top: 10px;
-    flex-shrink: 0;
-}
-
-.raw-feed-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    color: #888;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    font-weight: bold;
-    padding: 5px 0;
-}
-
-.raw-feed-header:hover { color: #fff; }
-
-.raw-feed-list {
-    display: none;
-    flex-direction: column;
-    gap: 5px;
-    max-height: 300px;
-    overflow-y: auto;
-    margin-top: 5px;
-}
-
-.raw-item {
-    background: #1e1e20;
-    border: 1px dashed #444;
-    padding: 8px;
-    font-family: monospace;
-    font-size: 0.75rem;
-    color: #ffb74d;
-    word-break: break-all;
-    border-radius: 4px;
 }
 
 /* Lightbox */

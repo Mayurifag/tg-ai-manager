@@ -1,4 +1,3 @@
-import json
 import traceback
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -10,23 +9,7 @@ from telethon.tl.types import (
     PeerChannel,
     PeerChat,
     PeerUser,
-    UpdateChannelMessageViews,
-    UpdateChannelUserTyping,
-    UpdateChatUserTyping,
-    UpdateDeleteChannelMessages,
-    UpdateDeleteMessages,
-    UpdateEditChannelMessage,
-    UpdateEditMessage,
     UpdateMessageReactions,
-    UpdateNewChannelMessage,
-    UpdateNewMessage,
-    UpdateReadChannelInbox,
-    UpdateReadChannelOutbox,
-    UpdateReadHistoryInbox,
-    UpdateReadHistoryOutbox,
-    UpdateShortChatMessage,
-    UpdateShortMessage,
-    UpdateUserStatus,
 )
 
 from src.adapters.telethon_mappers import get_message_action_text
@@ -248,56 +231,16 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_raw_updates(self, event):
-        """Captures low-level updates."""
+    async def _handle_other_updates(self, event):
+        """Captures other relevant updates like reactions."""
         try:
             if isinstance(event, UpdateMessageReactions):
                 await self._process_reaction_update(event)
                 return
 
-            ignored_types = (
-                UpdateUserStatus,
-                UpdateChatUserTyping,
-                UpdateChannelUserTyping,
-                UpdateReadHistoryInbox,
-                UpdateReadHistoryOutbox,
-                UpdateReadChannelInbox,
-                UpdateReadChannelOutbox,
-                UpdateNewMessage,
-                UpdateNewChannelMessage,
-                UpdateShortMessage,
-                UpdateShortChatMessage,
-                UpdateEditMessage,
-                UpdateEditChannelMessage,
-                UpdateDeleteMessages,
-                UpdateDeleteChannelMessages,
-                UpdateChannelMessageViews,
-            )
-
-            if isinstance(event, ignored_types):
-                return
-
-            try:
-                data_dict = event.to_dict()
-                type_name = type(event).__name__
-                json_str = json.dumps({type_name: str(data_dict)}, default=str)
-
-                sys_event = SystemEvent(
-                    type="raw", text=json_str, chat_name="System", chat_id=0
-                )
-                await self._dispatch(sys_event)
-            except Exception as e:
-                sys_event = SystemEvent(
-                    type="raw",
-                    text=f"Error serializing {type(event).__name__}: {str(e)}",
-                    chat_name="System",
-                    chat_id=0,
-                )
-                await self._dispatch(sys_event)
-
         except Exception as e:
             logger.error(
-                "handle_raw_update_error",
+                "handle_other_updates_error",
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )

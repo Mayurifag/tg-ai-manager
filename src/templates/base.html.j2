@@ -102,15 +102,6 @@
                     <div class="empty-feed">No recent events</div>
                     {% endif %}
                 </div>
-
-                <!-- Raw JSON Sidebar Section -->
-                <div class="raw-feed-container">
-                    <div class="raw-feed-header" onclick="toggleRawFeed()">
-                        <span>Raw Debug</span>
-                        <span id="raw-toggle-icon">▼</span>
-                    </div>
-                    <div id="raw-feed-list" class="raw-feed-list"></div>
-                </div>
             </div>
         </aside>
     </div>
@@ -128,19 +119,6 @@
     </div>
 
     <script>
-        // Toggle Logic for Raw Feed
-        function toggleRawFeed() {
-            const list = document.getElementById('raw-feed-list');
-            const icon = document.getElementById('raw-toggle-icon');
-            if (list.style.display === 'none' || list.style.display === '') {
-                list.style.display = 'flex';
-                icon.textContent = '▲';
-            } else {
-                list.style.display = 'none';
-                icon.textContent = '▼';
-            }
-        }
-
         // --- Global Tooltip Logic ---
         const tooltip = document.getElementById('global-tooltip');
         let activeTooltipTarget = null;
@@ -149,10 +127,7 @@
             const wrapper = e.target.closest('.event-text-wrapper');
             if (wrapper) {
                 activeTooltipTarget = wrapper;
-                // Use a textarea to decode HTML entities if passed via data attribute safely
-                // But simple approach: store escaped in data attribute, unescape here
-                // Or just grab innerHTML of the text div if it matches.
-                // Better: Use the dataset which we escaped on server.
+                // Use the dataset which we escaped on server.
                 const rawHtml = wrapper.getAttribute('data-full-html');
 
                 // Decode HTML entities
@@ -167,9 +142,6 @@
 
         document.body.addEventListener('mouseout', (e) => {
             if (activeTooltipTarget && (e.target.closest('.event-text-wrapper') === activeTooltipTarget)) {
-                // If moving into tooltip itself, keep open? No, tooltip is pointer-events: none usually
-                // or fixed elsewhere.
-                // Simple logic: if leaving the wrapper, hide.
                 if (!e.relatedTarget || !e.relatedTarget.closest('.event-text-wrapper')) {
                     tooltip.style.display = 'none';
                     tooltip.style.opacity = '0';
@@ -264,7 +236,6 @@
             window.parseAppleEmojis(document.body);
 
             const feedContainer = document.getElementById('event-feed-list');
-            const rawContainer = document.getElementById('raw-feed-list');
             const evtSource = new EventSource("/api/events/stream");
 
             evtSource.onmessage = function (e) {
@@ -273,16 +244,7 @@
                 document.dispatchEvent(customEvent);
 
                 if (data.type === 'read' || data.type === 'edited') return;
-
-                if (data.type === 'raw') {
-                    const item = document.createElement('div');
-                    item.className = 'raw-item';
-                    item.textContent = data.text;
-                    rawContainer.insertBefore(item, rawContainer.firstChild);
-                    const rawItems = rawContainer.querySelectorAll('.raw-item');
-                    if (rawItems.length > 5) rawItems[rawItems.length - 1].remove();
-                    return;
-                }
+                // 'raw' type logic removed here
 
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
@@ -299,7 +261,6 @@
                 if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
                 const linkHref = data.link || '#';
 
-                // Escape text for the data attribute to prevent HTML breakage in the attribute itself
                 const escapedText = data.text.replace(/&/g, "&amp;")
                     .replace(/</g, "&lt;")
                     .replace(/>/g, "&gt;")

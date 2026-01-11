@@ -112,8 +112,8 @@ class TelethonAdapter(
                 self._handle_deleted_message, events.MessageDeleted()
             )
             self.client.add_event_handler(self._handle_chat_action, events.ChatAction())
-            # Handle Raw updates (e.g. reactions)
-            self.client.add_event_handler(self._handle_raw_updates)
+            # Handle Raw updates (only reactions now)
+            self.client.add_event_handler(self._handle_other_updates)
             self._event_handler_registered = True
 
     async def disconnect(self):
