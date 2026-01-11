@@ -8,18 +8,21 @@
     <title>{% block title %}Telegram Manager{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
-    <!-- Twemoji Library -->
-    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@latest/dist/twemoji.min.js" crossorigin="anonymous"></script>
+    <!-- Local Twemoji Library -->
+    <script src="/static/libs/twemoji/twemoji.min.js"></script>
     <script>
+        // Global helper to parse Apple Emojis using local assets
         window.parseAppleEmojis = function (container) {
             twemoji.parse(container, {
                 folder: 'svg',
                 ext: '.svg',
                 callback: function (icon, options, variant) {
-                    // 1. Apple Datasource uses unified codes (e.g. '2764') not fully-qualified (e.g. '2764-fe0f')
-                    // 2. We strip '-fe0f' from the icon code to match the CDN filenames.
+                    // 1. Apple Datasource filenames do not have the 'fe0f' suffix.
+                    //    We strip it from the code Twemoji generates.
                     const cleanIcon = icon.replace(/-fe0f/g, '');
-                    return 'https://unpkg.com/emoji-datasource-apple@15.0.0/img/apple/64/' + cleanIcon + '.png';
+
+                    // 2. Return path to local static file
+                    return '/static/emoji/apple/' + cleanIcon + '.png';
                 }
             });
         };
@@ -183,7 +186,7 @@
                 item.appendChild(header);
                 item.appendChild(textDiv);
 
-                // Parse emojis in new feed item
+                // Parse new items
                 window.parseAppleEmojis(item);
 
                 feedContainer.insertBefore(item, feedContainer.firstChild);
