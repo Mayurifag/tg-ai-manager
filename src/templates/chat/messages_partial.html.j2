@@ -136,7 +136,8 @@
                 <img src="/media/custom_emoji/{{ r.custom_emoji_id }}"
                     style="width: 20px; height: 20px; margin-right: 4px;">
                 {% else %}
-                <span>{{ r.emoji }}</span>
+                {# Force VS16 for proper Twemoji parsing #}
+                <span>{{ r.emoji }}&#xFE0F;</span>
                 {% endif %}
                 <span class="reaction-count">{{ r.count }}</span>
             </div>
