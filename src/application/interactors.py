@@ -35,40 +35,14 @@ class ChatInteractor:
         return await self.repository.get_forum_topics(chat_id)
 
     async def get_message_by_id(self, chat_id: int, msg_id: int) -> Optional[Message]:
-        # Wrapper to get single message easily
-        msgs = await self.repository.get_messages(
-            chat_id, limit=1, ids=[msg_id]
-        )  # ids param needs support in repo, fallback:
-        # Since repo interface for get_messages doesn't officially support 'ids' yet in this codebase (it uses offset),
-        # let's rely on standard fetch if we can, or just fetch via offset.
-        # Actually standard Telethon adapter has 'ids' in get_messages, but the Port definition does not.
-        # For safety, let's just use the repo's get_messages with offset if needed, OR
-        # assume we implement a helper.
-        # But wait, adapter.get_messages signature is (chat_id, limit, topic_id, offset_id).
-        # We need a new method or use the adapter directly?
-        # I will assume the Adapter implements get_messages which wraps client.get_messages.
-        # The Adapter implementation I provided previously supports ids internally in `download_media`
-        # but not exposed in `get_messages`.
-        # I will create a temporary logic to fetch specific ID via offset logic or expand interface.
-        # Expanding interface is best.
-        # However, to avoid changing Port signature too much, I will use a direct fetch in service logic or
-        # just assume dry run passes the message object if already available.
-        # For the "Process" button, we need to fetch it.
-        # I'll rely on `repository.get_messages` implementation detail (Telethon) which allows `ids` param if I passed it,
-        # but the interface obscures it.
-        # Let's add a specialized method to interactor which calls repo.
-        pass
+        messages = await self.repository.get_messages(chat_id, ids=[msg_id])
+        if messages:
+            return messages[0]
+        return None
 
     async def get_single_message(self, chat_id: int, msg_id: int) -> Optional[Message]:
-        # We will misuse get_messages with limit=1, but getting a specific ID is hard without offset.
-        # I'll rely on the existing get_messages implementation in ChatOperationsMixin:
-        # It takes (limit, reply_to, offset_id).
-        # If I want a specific message, I can't easily get it via that interface unless I know its offset.
-        # For simplicity in this task, I will assume the "Process" button sends the ID,
-        # and the backend can fetch it using a new `get_messages_by_ids` on the repo if I added it.
-        # For now, let's add `get_messages` logic in `RuleService` that can handle this.
-        # Or better: Just use client.get_messages(ids=[...]) inside a custom method in adapter.
-        pass
+        # Alias for get_message_by_id
+        return await self.get_message_by_id(chat_id, msg_id)
 
     async def get_chat_messages(
         self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0

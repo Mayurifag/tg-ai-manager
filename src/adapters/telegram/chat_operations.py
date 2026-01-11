@@ -203,14 +203,17 @@ class ChatOperationsMixin:
         limit: int = 20,
         topic_id: Optional[int] = None,
         offset_id: int = 0,
+        ids: Optional[List[int]] = None,
     ) -> List[Message]:
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(
-                entity, limit=limit, reply_to=topic_id, offset_id=offset_id
+                entity, limit=limit, reply_to=topic_id, offset_id=offset_id, ids=ids
             )
             reply_ids = []
             for msg in messages:
+                if not msg:
+                    continue
                 self._cache_message_chat(msg.id, chat_id)
                 reply_header = getattr(msg, "reply_to", None)
                 if reply_header:
@@ -231,8 +234,11 @@ class ChatOperationsMixin:
 
             result_messages = []
             for msg in messages:
-                parsed = await self._parse_message(msg, replies_map, chat_id=chat_id)
-                result_messages.append(parsed)
+                if msg:
+                    parsed = await self._parse_message(
+                        msg, replies_map, chat_id=chat_id
+                    )
+                    result_messages.append(parsed)
             return result_messages
         except Exception as e:
             logger.error("get_messages_failed", chat_id=chat_id, error=str(e))

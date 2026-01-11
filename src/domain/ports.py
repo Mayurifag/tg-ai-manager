@@ -6,6 +6,11 @@ from src.domain.models import ActionLog, Chat, Message, SystemEvent
 
 class ChatRepository(ABC):
     @abstractmethod
+    def is_connected(self) -> bool:
+        """Checks if the client is currently connected and authorized."""
+        pass
+
+    @abstractmethod
     async def connect(self):
         pass
 
@@ -33,6 +38,7 @@ class ChatRepository(ABC):
         limit: int = 20,
         topic_id: Optional[int] = None,
         offset_id: int = 0,
+        ids: Optional[List[int]] = None,
     ) -> List[Message]:
         pass
 

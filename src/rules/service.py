@@ -91,6 +91,10 @@ class RuleService:
         return ""
 
     async def handle_new_message_event(self, event: SystemEvent):
+        # Strict type guard: we can only process events with a valid chat_id
+        if not event.chat_id:
+            return
+
         if event.type != "message" or not event.message_model:
             return
 
@@ -271,7 +275,7 @@ class RuleService:
         topic_id: Optional[int],
         rule_type: RuleType,
         enabled: bool,
-        config: Dict[str, Any] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Optional[Rule]:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
         existing = next(
@@ -311,39 +315,12 @@ class RuleService:
         self, chat_id: int, msg_id: int
     ) -> Dict[str, Any]:
         """Dry run debug for a specific message."""
-        # 1. Fetch Message
-        # We assume adapter has get_messages support.
-        # Using a workaround if direct get by ID isn't exposed perfectly in port,
-        # but adapter implementation uses client.get_messages(ids=[...]) under hood if mapped.
-        # We will attempt to use the interactor's get_chat_messages assuming it might find it
-        # if we fetch recent. If not found, simulation fails.
-        # For better reliability, we use the `client.get_messages` directly if possible via repo
-        # or implement a fetcher.
-        # Let's try fetching 1 message from history if it's recent?
-        # A robust way is adding `get_message_by_id` to repo.
-        # But given constraints, let's rely on standard fetch or the new method in adapter if I added it.
-        # I didn't add get_message_by_id to adapter yet. I will rely on `check_global_autoread_rules` logic.
-
-        # NOTE: I am adding a temporary helper to fetch specific message via repo's get_messages
-        # by passing ids=[msg_id] as kwargs if the underlying adapter supports it (Telethon does).
-        # The Port definition didn't include **kwargs, but Python allows passing them if implementation accepts.
-        # However, Base implementation must match.
-        # To be safe: I will blindly construct a Message object if I can't fetch it, OR
-        # I will assume the frontend calls this right after loading messages so they are in cache.
-
-        # Actually, let's use the repo `get_messages` and hope the user provides a valid ID.
-        # Since I can't guarantee `ids` param support in `get_messages` signature in abstract class without changing it,
-        # I'll instantiate a Dummy message for simulation if I can't fetch, OR
-        # I'll rely on `chat_repo.client` being accessible if I cast it (dirty).
-        # Best approach: Add `get_message_by_id` to ChatOperationsMixin and Port.
-        # (I skipped adding it to Port to minimize file changes, but I should have.
-        # I will assume `get_messages` can filter or I just fetch recent 20 and find it).
-
-        msgs = await self.chat_repo.get_messages(chat_id, limit=50)
-        msg = next((m for m in msgs if m.id == msg_id), None)
+        # We rely on the repo supporting 'ids' now
+        msgs = await self.chat_repo.get_messages(chat_id, ids=[msg_id])
+        msg = msgs[0] if msgs else None
 
         if not msg:
-            return {"error": "Message not found in recent history"}
+            return {"error": "Message not found"}
 
         results = {}
 
