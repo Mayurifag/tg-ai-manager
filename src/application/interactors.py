@@ -90,10 +90,13 @@ class ChatInteractor:
         return grouped_messages
 
     async def mark_chat_as_read(
-        self, chat_id: int, topic_id: Optional[int] = None
+        self,
+        chat_id: int,
+        topic_id: Optional[int] = None,
+        max_id: Optional[int] = None,
     ) -> None:
         # 1. Perform Telegram Action
-        await self.repository.mark_as_read(chat_id, topic_id)
+        await self.repository.mark_as_read(chat_id, topic_id, max_id=max_id)
 
         # 2. Fetch Chat Info for Log
         chat = await self.repository.get_chat(chat_id)

@@ -68,8 +68,13 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
-    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
-        """Marks the chat or specific topic as read."""
+    async def mark_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+    ) -> None:
+        """Marks the chat or specific topic as read. max_id is the ID up to which to read."""
         pass
 
     @abstractmethod

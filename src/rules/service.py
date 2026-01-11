@@ -1,13 +1,14 @@
-import re
 import asyncio
-from typing import Optional
+import re
 from datetime import datetime
-from src.rules.models import Rule, AutoReadRule, RuleType
-from src.rules.ports import RuleRepository
-from src.domain.models import SystemEvent, ActionLog, Message, ChatType
+from typing import Optional
+
+from src.domain.models import ActionLog, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository
-from src.users.ports import UserRepository
 from src.infrastructure.logging import get_logger
+from src.rules.models import AutoReadRule, Rule, RuleType
+from src.rules.ports import RuleRepository
+from src.users.ports import UserRepository
 
 logger = get_logger(__name__)
 
@@ -123,7 +124,10 @@ class RuleService:
                     should_read = False
 
         if should_read:
-            await self.chat_repo.mark_as_read(event.chat_id, event.topic_id)
+            max_id = event.message_model.id if event.message_model else None
+            await self.chat_repo.mark_as_read(
+                event.chat_id, event.topic_id, max_id=max_id
+            )
             event.is_read = True
 
             await self.action_repo.add_log(

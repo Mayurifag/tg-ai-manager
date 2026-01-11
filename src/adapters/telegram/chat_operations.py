@@ -342,7 +342,12 @@ class ChatOperationsMixin:
             )
         return None
 
-    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
+    async def mark_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+    ) -> None:
         try:
             entity = await self.client.get_entity(chat_id)
             chat_name = utils.get_display_name(entity)
@@ -350,16 +355,18 @@ class ChatOperationsMixin:
 
             if topic_id:
                 try:
-                    # We need the max_id to mark as read properly.
-                    # This fetches the latest message in that topic to use as the read pointer.
-                    msgs = await self.client.get_messages(
-                        entity, limit=1, reply_to=topic_id
-                    )
-                    max_id = msgs[0].id if msgs else topic_id
+                    read_max_id = max_id
+                    if not read_max_id:
+                        # We need the max_id to mark as read properly.
+                        # This fetches the latest message in that topic to use as the read pointer.
+                        msgs = await self.client.get_messages(
+                            entity, limit=1, reply_to=topic_id
+                        )
+                        read_max_id = msgs[0].id if msgs else topic_id
 
                     await self.client(
                         functions.messages.ReadDiscussionRequest(
-                            peer=entity, msg_id=topic_id, read_max_id=max_id
+                            peer=entity, msg_id=topic_id, read_max_id=read_max_id
                         )
                     )
 
@@ -375,7 +382,11 @@ class ChatOperationsMixin:
                     else:
                         raise e
             else:
-                await self.client.send_read_acknowledge(entity)
+                # Standard chat or channel
+                if max_id:
+                    await self.client.send_read_acknowledge(entity, max_id=max_id)
+                else:
+                    await self.client.send_read_acknowledge(entity)
 
             # Broadcast event to frontend to clear badge
             # We call self._dispatch which comes from EventHandlersMixin in the Adapter

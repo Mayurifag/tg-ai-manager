@@ -53,11 +53,22 @@ services:
 ## TODO
 
 - Reacts and msgs - use apple emojis.
+- Auto reactions processing
+- Quotes are not seen on frontend.
+- Can i do something if I done anything like reading on another client? Only autofetch every n seconds? Or do I have events for that case
+- **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
+- Switch between users easily - show their avatar and names on left top
+- AI integration to skip ads
+- AI integration to help with advice
+- AI integration to help find answer in chats
+
+## Bugs to fix
+
 - Animated custom emojis arent working
 - Posts of group inside this chat are not correctly reacted by app. Optimistic updates might be not needed??
-- Quotes are not seen on frontend.
-- Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine
-- Can i do something if I done anything like reading on another client? Only autofetch every n seconds?
-- **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
-- performance issues after some time. seems i am throttled by telegram but not sure - maybe fixed
+
+### Bugs that perhaps fixed already
+
+- performance issues after some time. seems i am throttled by telegram but not sure
+- Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine
