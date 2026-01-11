@@ -1,6 +1,7 @@
 from quart import Blueprint, abort, jsonify, render_template, request
 
 from src.container import get_chat_interactor, get_rule_service, get_user_repo
+from src.rules.models import RuleType
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -35,6 +36,16 @@ async def chat_view(chat_id: int):
     messages = await interactor.get_chat_messages(chat_id, topic_id=None)
 
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
+
+    # Determine Autoreact Status
+    react_rule = await rule_service.get_rule(chat_id, None, RuleType.AUTOREACT)
+    autoreact_status = "off"
+    if react_rule:
+        if not react_rule.config.get("target_users"):
+            autoreact_status = "all"
+        else:
+            autoreact_status = "some"
+
     return await render_template(
         "chat/chat.html.j2",
         messages=messages,
@@ -42,6 +53,7 @@ async def chat_view(chat_id: int):
         chat_id=chat_id,
         topic_id=None,
         autoread_enabled=autoread_enabled,
+        autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
 
@@ -59,6 +71,15 @@ async def topic_view(chat_id: int, topic_id: int):
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
 
+    # Determine Autoreact Status
+    react_rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
+    autoreact_status = "off"
+    if react_rule:
+        if not react_rule.config.get("target_users"):
+            autoreact_status = "all"
+        else:
+            autoreact_status = "some"
+
     return await render_template(
         "chat/chat.html.j2",
         messages=messages,
@@ -66,6 +87,7 @@ async def topic_view(chat_id: int, topic_id: int):
         chat_id=chat_id,
         topic_id=topic_id,
         autoread_enabled=autoread_enabled,
+        autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
 

@@ -1,7 +1,8 @@
 import asyncio
 import re
+import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from src.domain.models import ActionLog, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository
@@ -25,6 +26,9 @@ class RuleService:
         self.action_repo = action_repo
         self.chat_repo = chat_repo
         self.user_repo = user_repo
+
+        # Cache for deduplicating album reactions: (chat_id, grouped_id) -> timestamp
+        self._album_reaction_cache: Dict[Tuple[int, int], float] = {}
 
     async def get_rule(
         self, chat_id: int, topic_id: Optional[int], rule_type: RuleType
@@ -148,6 +152,22 @@ class RuleService:
         if message.is_outgoing:
             return
 
+        # Album Deduplication Logic
+        if message.grouped_id:
+            now = time.time()
+            # Clean up old cache entries (older than 60s)
+            self._album_reaction_cache = {
+                k: v for k, v in self._album_reaction_cache.items() if now - v < 60
+            }
+
+            key = (chat_id, message.grouped_id)
+            if key in self._album_reaction_cache:
+                # Already reacted to this album group recently
+                return
+
+            # Mark this album as processed
+            self._album_reaction_cache[key] = now
+
         rule = await self.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
         if not rule:
             return
@@ -157,19 +177,9 @@ class RuleService:
 
         should_react = False
 
-        # If target_users is empty, we treat it as "Default"
-        # For groups/channels: this usually implies reacting to the channel/admin posts or everything if configured so.
-        # But per requirements: "Default selected - for groupchat will be the channel itself."
-        # If it's a channel, sender_id is usually None or matches channel ID.
         if not target_users:
-            # If no specific users selected, we check if it's the "channel itself" or main participant.
-            # If sender_id matches chat_id (channel post in discussion), or if it is None (channel)
-            if message.sender_id is None or message.sender_id == chat_id:
-                should_react = True
-            # For private chats, sender_id is the other user.
-            if message.sender_id and message.sender_id == chat_id:
-                # Direct message case
-                should_react = True
+            # Empty list = React to EVERYTHING (except self, checked above)
+            should_react = True
         else:
             if message.sender_id in target_users:
                 should_react = True
@@ -179,11 +189,6 @@ class RuleService:
             already_reacted = False
             for r in message.reactions:
                 if r.is_chosen:
-                    # Check if it matches the configured emoji
-                    # If we already put the correct emoji, we skip.
-                    # If we put a DIFFERENT emoji, we stack (add) this one too.
-                    # The `send_reaction` logic handles stacking/toggling.
-                    # But to avoid spamming API on every edit, we check if THIS emoji is chosen.
                     if r.emoji == emoji or (
                         r.custom_emoji_id and str(r.custom_emoji_id) == emoji
                     ):
@@ -328,8 +333,6 @@ class RuleService:
         ar_rule = await self.is_autoread_enabled(
             chat_id, None
         )  # Ignoring topic for now or need topic_id
-        # Note: If topic_id is needed, frontend must supply it.
-        # For simplicity, we check global chat rule.
 
         ar_status = "skipped"
         ar_reason = "disabled"
@@ -356,8 +359,7 @@ class RuleService:
             should_react = False
 
             if not target_users:
-                if msg.sender_id is None or msg.sender_id == chat_id:
-                    should_react = True
+                should_react = True
             else:
                 if msg.sender_id in target_users:
                     should_react = True
