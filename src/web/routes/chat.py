@@ -115,6 +115,23 @@ async def api_get_chat_card(chat_id: int):
     return await render_template("partials/chat_card_wrapper.html.j2", chat=chat)
 
 
+@chat_bp.route("/api/chat/<int(signed=True):chat_id>/info")
+async def api_get_chat_info(chat_id: int):
+    interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+
+    return jsonify(
+        {
+            "id": chat.id,
+            "name": chat.name,
+            "type": chat.type.value,
+            "avatar_url": chat.image_url,
+        }
+    )
+
+
 @chat_bp.route(
     "/api/chat/<int(signed=True):chat_id>/message/<int(signed=True):msg_id>/reaction",
     methods=["POST"],

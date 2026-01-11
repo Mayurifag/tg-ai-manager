@@ -77,6 +77,33 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
 
         return await self._execute(_fetch)
 
+    async def get_all(self) -> List[Rule]:
+        def _fetch():
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT id, user_id, rule_type, chat_id, topic_id, config, created_at, updated_at
+                    FROM rules
+                    ORDER BY chat_id ASC, topic_id ASC NULLS FIRST
+                """
+                )
+                results = []
+                for row in cursor:
+                    rule = Rule(
+                        id=row[0],
+                        user_id=row[1],
+                        rule_type=RuleType(row[2]),
+                        chat_id=row[3],
+                        topic_id=row[4],
+                        config=self._parse_config(row[5]),
+                        created_at=datetime.fromisoformat(row[6]),
+                        updated_at=datetime.fromisoformat(row[7]),
+                    )
+                    results.append(rule)
+                return results
+
+        return await self._execute(_fetch)
+
     async def add(self, rule: Rule) -> int:
         def _insert():
             with self._connect() as conn:

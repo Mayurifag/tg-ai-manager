@@ -1,0 +1,244 @@
+{% extends "base.html.j2" %}
+
+{% block title %}Rules Summary{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/rules_summary.css?t={{ 'static/css/rules_summary.css' | file_mtime }}">
+{% endblock %}
+
+{% block sidebar_back %}
+<a href="/" class="back-link">← Back to Chats</a>
+{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Rules Summary</h1>
+</div>
+
+<div class="rules-container">
+
+    <!-- Global Settings -->
+    <div class="global-section">
+        <h3 style="margin: 0 0 10px 0; font-size: 1.1rem; color: #fff;">Global User Settings</h3>
+        <p style="color:#888; font-size:0.9rem; margin-top:0;">These rules apply to all chats unless overridden,
+            assuming
+            messages meet criteria (e.g. unread count = 1).</p>
+
+        <div class="gs-grid">
+            <div class="gs-item {{ 'active' if global_settings.autoread_service_messages else 'inactive' }}">
+                <span class="gs-label">Service Messages</span>
+                <span class="gs-val">{{ 'ON' if global_settings.autoread_service_messages else 'OFF' }}</span>
+            </div>
+            <div class="gs-item {{ 'active' if global_settings.autoread_polls else 'inactive' }}">
+                <span class="gs-label">Polls</span>
+                <span class="gs-val">{{ 'ON' if global_settings.autoread_polls else 'OFF' }}</span>
+            </div>
+            <div class="gs-item {{ 'active' if global_settings.autoread_self else 'inactive' }}">
+                <span class="gs-label">My Messages</span>
+                <span class="gs-val">{{ 'ON' if global_settings.autoread_self else 'OFF' }}</span>
+            </div>
+        </div>
+
+        <!-- Expanded Global Configs -->
+        <div style="margin-top: 15px; display: flex; gap: 15px; flex-wrap: wrap;">
+            <!-- Bots -->
+            <div class="gs-item-wide {{ 'active' if global_settings.autoread_bots else 'inactive' }}">
+                <div class="gs-wide-header">
+                    <span class="gs-label">Autoread Users</span>
+                </div>
+                <div class="gs-wide-content">
+                    {% if global_settings.autoread_bots %}
+                    <div class="bot-tags">
+                        {% for bot in global_settings.autoread_bots.split(',') %}
+                        {% if bot.strip() %}
+                        <span class="bot-tag">{{ bot.strip() }}</span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <span class="gs-none">None configured</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Regex -->
+            <div class="gs-item-wide {{ 'active' if global_settings.autoread_regex else 'inactive' }}">
+                <div class="gs-wide-header">
+                    <span class="gs-label">Autoread Regex</span>
+                </div>
+                <div class="gs-wide-content">
+                    {% if global_settings.autoread_regex %}
+                    <code class="regex-block">{{ global_settings.autoread_regex }}</code>
+                    {% else %}
+                    <span class="gs-none">None configured</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Rules List -->
+    <h3 style="margin: 20px 0 10px 0; font-size: 1.1rem; color: #fff;">Active Chat Rules</h3>
+
+    {% if grouped_rules %}
+    {% for chat_id, data in grouped_rules.items() %}
+    <div class="rule-group-card" data-chat-id="{{ chat_id }}">
+        <div class="rg-header">
+            <div class="rg-avatar">?</div>
+            <div class="rg-info">
+                <div class="rg-name">Chat ID: {{ chat_id }}</div>
+                <div class="rg-type rg-loading">Loading info...</div>
+            </div>
+            <div style="font-size: 0.8rem; color: #555;">ID: {{ chat_id }}</div>
+        </div>
+
+        <!-- Chat Level Rules -->
+        {% if data.chat_rules %}
+        <div class="rule-list">
+            {% for rule in data.chat_rules %}
+            <div class="rule-item">
+                <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
+
+                <div class="rule-detail">
+                    {% if rule.rule_type.value == 'autoreact' %}
+                    <div class="ar-display">
+                        <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
+                        <div class="ar-targets">
+                            {% if rule.config.target_users %}
+                            {% for uid in rule.config.target_users %}
+                            <div class="user-chip-lazy" data-user-id="{{ uid }}">
+                                <div class="u-avatar">?</div>
+                                <span class="u-name">{{ uid }}</span>
+                            </div>
+                            {% endfor %}
+                            {% else %}
+                            <span class="ar-default">Default (Channel/Main)</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    {% if rule.config %}
+                    <span class="rule-config">{{ rule.config }}</span>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Topic Level Rules -->
+        {% if data.topics %}
+        <div class="rule-list" style="padding-top: 0;">
+            {% for topic_id, t_rules in data.topics.items() %}
+            <div class="topic-group">
+                <div class="topic-header">
+                    <span style="margin-right: 5px;">#</span> Topic ID: {{ topic_id }}
+                </div>
+                {% for rule in t_rules %}
+                <div class="rule-item">
+                    <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
+
+                    <div class="rule-detail">
+                        {% if rule.rule_type.value == 'autoreact' %}
+                        <div class="ar-display">
+                            <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
+                            <div class="ar-targets">
+                                {% if rule.config.target_users %}
+                                {% for uid in rule.config.target_users %}
+                                <div class="user-chip-lazy" data-user-id="{{ uid }}">
+                                    <div class="u-avatar">?</div>
+                                    <span class="u-name">{{ uid }}</span>
+                                </div>
+                                {% endfor %}
+                                {% else %}
+                                <span class="ar-default">Default (Channel/Main)</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% else %}
+                        {% if rule.config %}
+                        <span class="rule-config">{{ rule.config }}</span>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="text-align: center; color: #777; padding: 30px;">
+        No specific rules configured.
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', async () => {
+        // 1. Resolve Chat Info
+        const cards = document.querySelectorAll('.rule-group-card');
+
+        cards.forEach(async (card) => {
+            const chatId = card.getAttribute('data-chat-id');
+            if (!chatId) return;
+
+            try {
+                const res = await fetch(`/api/chat/${chatId}/info`);
+                if (res.ok) {
+                    const data = await res.json();
+
+                    const nameEl = card.querySelector('.rg-name');
+                    const typeEl = card.querySelector('.rg-type');
+                    const avatarEl = card.querySelector('.rg-avatar');
+
+                    nameEl.textContent = data.name;
+                    typeEl.textContent = data.type;
+                    typeEl.classList.remove('rg-loading');
+
+                    if (data.avatar_url) {
+                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    } else {
+                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
+                    }
+                } else {
+                    card.querySelector('.rg-type').textContent = "Info unavailable";
+                }
+            } catch (e) {
+                console.error("Failed to load info for chat", chatId, e);
+            }
+        });
+
+        // 2. Resolve User Info for Autoreact
+        const userChips = document.querySelectorAll('.user-chip-lazy');
+
+        userChips.forEach(async (chip) => {
+            const uid = chip.getAttribute('data-user-id');
+            if (!uid) return;
+
+            try {
+                const res = await fetch(`/api/chat/${uid}/info`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const avatarEl = chip.querySelector('.u-avatar');
+                    const nameEl = chip.querySelector('.u-name');
+
+                    nameEl.textContent = data.name;
+                    if (data.avatar_url) {
+                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    } else {
+                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
+                    }
+                    chip.title = `@${data.username || 'unknown'}`;
+                }
+            } catch (e) {
+                console.error("Failed to load user info", uid, e);
+            }
+        });
+    });
+</script>
+{% endblock %}
