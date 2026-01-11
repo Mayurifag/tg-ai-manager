@@ -39,7 +39,6 @@
         {% endif %}
 
         {% if msg.album_parts %}
-        {# --- Album Grid Display --- #}
         <div class="media-content">
             {% set count = msg.album_parts | length %}
             {% set grid_class = 'items-more' %}
@@ -72,7 +71,6 @@
             <video controls preload="metadata"
                 style="max-width: 100%; border-radius: 8px; max-height: 400px; display: block;">
                 <source src="/media/{{ chat_id }}/{{ msg.id }}">
-                Your browser does not support the video tag.
             </video>
 
             {% elif msg.is_sticker %}
@@ -100,7 +98,6 @@
                 </div>
                 <audio controls preload="none" style="width: 100%; height: 30px;">
                     <source src="/media/{{ chat_id }}/{{ msg.id }}">
-                    Your browser does not support the audio element.
                 </audio>
             </div>
 
@@ -109,11 +106,9 @@
                 style="background: #f0f4f7; padding: 10px; border-radius: 8px; border: 1px solid #cfd8dc; color: #37474f; min-width: 250px;">
                 <div style="font-weight: bold; font-size: 1.05rem; margin-bottom: 5px;">🗳️ Poll: {{ msg.poll_question
                     or 'Unknown Poll' }}</div>
-                <div style="font-size: 0.9rem; color: #666;">Poll content is not yet fully displayed.</div>
             </div>
 
             {% else %}
-            {# Single Photo / General Media #}
             <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media lightbox-trigger"
                 data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full"
                 style="max-width: 250px; max-height: 300px; border-radius: 8px; display: block; cursor: pointer;"
@@ -126,7 +121,6 @@
         <div class="text">{{ msg.text | safe }}</div>
         {% endif %}
 
-        {# --- Reactions --- #}
         <div class="reactions-container" id="reactions-{{ msg.id }}">
             {% for r in msg.reactions %}
             <div class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
@@ -136,7 +130,6 @@
                 <img src="/media/custom_emoji/{{ r.custom_emoji_id }}"
                     style="width: 20px; height: 20px; margin-right: 4px;">
                 {% else %}
-                {# Force VS16 for proper Twemoji parsing #}
                 <span>{{ r.emoji }}&#xFE0F;</span>
                 {% endif %}
                 <span class="reaction-count">{{ r.count }}</span>
@@ -147,6 +140,11 @@
         {# --- Hover Poop --- #}
         <div class="hover-reaction" onclick="toggleReaction(this, {{ msg.id }}, '💩')" title="React with 💩">
             💩
+        </div>
+
+        {# --- Debug Process Button --- #}
+        <div class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" title="Dry Run Rules">
+            ⚙️
         </div>
 
         <div class="time">{{ msg.date.strftime('%H:%M') }}</div>

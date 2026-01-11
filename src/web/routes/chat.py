@@ -32,7 +32,6 @@ async def chat_view(chat_id: int):
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
 
-    # Load initial messages for regular chats (same as topics)
     messages = await interactor.get_chat_messages(chat_id, topic_id=None)
 
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
@@ -97,6 +96,13 @@ async def mark_read(chat_id: int):
 
     await interactor.mark_chat_as_read(chat_id, topic_id=topic_id)
     return jsonify({"status": "ok"})
+
+
+@chat_bp.route("/api/chat/<int(signed=True):chat_id>/authors")
+async def api_get_authors(chat_id: int):
+    interactor = get_chat_interactor()
+    authors = await interactor.get_recent_authors(chat_id)
+    return jsonify({"authors": authors})
 
 
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/card")

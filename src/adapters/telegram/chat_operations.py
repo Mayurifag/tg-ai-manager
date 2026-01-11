@@ -102,29 +102,20 @@ class ChatOperationsMixin:
         return results
 
     async def get_all_unread_chats(self) -> List[Chat]:
-        """
-        Iterates over all dialogs (Main + Archive) to find those with unread messages.
-        Includes non-blocking yields to keep the event loop responsive.
-        """
         results = []
         try:
-            # We iterate over folder 0 (Main) and folder 1 (Archive)
             folders = [0, 1]
-
             for folder_id in folders:
                 count = 0
                 async for d in self.client.iter_dialogs(
                     limit=None, ignore_migrated=True, folder=folder_id
                 ):
                     count += 1
-                    # Yield control to event loop every 50 items to prevent blocking
                     if count % 50 == 0:
                         await asyncio.sleep(0)
 
                     if d.unread_count > 0 or d.unread_mentions_count > 0:
                         chat_type = map_telethon_dialog_to_chat_type(d)
-
-                        # Basic chat object
                         chat = Chat(
                             id=d.id,
                             name=d.name,
@@ -165,7 +156,6 @@ class ChatOperationsMixin:
 
             try:
                 input_peer = utils.get_input_peer(entity)
-                # Pylance ignore: Telethon InputPeer unions are complex
                 res = await self.client(
                     GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])  # type: ignore
                 )
@@ -182,7 +172,7 @@ class ChatOperationsMixin:
                 messages = await self.client.get_messages(entity, limit=1)
                 if messages:
                     latest_msg = messages[0]
-                    self._cache_message_chat(latest_msg.id, chat_id)  # Update Cache
+                    self._cache_message_chat(latest_msg.id, chat_id)
                     last_message_preview = format_message_preview(
                         latest_msg, c_type, {}
                     )
@@ -248,6 +238,45 @@ class ChatOperationsMixin:
             logger.error("get_messages_failed", chat_id=chat_id, error=str(e))
             return []
 
+    async def get_recent_authors(
+        self, chat_id: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        try:
+            entity = await self.client.get_entity(chat_id)
+            # Fetch messages
+            messages = await self.client.get_messages(entity, limit=limit)
+
+            seen_ids = set()
+            authors = []
+
+            for m in messages:
+                sender = getattr(m, "sender", None)
+                if sender:
+                    sid = sender.id
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+
+                    name = utils.get_display_name(sender)
+                    username = getattr(sender, "username", None)
+
+                    # Avatar url (cache check)
+                    avatar_url = await self._get_chat_image(sender, sid)
+
+                    authors.append(
+                        {
+                            "id": sid,
+                            "name": name,
+                            "username": f"@{username}" if username else None,
+                            "avatar_url": avatar_url,
+                        }
+                    )
+
+            return authors
+        except Exception as e:
+            logger.error("get_recent_authors_failed", chat_id=chat_id, error=str(e))
+            return []
+
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         try:
             entity = await self.client.get_entity(chat_id)
@@ -281,16 +310,8 @@ class ChatOperationsMixin:
             return []
 
     async def get_unread_topics(self, chat_id: int) -> List[Chat]:
-        """
-        Fetches all topics that have unread messages.
-        We have to iterate fairly deeply to ensure we get them all,
-        but typically 'limit' in GetForumTopicsRequest acts on the topic list order.
-        Topics with new messages usually bubble up, so a limit of 50 or 100 should cover active ones.
-        """
         try:
             entity = await self.client.get_entity(chat_id)
-            # Fetch a reasonable amount of topics to find unread ones.
-            # Usually recent topics are at the top.
             response = await self.client(
                 functions.messages.GetForumTopicsRequest(
                     peer=entity,
@@ -357,8 +378,6 @@ class ChatOperationsMixin:
                 try:
                     read_max_id = max_id
                     if not read_max_id:
-                        # We need the max_id to mark as read properly.
-                        # This fetches the latest message in that topic to use as the read pointer.
                         msgs = await self.client.get_messages(
                             entity, limit=1, reply_to=topic_id
                         )
@@ -369,8 +388,6 @@ class ChatOperationsMixin:
                             peer=entity, msg_id=topic_id, read_max_id=read_max_id
                         )
                     )
-
-                    # Try fetching topic name for event
                     topic_name = await self.get_topic_name(chat_id, topic_id)
                 except Exception as e:
                     if "TOPIC_ID_INVALID" in str(e):
@@ -382,14 +399,11 @@ class ChatOperationsMixin:
                     else:
                         raise e
             else:
-                # Standard chat or channel
                 if max_id:
                     await self.client.send_read_acknowledge(entity, max_id=max_id)
                 else:
                     await self.client.send_read_acknowledge(entity)
 
-            # Broadcast event to frontend to clear badge
-            # We call self._dispatch which comes from EventHandlersMixin in the Adapter
             if hasattr(self, "_dispatch"):
                 event = SystemEvent(
                     type="read",
@@ -413,26 +427,15 @@ class ChatOperationsMixin:
             )
 
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
-        """
-        Toggles the reaction.
-        Attempts to STACK reactions (add to existing).
-        If user is not premium (or limit reached), falls back to REPLACING.
-        Explicitly fetches the message state after action to broadcast an update.
-        """
         try:
             entity = await self.client.get_entity(chat_id)
 
-            # 1. Prepare the Target Reaction Object
             target_reaction = None
             if emoji.isdigit():
-                # It's a Custom Emoji ID
                 target_reaction = types.ReactionCustomEmoji(document_id=int(emoji))
             else:
-                # Standard Emoji
                 target_reaction = types.ReactionEmoji(emoticon=emoji)
 
-            # 2. Fetch current message to see existing reactions by ME
-            # We must fetch fresh to know what to keep/remove
             msgs = await self.client.get_messages(entity, ids=[msg_id])
             if not msgs:
                 return False
@@ -444,12 +447,10 @@ class ChatOperationsMixin:
                     if getattr(rc, "chosen", False):
                         current_my_reactions.append(rc.reaction)
 
-            # 3. Modify List (Toggle Logic)
             new_reactions_list = []
             found = False
 
             for r in current_my_reactions:
-                # Check equality:
                 is_same = False
                 if isinstance(r, types.ReactionEmoji) and isinstance(
                     target_reaction, types.ReactionEmoji
@@ -464,17 +465,15 @@ class ChatOperationsMixin:
 
                 if is_same:
                     found = True
-                    # Remove it (don't add to new list)
                 else:
                     new_reactions_list.append(r)
 
             if not found:
                 new_reactions_list.append(target_reaction)
 
-            # 4. Try Stacking (Send Full List)
             success = False
             try:
-                # Pylance ignore: Reaction list typing mismatch
+                # Type ignore: telethon
                 await self.client(
                     functions.messages.SendReactionRequest(
                         peer=entity,
@@ -485,7 +484,6 @@ class ChatOperationsMixin:
                 )
                 success = True
             except errors.ReactionInvalidError:
-                # Fallback: Just send the single reaction (Replace all)
                 logger.info(
                     "reaction_stack_failed_fallback_replace",
                     chat_id=chat_id,
@@ -504,14 +502,16 @@ class ChatOperationsMixin:
                     )
                 )
                 success = True
+            except Exception as e:
+                # If disallowed, just log as per instructions
+                logger.error("send_reaction_exception", error=str(e))
+                return False
 
-            # 5. Force Fetch & Broadcast Update
             if success:
                 try:
                     updated_msgs = await self.client.get_messages(entity, ids=[msg_id])
                     if updated_msgs:
                         updated_msg = updated_msgs[0]
-                        # self._parse_message comes from MessageParserMixin which Adapter inherits
                         if hasattr(self, "_parse_message") and hasattr(
                             self, "_dispatch"
                         ):
@@ -528,7 +528,6 @@ class ChatOperationsMixin:
                             )
                             await getattr(self, "_dispatch")(event)
                 except Exception as ex:
-                    # Log with full details
                     logger.error(
                         "post_reaction_fetch_failed",
                         error=repr(ex),
@@ -544,13 +543,9 @@ class ChatOperationsMixin:
             return False
 
     async def get_self_premium_status(self) -> bool:
-        """
-        Fetches the current user from the API to bypass local cache and check Premium status.
-        """
         try:
             if not self.client:
                 return False
-            # force fetch
             users = await self.client(
                 functions.users.GetUsersRequest(id=[types.InputUserSelf()])
             )

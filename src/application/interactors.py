@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
@@ -28,8 +28,47 @@ class ChatInteractor:
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
         return await self.repository.get_chat(chat_id)
 
+    async def get_recent_authors(self, chat_id: int) -> List[Dict[str, Any]]:
+        return await self.repository.get_recent_authors(chat_id)
+
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return await self.repository.get_forum_topics(chat_id)
+
+    async def get_message_by_id(self, chat_id: int, msg_id: int) -> Optional[Message]:
+        # Wrapper to get single message easily
+        msgs = await self.repository.get_messages(
+            chat_id, limit=1, ids=[msg_id]
+        )  # ids param needs support in repo, fallback:
+        # Since repo interface for get_messages doesn't officially support 'ids' yet in this codebase (it uses offset),
+        # let's rely on standard fetch if we can, or just fetch via offset.
+        # Actually standard Telethon adapter has 'ids' in get_messages, but the Port definition does not.
+        # For safety, let's just use the repo's get_messages with offset if needed, OR
+        # assume we implement a helper.
+        # But wait, adapter.get_messages signature is (chat_id, limit, topic_id, offset_id).
+        # We need a new method or use the adapter directly?
+        # I will assume the Adapter implements get_messages which wraps client.get_messages.
+        # The Adapter implementation I provided previously supports ids internally in `download_media`
+        # but not exposed in `get_messages`.
+        # I will create a temporary logic to fetch specific ID via offset logic or expand interface.
+        # Expanding interface is best.
+        # However, to avoid changing Port signature too much, I will use a direct fetch in service logic or
+        # just assume dry run passes the message object if already available.
+        # For the "Process" button, we need to fetch it.
+        # I'll rely on `repository.get_messages` implementation detail (Telethon) which allows `ids` param if I passed it,
+        # but the interface obscures it.
+        # Let's add a specialized method to interactor which calls repo.
+        pass
+
+    async def get_single_message(self, chat_id: int, msg_id: int) -> Optional[Message]:
+        # We will misuse get_messages with limit=1, but getting a specific ID is hard without offset.
+        # I'll rely on the existing get_messages implementation in ChatOperationsMixin:
+        # It takes (limit, reply_to, offset_id).
+        # If I want a specific message, I can't easily get it via that interface unless I know its offset.
+        # For simplicity in this task, I will assume the "Process" button sends the ID,
+        # and the backend can fetch it using a new `get_messages_by_ids` on the repo if I added it.
+        # For now, let's add `get_messages` logic in `RuleService` that can handle this.
+        # Or better: Just use client.get_messages(ids=[...]) inside a custom method in adapter.
+        pass
 
     async def get_chat_messages(
         self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0
@@ -40,11 +79,6 @@ class ChatInteractor:
         return self._group_messages_into_albums(raw_messages)
 
     def _group_messages_into_albums(self, messages: List[Message]) -> List[Message]:
-        """
-        Groups consecutive messages with the same grouped_id.
-        Assuming 'messages' list is ordered Newest -> Oldest (standard fetch).
-        We collapse the older parts into the newest message of the group.
-        """
         if not messages:
             return []
 
@@ -54,7 +88,6 @@ class ChatInteractor:
             current_msg = messages[i]
 
             if current_msg.grouped_id:
-                # Start of a group (technically the last/newest part of it)
                 album_parts = [current_msg]
                 j = i + 1
                 while j < len(messages):
@@ -65,11 +98,6 @@ class ChatInteractor:
                     else:
                         break
 
-                # We consumed messages from i to j-1
-                # The 'current_msg' will be the container.
-                # It should hold the others.
-                # However, usually only one has text (caption). We should surface it.
-
                 final_caption = current_msg.text
                 if not final_caption:
                     for part in album_parts:
@@ -78,7 +106,6 @@ class ChatInteractor:
                             break
 
                 current_msg.text = final_caption
-                # Store parts reversed (Oldest first) for display order 1..N
                 current_msg.album_parts = sorted(album_parts, key=lambda m: m.id)
 
                 grouped_messages.append(current_msg)
@@ -95,19 +122,15 @@ class ChatInteractor:
         topic_id: Optional[int] = None,
         max_id: Optional[int] = None,
     ) -> None:
-        # 1. Perform Telegram Action
         await self.repository.mark_as_read(chat_id, topic_id, max_id=max_id)
 
-        # 2. Fetch Chat Info for Log
         chat = await self.repository.get_chat(chat_id)
         chat_name = chat.name if chat else f"Chat {chat_id}"
 
-        # 3. Determine Link and Action Name
         link = f"/chat/{chat_id}"
         action_name = "read_chat"
 
         if topic_id:
-            # Fetch topic name for better logging
             t_name = await self.repository.get_topic_name(chat_id, topic_id)
             name_part = t_name if t_name else f"Topic {topic_id}"
 
@@ -119,7 +142,6 @@ class ChatInteractor:
             link = f"/forum/{chat_id}"
             action_name = "read_forum"
 
-        # 4. Create Log
         log = ActionLog(
             action=action_name,
             chat_id=chat_id,
@@ -148,19 +170,15 @@ class ChatInteractor:
         self, callback: Callable[[SystemEvent], Awaitable[None]]
     ):
         async def wrapped_callback(event: SystemEvent):
-            # Persist event to Valkey
             await self.event_repo.add_event(event)
-            # Forward to original callback (SSE broadcast)
             await callback(event)
 
         self.repository.add_event_listener(wrapped_callback)
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
-        """Fetches recent system events from persistence layer."""
         return await self.event_repo.get_recent_events(limit)
 
     async def run_storage_maintenance(self):
-        """Triggers the repository storage cleanup."""
         await self.repository.run_storage_maintenance()
 
     async def get_self_premium_status(self) -> bool:

@@ -46,10 +46,50 @@ Messages
     </label>
 </div>
 
+<!-- Autoreact Section -->
+<div class="ar-container">
+    <div class="ar-header" onclick="toggleArBody()">
+        <span>⚡ Autoreact</span>
+        <span id="ar-toggle-icon">▼</span>
+    </div>
+    <div class="ar-body" id="ar-body">
+        <label style="display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;">
+            <input type="checkbox" id="autoreact-checkbox">
+            <span style="margin-left: 8px;">Enable Autoreact</span>
+        </label>
+
+        <div style="margin-bottom: 5px; color: #888;">Reaction:</div>
+        <div class="emoji-selector" id="emoji-selector">
+            <div class="emoji-opt selected" data-emoji="💩">💩</div>
+            <div class="emoji-opt" data-emoji="🤡">🤡</div>
+            <div class="emoji-opt" data-emoji="❤️">❤️</div>
+            <input type="text" id="custom-emoji-input" placeholder="Custom"
+                style="width: 50px; background: #2a2a2c; border: 1px solid #444; color: #fff; border-radius: 4px; padding: 5px; text-align: center;">
+        </div>
+
+        <div style="margin-bottom: 5px; color: #888;">React to Users:</div>
+        <div class="user-selector-wrapper">
+            <div class="user-selector-display" id="user-display"
+                onclick="event.stopPropagation(); toggleUserDropdown()">
+                <span style="color: #666; font-style: italic;">Loading...</span>
+            </div>
+            <div class="user-dropdown" id="user-dropdown">
+                <div style="padding: 10px; color: #aaa; font-style: italic;">Loading users...</div>
+            </div>
+        </div>
+        <div style="font-size: 0.8rem; color: #666; margin-bottom: 10px;">
+            Empty = Default (Channel / Main)
+        </div>
+
+        <button id="save-ar-btn"
+            style="width: 100%; padding: 6px; background: #2e7d32; color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
+    </div>
+</div>
+
 {% if topic_id %}
 <div class="setting-option" id="apply-all-topics"
     style="margin-top: 12px; color: #ff9800; font-weight: 500; cursor: pointer; display: flex; align-items: center; padding: 5px 0;">
-    <span style="margin-right: 6px;">📋</span> Copy setting to all topics
+    <span style="margin-right: 6px;">📋</span> Copy Autoread to all
 </div>
 {% endif %}
 
@@ -58,20 +98,234 @@ Messages
     ✅ Mark as Read
 </div>
 
+<!-- Toast Container -->
+<div id="toast"></div>
+
 <script>
     const chatId = {{ chat_id }};
     const topicId = {{ topic_id or 'null' }};
     const isPremium = {{ 'true' if is_premium else 'false' }};
 
-    // --- Optimistic Reaction Logic ---
+    let arConfig = {
+        enabled: false,
+        emoji: '💩',
+        target_users: []
+    };
+    let availableUsers = [];
+
+    // --- Toast Logic ---
+    function showToast(message) {
+        const x = document.getElementById("toast");
+        x.textContent = message;
+        x.className = "show";
+        setTimeout(function () { x.className = x.className.replace("show", ""); }, 5000);
+    }
+
+    // --- Debug Process ---
+    async function debugProcessMessage(el, msgId) {
+        el.style.opacity = '0.5';
+        try {
+            const res = await fetch('/api/debug/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, msg_id: msgId })
+            });
+            const data = await res.json();
+
+            let text = "Debug Result:\n";
+            if (data.autoread) text += `Autoread: ${data.autoread.status} (${data.autoread.reason})\n`;
+            if (data.autoreact) text += `Autoreact: ${data.autoreact.status} (${data.autoreact.detail})`;
+
+            showToast(text);
+        } catch (e) {
+            console.error(e);
+            showToast("Debug Request Failed");
+        } finally {
+            el.style.opacity = '1';
+        }
+    }
+
+    // --- Autoreact Logic ---
+    function toggleArBody() {
+        document.getElementById('ar-body').classList.toggle('open');
+    }
+
+    async function loadArSettings() {
+        try {
+            let url = `/api/rules/autoreact/get?chat_id=${chatId}`;
+            if (topicId) url += `&topic_id=${topicId}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
+            arConfig.enabled = data.enabled;
+            if (data.config.emoji) arConfig.emoji = data.config.emoji;
+            if (data.config.target_users) arConfig.target_users = data.config.target_users;
+
+            renderArUi();
+        } catch (e) { console.error("Failed to load AR settings", e); }
+    }
+
+    let usersLoaded = false;
+    async function loadUsers() {
+        if (usersLoaded) return;
+        const dd = document.getElementById('user-dropdown');
+        try {
+            const res = await fetch(`/api/chat/${chatId}/authors`);
+            const data = await res.json();
+            availableUsers = data.authors;
+            usersLoaded = true;
+            renderUserDropdown();
+            renderUserDisplay();
+        } catch (e) {
+            dd.innerHTML = '<div style="padding:10px; color:red;">Failed to load users</div>';
+        }
+    }
+
+    function renderArUi() {
+        document.getElementById('autoreact-checkbox').checked = arConfig.enabled;
+
+        document.querySelectorAll('.emoji-opt').forEach(el => {
+            if (el.getAttribute('data-emoji') === arConfig.emoji) {
+                el.classList.add('selected');
+                document.getElementById('custom-emoji-input').value = '';
+            } else {
+                el.classList.remove('selected');
+            }
+        });
+
+        const predefined = ['💩', '🤡', '❤️'];
+        if (!predefined.includes(arConfig.emoji)) {
+            document.getElementById('custom-emoji-input').value = arConfig.emoji;
+        }
+
+        renderUserDisplay();
+    }
+
+    function renderUserDisplay() {
+        const display = document.getElementById('user-display');
+        display.innerHTML = '';
+
+        if (arConfig.target_users.length === 0) {
+            display.innerHTML = '<span style="color: #666; font-style: italic;">Default (Channel)</span>';
+            return;
+        }
+
+        arConfig.target_users.forEach(uid => {
+            const user = availableUsers.find(u => u.id === uid);
+            const name = user ? user.name : `ID: ${uid}`;
+            const chip = document.createElement('div');
+            chip.className = 'user-chip';
+            chip.innerHTML = `${name} <span style="margin-left:5px; cursor:pointer;" onclick="event.stopPropagation(); removeUser(${uid})">&times;</span>`;
+            display.appendChild(chip);
+        });
+    }
+
+    function renderUserDropdown() {
+        const dd = document.getElementById('user-dropdown');
+        dd.innerHTML = '';
+        availableUsers.forEach(u => {
+            const isSelected = arConfig.target_users.includes(u.id);
+            const item = document.createElement('div');
+            item.className = 'user-item ' + (isSelected ? 'active' : '');
+
+            const avatar = u.avatar_url ? `<img src="${u.avatar_url}">` : '<div style="width:24px;height:24px;background:#555;border-radius:50%;margin-right:10px;"></div>';
+
+            item.innerHTML = `${avatar} <div>${u.name} <div style="font-size:0.75rem;color:#888;">${u.username || ''}</div></div>`;
+            item.onclick = (e) => {
+                event.stopPropagation();
+                toggleUser(u.id);
+            }
+            dd.appendChild(item);
+        });
+    }
+
+    function toggleUserDropdown() {
+        const dd = document.getElementById('user-dropdown');
+        if (!dd.classList.contains('show')) {
+            loadUsers();
+        }
+        dd.classList.toggle('show');
+    }
+
+    // Dismiss dropdown on outside click
+    document.addEventListener('click', function (e) {
+        const dd = document.getElementById('user-dropdown');
+        const display = document.getElementById('user-display');
+        if (dd && dd.classList.contains('show')) {
+            if (!dd.contains(e.target) && !display.contains(e.target)) {
+                dd.classList.remove('show');
+            }
+        }
+    });
+
+    function toggleUser(uid) {
+        if (arConfig.target_users.includes(uid)) {
+            arConfig.target_users = arConfig.target_users.filter(id => id !== uid);
+        } else {
+            arConfig.target_users.push(uid);
+        }
+        renderUserDisplay();
+        renderUserDropdown();
+    }
+
+    window.removeUser = function (uid) {
+        arConfig.target_users = arConfig.target_users.filter(id => id !== uid);
+        renderUserDisplay();
+        renderUserDropdown();
+    };
+
+    document.querySelectorAll('.emoji-opt').forEach(el => {
+        el.addEventListener('click', () => {
+            arConfig.emoji = el.getAttribute('data-emoji');
+            renderArUi();
+        });
+    });
+
+    document.getElementById('custom-emoji-input').addEventListener('input', (e) => {
+        if (e.target.value) {
+            arConfig.emoji = e.target.value;
+            document.querySelectorAll('.emoji-opt').forEach(opt => opt.classList.remove('selected'));
+        }
+    });
+
+    document.getElementById('autoreact-checkbox').addEventListener('change', (e) => {
+        arConfig.enabled = e.target.checked;
+    });
+
+    document.getElementById('save-ar-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('save-ar-btn');
+        btn.textContent = 'Saving...';
+        try {
+            await fetch('/api/rules/autoreact/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    topic_id: topicId,
+                    enabled: arConfig.enabled,
+                    config: {
+                        emoji: arConfig.emoji,
+                        target_users: arConfig.target_users
+                    }
+                })
+            });
+            btn.textContent = 'Saved!';
+            setTimeout(() => btn.textContent = 'Save', 1000);
+            toggleArBody();
+        } catch (e) {
+            btn.textContent = 'Error';
+        }
+    });
+
+    loadArSettings();
+
+    // --- Existing Chat Logic ---
     async function toggleReaction(el, msgId, emoji) {
-        // Optimistic UI Update
         const container = el.parentNode;
         const isChosen = el.classList.contains('chosen');
         const countSpan = el.querySelector('.reaction-count');
         let count = parseInt(countSpan ? countSpan.textContent : '0');
 
-        // Logic based on Premium Status
         if (!isPremium) {
             const siblings = container.querySelectorAll('.reaction-pill.chosen');
             siblings.forEach(sib => {
@@ -84,15 +338,12 @@ Messages
             });
         }
 
-        // Toggle the clicked element
         if (isChosen) {
             el.classList.remove('chosen');
             if (count > 0) countSpan.textContent = count - 1;
         } else {
             el.classList.add('chosen');
             countSpan.textContent = count + 1;
-
-            // Animation
             el.style.transform = 'scale(1.2)';
             setTimeout(() => el.style.transform = '', 150);
         }
@@ -106,14 +357,6 @@ Messages
             });
         } catch (e) {
             console.error('Failed to toggle reaction', e);
-            // Revert changes on error? Optional
-            if (isChosen) {
-                el.classList.add('chosen');
-                countSpan.textContent = count;
-            } else {
-                el.classList.remove('chosen');
-                countSpan.textContent = count;
-            }
         }
     }
 
