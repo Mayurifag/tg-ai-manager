@@ -45,18 +45,18 @@ img.emoji {
 .right-sidebar {
     right: 0;
     border-left: 1px solid #333;
-    width: 300px; /* Slightly wider for logs */
+    width: 300px;
 }
 
 /* --- MAIN CONTENT --- */
 .main-content {
     flex: 1;
-    margin-left: 280px; /* Left Sidebar width */
-    margin-right: 300px; /* Right Sidebar width */
+    margin-left: 280px;
+    margin-right: 300px;
     padding: 20px;
-    max-width: 1200px; /* Increased max width */
+    max-width: 1200px;
     background-color: #0e0e10;
-    min-width: 0; /* Prevents flex overflow */
+    min-width: 0;
 }
 
 /* Common Sidebar Styles */
@@ -93,11 +93,12 @@ img.emoji {
     border-top: 1px solid #333;
 }
 
+/* Right Sidebar Feed */
 .sidebar-feed {
-    /* Takes up full height of right sidebar */
     height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: hidden; /* Prevent parent scroll */
 }
 
 #event-feed-list {
@@ -106,7 +107,8 @@ img.emoji {
     gap: 8px;
     overflow-y: auto;
     flex: 1;
-    padding-right: 5px; /* Scrollbar space */
+    padding-right: 5px;
+    min-height: 0; /* Important for nested flex scrolling */
 }
 
 .empty-feed {
@@ -124,7 +126,6 @@ img.emoji {
     font-size: 0.85rem;
     border-left: 3px solid #555;
     animation: fadeIn 0.3s ease-in-out;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -141,36 +142,74 @@ img.emoji {
 
 .event-header {
     display: flex;
-    justify-content: space-between;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
     margin-bottom: 6px;
     font-size: 0.75rem;
     color: #aaa;
     flex-shrink: 0;
 }
 
-.event-type {
-    font-weight: bold;
-    font-size: 0.7rem;
+.event-type-icon {
+    font-size: 1rem;
+    margin-right: auto;
 }
 
-.event-chat {
+.event-chat-link {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 180px;
+    max-width: 200px;
     text-align: right;
+    color: #6ab7ff;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.event-chat-link:hover {
+    text-decoration: underline;
+}
+
+.event-text-wrapper {
+    cursor: default;
 }
 
 .event-text {
     color: #ddd;
     line-height: 1.4;
     display: -webkit-box;
-    -webkit-line-clamp: 4; /* Show a bit more lines in right sidebar */
+    -webkit-line-clamp: 4;
     line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: normal;
     word-break: break-word;
+}
+
+.event-text strong, .event-text b {
+    font-weight: bold;
+    color: #fff;
+}
+
+/* Global Tooltip */
+#global-tooltip {
+    position: fixed;
+    display: none;
+    background: #111;
+    border: 1px solid #444;
+    padding: 12px;
+    border-radius: 6px;
+    z-index: 9999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+    pointer-events: none; /* Let clicks pass through */
+    max-width: 300px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85rem;
+    color: #eee;
+    opacity: 0;
+    transition: opacity 0.1s ease-in;
 }
 
 .settings-header {
@@ -198,7 +237,49 @@ img.emoji {
     margin-bottom: 1rem;
 }
 
-/* --- Lightbox Styles --- */
+/* Raw Feed Section */
+.raw-feed-container {
+    margin-top: auto;
+    border-top: 1px solid #333;
+    padding-top: 10px;
+    flex-shrink: 0;
+}
+
+.raw-feed-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    color: #888;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    font-weight: bold;
+    padding: 5px 0;
+}
+
+.raw-feed-header:hover { color: #fff; }
+
+.raw-feed-list {
+    display: none;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 5px;
+}
+
+.raw-item {
+    background: #1e1e20;
+    border: 1px dashed #444;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #ffb74d;
+    word-break: break-all;
+    border-radius: 4px;
+}
+
+/* Lightbox */
 #lightbox {
     position: fixed;
     top: 0;

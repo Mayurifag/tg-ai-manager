@@ -72,15 +72,29 @@
                 <div id="event-feed-list">
                     {% if recent_events %}
                     {% for event in recent_events %}
-                    {% if event.type not in ['read', 'edited'] %}
+                    {% if event.type not in ['read', 'edited', 'raw'] %}
                     <div class="event-item type-{{ event.type }}">
                         <div class="event-header">
-                            <span class="event-type">{{ event.type | upper }}</span>
-                            <span class="event-chat" {% if event.topic_name
-                                %}title="{{ event.topic_name }} - {{ event.chat_name }}" {% endif %}>{{ event.chat_name
-                                }}</span>
+                            {% if event.type == 'deleted' %}
+                            <span class="event-type-icon" title="Deleted">🗑️</span>
+                            {% elif event.type == 'action' %}
+                            <span class="event-type-icon" title="Action">⚡</span>
+                            {% elif event.type == 'reaction_update' %}
+                            <span class="event-type-icon" title="Reaction">👍</span>
+                            {% endif %}
+
+                            <a href="{{ event.link or '#' }}" class="event-chat-link" {% if event.topic_name
+                                %}title="{{ event.topic_name }}" {% endif %}>
+                                {{ event.topic_name ~ ' - ' if event.topic_name else '' }}{{ event.chat_name }}
+                            </a>
                         </div>
-                        <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
+
+                        <!-- Event Text Wrapper with Dataset for Tooltip -->
+                        <div class="event-text-wrapper" data-full-html="{{ event.text | escape }}">
+                            <div class="event-text">
+                                {{ event.text | safe }}
+                            </div>
+                        </div>
                     </div>
                     {% endif %}
                     {% endfor %}
@@ -88,22 +102,105 @@
                     <div class="empty-feed">No recent events</div>
                     {% endif %}
                 </div>
+
+                <!-- Raw JSON Sidebar Section -->
+                <div class="raw-feed-container">
+                    <div class="raw-feed-header" onclick="toggleRawFeed()">
+                        <span>Raw Debug</span>
+                        <span id="raw-toggle-icon">▼</span>
+                    </div>
+                    <div id="raw-feed-list" class="raw-feed-list"></div>
+                </div>
             </div>
         </aside>
     </div>
 
+    <!-- Global Tooltip -->
+    <div id="global-tooltip"></div>
+
     <!-- Lightbox Modal -->
     <div id="lightbox" onclick="closeLightbox()">
         <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
-
         <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
         <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
-
         <div id="lightbox-loading">Loading full size...</div>
         <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
     </div>
 
     <script>
+        // Toggle Logic for Raw Feed
+        function toggleRawFeed() {
+            const list = document.getElementById('raw-feed-list');
+            const icon = document.getElementById('raw-toggle-icon');
+            if (list.style.display === 'none' || list.style.display === '') {
+                list.style.display = 'flex';
+                icon.textContent = '▲';
+            } else {
+                list.style.display = 'none';
+                icon.textContent = '▼';
+            }
+        }
+
+        // --- Global Tooltip Logic ---
+        const tooltip = document.getElementById('global-tooltip');
+        let activeTooltipTarget = null;
+
+        document.body.addEventListener('mouseover', (e) => {
+            const wrapper = e.target.closest('.event-text-wrapper');
+            if (wrapper) {
+                activeTooltipTarget = wrapper;
+                // Use a textarea to decode HTML entities if passed via data attribute safely
+                // But simple approach: store escaped in data attribute, unescape here
+                // Or just grab innerHTML of the text div if it matches.
+                // Better: Use the dataset which we escaped on server.
+                const rawHtml = wrapper.getAttribute('data-full-html');
+
+                // Decode HTML entities
+                const txt = document.createElement("textarea");
+                txt.innerHTML = rawHtml;
+                tooltip.innerHTML = txt.value; // Now it's safe HTML string
+
+                tooltip.style.display = 'block';
+                tooltip.style.opacity = '1';
+            }
+        });
+
+        document.body.addEventListener('mouseout', (e) => {
+            if (activeTooltipTarget && (e.target.closest('.event-text-wrapper') === activeTooltipTarget)) {
+                // If moving into tooltip itself, keep open? No, tooltip is pointer-events: none usually
+                // or fixed elsewhere.
+                // Simple logic: if leaving the wrapper, hide.
+                if (!e.relatedTarget || !e.relatedTarget.closest('.event-text-wrapper')) {
+                    tooltip.style.display = 'none';
+                    tooltip.style.opacity = '0';
+                    activeTooltipTarget = null;
+                }
+            }
+        });
+
+        document.body.addEventListener('mousemove', (e) => {
+            if (tooltip.style.display === 'block') {
+                const width = tooltip.offsetWidth;
+                const height = tooltip.offsetHeight;
+
+                // Position: Left of cursor, Bottom of cursor
+                // e.clientX is X coord.
+                // Left position: e.clientX - width - 15px
+                // Bottom position: e.clientY + 15px
+
+                let left = e.clientX - width - 15;
+                let top = e.clientY + 15;
+
+                // Viewport checks
+                if (left < 10) left = e.clientX + 15; // Flip to right if too close to left edge
+                if (top + height > window.innerHeight) top = e.clientY - height - 10; // Flip up if too close to bottom
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+        });
+
+        // --- Lightbox Logic (Standard) ---
         let currentLightboxIndex = -1;
         let lightboxItems = [];
 
@@ -164,10 +261,10 @@
         });
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Initial parse
             window.parseAppleEmojis(document.body);
 
             const feedContainer = document.getElementById('event-feed-list');
+            const rawContainer = document.getElementById('raw-feed-list');
             const evtSource = new EventSource("/api/events/stream");
 
             evtSource.onmessage = function (e) {
@@ -177,26 +274,53 @@
 
                 if (data.type === 'read' || data.type === 'edited') return;
 
+                if (data.type === 'raw') {
+                    const item = document.createElement('div');
+                    item.className = 'raw-item';
+                    item.textContent = data.text;
+                    rawContainer.insertBefore(item, rawContainer.firstChild);
+                    const rawItems = rawContainer.querySelectorAll('.raw-item');
+                    if (rawItems.length > 5) rawItems[rawItems.length - 1].remove();
+                    return;
+                }
+
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
 
                 const item = document.createElement('div');
                 item.className = `event-item type-${data.type}`;
-                const header = document.createElement('div');
-                header.className = 'event-header';
-                header.innerHTML = `<span class="event-type">${data.type.toUpperCase()}</span><span class="event-chat">${data.chat_name}</span>`;
-                const textDiv = document.createElement('div');
-                textDiv.className = 'event-text';
-                textDiv.textContent = data.text;
-                item.appendChild(header);
-                item.appendChild(textDiv);
 
-                // Parse new items
+                let iconHtml = '';
+                if (data.type === 'deleted') iconHtml = '<span class="event-type-icon">🗑️</span>';
+                else if (data.type === 'action') iconHtml = '<span class="event-type-icon">⚡</span>';
+                else if (data.type === 'reaction_update') iconHtml = '<span class="event-type-icon">👍</span>';
+
+                let chatLabel = data.chat_name;
+                if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
+                const linkHref = data.link || '#';
+
+                // Escape text for the data attribute to prevent HTML breakage in the attribute itself
+                const escapedText = data.text.replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+
+                item.innerHTML = `
+                    <div class="event-header">
+                        ${iconHtml}
+                        <a href="${linkHref}" class="event-chat-link" title="${chatLabel}">${chatLabel}</a>
+                    </div>
+                    <div class="event-text-wrapper" data-full-html="${escapedText}">
+                        <div class="event-text">${data.text}</div>
+                    </div>
+                `;
+
                 window.parseAppleEmojis(item);
-
                 feedContainer.insertBefore(item, feedContainer.firstChild);
+
                 const items = feedContainer.querySelectorAll('.event-item');
-                if (items.length > 20) items[items.length - 1].remove();
+                if (items.length > 10) items[items.length - 1].remove();
             };
         });
     </script>

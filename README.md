@@ -52,18 +52,23 @@ services:
 
 ## TODO
 
-- All settings viewer - which rules I have with chat names
-- Can i do something if I done anything like reading on another client? Only autofetch every n seconds? Or do I have events for that case
-- Support large quotes on frontend.
+- Autoread messages / autoreact / Mark as read have to be in their own section and have similar styling
+- Debug settings. Message debug on hover button becomes debug option.
+  - Debug mode enable/disable in settings
+  - Debug option - for live events on hover show original json of event
+- Global settings have to be moved onto rules, it has to be the same page
+- Live events to include user/avatar
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - Switch between users easily - show their avatar and names on left top
 - AI integration to skip ads
 - AI integration to help with advice
 - AI integration to notify on liked and/or useful posts. Make a feed?
 - AI integration to help find answer in chats
+- Support large quotes on frontend.
 - png -> webp
+- I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted
 
-## Bugs to fix
+## Known bugs
 
 - Animated custom emojis arent working
 - Reacts - not correctly done for posts in groupchat that are reposts from group.
