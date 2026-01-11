@@ -52,7 +52,6 @@ services:
 
 ## TODO
 
-- Autoread messages / autoreact / Mark as read have to be in their own section and have similar styling
 - Debug settings. Message debug on hover button becomes debug option.
   - Debug mode enable/disable in settings
   - Debug option - for live events on hover show original json of event
