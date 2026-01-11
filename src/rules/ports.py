@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
+
 from src.rules.models import Rule
 
 
@@ -12,6 +13,11 @@ class RuleRepository(ABC):
 
     @abstractmethod
     async def get_all_for_chat(self, chat_id: int) -> List[Rule]:
+        pass
+
+    @abstractmethod
+    async def get_all(self) -> List[Rule]:
+        """Retrieve all rules from the database."""
         pass
 
     @abstractmethod

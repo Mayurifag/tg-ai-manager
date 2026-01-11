@@ -66,6 +66,19 @@ async def get_custom_emoji(doc_id: int):
     return "", 404
 
 
+# --- Static Asset Routes ---
+
+
 @media_bp.route("/static/css/<path:filename>")
 async def serve_css(filename):
     return await send_from_directory(CSS_DIR, filename)
+
+
+@media_bp.route("/static/libs/<path:filename>")
+async def serve_libs(filename):
+    return await send_from_directory(os.path.join(STATIC_DIR, "libs"), filename)
+
+
+@media_bp.route("/static/emoji/<path:filename>")
+async def serve_static_emoji(filename):
+    return await send_from_directory(os.path.join(STATIC_DIR, "emoji"), filename)
