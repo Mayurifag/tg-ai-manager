@@ -1,10 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, Message, SystemEvent
 
 
 class ChatRepository(ABC):
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """Checks if the client is currently connected and authorized."""
+        pass
+
     @abstractmethod
     async def connect(self):
         pass
@@ -33,7 +38,15 @@ class ChatRepository(ABC):
         limit: int = 20,
         topic_id: Optional[int] = None,
         offset_id: int = 0,
+        ids: Optional[List[int]] = None,
     ) -> List[Message]:
+        pass
+
+    @abstractmethod
+    async def get_recent_authors(
+        self, chat_id: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Fetches distinct authors from recent messages."""
         pass
 
     @abstractmethod
@@ -68,8 +81,13 @@ class ChatRepository(ABC):
         pass
 
     @abstractmethod
-    async def mark_as_read(self, chat_id: int, topic_id: Optional[int] = None) -> None:
-        """Marks the chat or specific topic as read."""
+    async def mark_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int] = None,
+        max_id: Optional[int] = None,
+    ) -> None:
+        """Marks the chat or specific topic as read. max_id is the ID up to which to read."""
         pass
 
     @abstractmethod

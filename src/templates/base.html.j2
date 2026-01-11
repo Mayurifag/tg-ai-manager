@@ -8,12 +8,28 @@
     <title>{% block title %}Telegram Manager{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
+    <!-- Local Twemoji Library -->
+    <script src="/static/libs/twemoji/twemoji.min.js"></script>
+    <script>
+        // Global helper to parse Apple Emojis using local assets
+        window.parseAppleEmojis = function (container) {
+            twemoji.parse(container, {
+                folder: 'svg',
+                ext: '.svg',
+                callback: function (icon, options, variant) {
+                    const cleanIcon = icon.replace(/-fe0f/g, '');
+                    return '/static/emoji/apple/' + cleanIcon + '.png';
+                }
+            });
+        };
+    </script>
     {% block head_extra %}{% endblock %}
 </head>
 
 <body>
     <div class="app-container">
-        <aside class="sidebar">
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar left-sidebar">
             <div class="sidebar-top">
                 {% block sidebar_back %}
                 {% endblock %}
@@ -24,20 +40,67 @@
                 {% endblock %}
             </div>
 
+            <!-- Navigation Links -->
+            <div class="sidebar-nav">
+                <a href="/settings" class="setting-option">
+                    ⚙️ Settings
+                </a>
+                <a href="/actions" class="setting-option">
+                    📜 Actions Log
+                </a>
+                {% block settings %}
+                {% endblock %}
+            </div>
+
+            <!-- User Profile Section (Pinned Bottom) -->
+            {% if current_user and current_user.username %}
+            <div class="user-profile-section">
+                <div class="sidebar-avatar">
+                    {{ current_user.username[1] | upper if current_user.username|length > 1 else '?' }}
+                </div>
+                <div class="sidebar-user-info">
+                    <div class="sidebar-username">{{ current_user.username }}</div>
+                    <div class="sidebar-status">{{ 'Premium' if current_user.is_premium else 'Standard' }}</div>
+                </div>
+            </div>
+            {% endif %}
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- RIGHT SIDEBAR (Live Events) -->
+        <aside class="sidebar right-sidebar">
             <div class="sidebar-feed">
                 <div class="settings-header">Live Events</div>
                 <div id="event-feed-list">
                     {% if recent_events %}
                     {% for event in recent_events %}
-                    {% if event.type not in ['read', 'edited'] %}
+                    {% if event.type not in ['read', 'edited', 'raw'] %}
                     <div class="event-item type-{{ event.type }}">
                         <div class="event-header">
-                            <span class="event-type">{{ event.type | upper }}</span>
-                            <span class="event-chat" {% if event.topic_name
-                                %}title="{{ event.topic_name }} - {{ event.chat_name }}" {% endif %}>{{ event.chat_name
-                                }}</span>
+                            {% if event.type == 'deleted' %}
+                            <span class="event-type-icon" title="Deleted">🗑️</span>
+                            {% elif event.type == 'action' %}
+                            <span class="event-type-icon" title="Action">⚡</span>
+                            {% elif event.type == 'reaction_update' %}
+                            <span class="event-type-icon" title="Reaction">👍</span>
+                            {% endif %}
+
+                            <a href="{{ event.link or '#' }}" class="event-chat-link" {% if event.topic_name
+                                %}title="{{ event.topic_name }}" {% endif %}>
+                                {{ event.topic_name ~ ' - ' if event.topic_name else '' }}{{ event.chat_name }}
+                            </a>
                         </div>
-                        <div class="event-text" title="{{ event.text }}">{{ event.text }}</div>
+
+                        <!-- Event Text Wrapper with Dataset for Tooltip -->
+                        <div class="event-text-wrapper" data-full-html="{{ event.text | escape }}">
+                            <div class="event-text">
+                                {{ event.text | safe }}
+                            </div>
+                        </div>
                     </div>
                     {% endif %}
                     {% endfor %}
@@ -46,51 +109,80 @@
                     {% endif %}
                 </div>
             </div>
-
-            <div class="sidebar-settings">
-                <div class="settings-header">Settings</div>
-
-                <a href="/settings" class="setting-option" style="text-decoration: none;">
-                    ⚙️ Global Settings
-                </a>
-
-                <a href="/actions" class="setting-option" style="text-decoration: none;">
-                    📜 Actions Log
-                </a>
-
-                {% block settings %}
-                {% endblock %}
-            </div>
         </aside>
-
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
     </div>
+
+    <!-- Global Tooltip -->
+    <div id="global-tooltip"></div>
 
     <!-- Lightbox Modal -->
     <div id="lightbox" onclick="closeLightbox()">
         <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
-
         <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
         <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
-
         <div id="lightbox-loading">Loading full size...</div>
         <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
     </div>
 
     <script>
+        // --- Global Tooltip Logic ---
+        const tooltip = document.getElementById('global-tooltip');
+        let activeTooltipTarget = null;
+
+        document.body.addEventListener('mouseover', (e) => {
+            const wrapper = e.target.closest('.event-text-wrapper');
+            if (wrapper) {
+                activeTooltipTarget = wrapper;
+                // Use the dataset which we escaped on server.
+                const rawHtml = wrapper.getAttribute('data-full-html');
+
+                // Decode HTML entities
+                const txt = document.createElement("textarea");
+                txt.innerHTML = rawHtml;
+                tooltip.innerHTML = txt.value; // Now it's safe HTML string
+
+                tooltip.style.display = 'block';
+                tooltip.style.opacity = '1';
+            }
+        });
+
+        document.body.addEventListener('mouseout', (e) => {
+            if (activeTooltipTarget && (e.target.closest('.event-text-wrapper') === activeTooltipTarget)) {
+                if (!e.relatedTarget || !e.relatedTarget.closest('.event-text-wrapper')) {
+                    tooltip.style.display = 'none';
+                    tooltip.style.opacity = '0';
+                    activeTooltipTarget = null;
+                }
+            }
+        });
+
+        document.body.addEventListener('mousemove', (e) => {
+            if (tooltip.style.display === 'block') {
+                const width = tooltip.offsetWidth;
+                const height = tooltip.offsetHeight;
+
+                // Position: Left of cursor, Bottom of cursor
+                // e.clientX is X coord.
+                // Left position: e.clientX - width - 15px
+                // Bottom position: e.clientY + 15px
+
+                let left = e.clientX - width - 15;
+                let top = e.clientY + 15;
+
+                // Viewport checks
+                if (left < 10) left = e.clientX + 15; // Flip to right if too close to left edge
+                if (top + height > window.innerHeight) top = e.clientY - height - 10; // Flip up if too close to bottom
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+        });
+
+        // --- Lightbox Logic (Standard) ---
         let currentLightboxIndex = -1;
         let lightboxItems = [];
 
         function refreshLightboxItems() {
-            // Find all elements classed as 'lightbox-trigger'
-            // We use Array.from to get a static list at the moment of call
-            // We reverse logic if message container is column-reverse?
-            // Actually, querySelectorAll returns in document order.
-            // If the chat is column-reverse, the first element in DOM is the bottom one.
-            // We usually want navigation to follow visual flow (Top to Bottom).
-            // So standard DOM order (Top to Bottom) is correct for visual flow.
             const triggers = document.querySelectorAll('.lightbox-trigger');
             lightboxItems = Array.from(triggers).map(el => ({
                 el: el,
@@ -99,45 +191,30 @@
             }));
         }
 
-        // Global Lightbox Functions
         function openLightbox(element) {
             refreshLightboxItems();
-
-            // Find index of clicked element
             currentLightboxIndex = lightboxItems.findIndex(item => item.el === element);
-
             if (currentLightboxIndex === -1) return;
-
             updateLightboxView();
-
-            const lightbox = document.getElementById('lightbox');
-            lightbox.classList.add('active');
+            document.getElementById('lightbox').classList.add('active');
         }
 
         function updateLightboxView() {
             const item = lightboxItems[currentLightboxIndex];
             const img = document.getElementById('lightbox-img');
             const loader = document.getElementById('lightbox-loading');
-
             if (!item) return;
-
-            // Reset UI
             img.style.display = 'none';
             loader.style.display = 'block';
-
-            // Set source
             img.onload = () => {
                 loader.style.display = 'none';
                 img.style.display = 'block';
             };
             img.onerror = () => {
-                console.log("Full load failed, falling back to preview");
                 img.src = item.src;
                 loader.style.display = 'none';
                 img.style.display = 'block';
             };
-
-            // Use full resolution source
             img.src = item.fullSrc;
         }
 
@@ -150,22 +227,20 @@
         }
 
         function closeLightbox() {
-            const lightbox = document.getElementById('lightbox');
-            lightbox.classList.remove('active');
-            const img = document.getElementById('lightbox-img');
-            setTimeout(() => img.src = "", 300);
+            document.getElementById('lightbox').classList.remove('active');
+            setTimeout(() => document.getElementById('lightbox-img').src = "", 300);
         }
 
-        // Keyboard Navigation
         document.addEventListener('keydown', (e) => {
             if (!document.getElementById('lightbox').classList.contains('active')) return;
-
             if (e.key === 'Escape') closeLightbox();
             if (e.key === 'ArrowLeft') navigateLightbox(-1);
             if (e.key === 'ArrowRight') navigateLightbox(1);
         });
 
         document.addEventListener('DOMContentLoaded', () => {
+            window.parseAppleEmojis(document.body);
+
             const feedContainer = document.getElementById('event-feed-list');
             const evtSource = new EventSource("/api/events/stream");
 
@@ -175,6 +250,7 @@
                 document.dispatchEvent(customEvent);
 
                 if (data.type === 'read' || data.type === 'edited') return;
+                // 'raw' type logic removed here
 
                 const emptyMsg = feedContainer.querySelector('.empty-feed');
                 if (emptyMsg) emptyMsg.remove();
@@ -182,25 +258,34 @@
                 const item = document.createElement('div');
                 item.className = `event-item type-${data.type}`;
 
-                const header = document.createElement('div');
-                header.className = 'event-header';
-                const typeSpan = document.createElement('span');
-                typeSpan.className = 'event-type';
-                typeSpan.textContent = data.type.toUpperCase();
-                const chatSpan = document.createElement('span');
-                chatSpan.className = 'event-chat';
-                chatSpan.textContent = data.chat_name;
-                if (data.topic_name) chatSpan.title = `${data.topic_name} - ${data.chat_name}`;
-                header.appendChild(typeSpan);
-                header.appendChild(chatSpan);
+                let iconHtml = '';
+                if (data.type === 'deleted') iconHtml = '<span class="event-type-icon">🗑️</span>';
+                else if (data.type === 'action') iconHtml = '<span class="event-type-icon">⚡</span>';
+                else if (data.type === 'reaction_update') iconHtml = '<span class="event-type-icon">👍</span>';
 
-                const textDiv = document.createElement('div');
-                textDiv.className = 'event-text';
-                textDiv.textContent = data.text;
-                item.appendChild(header);
-                item.appendChild(textDiv);
+                let chatLabel = data.chat_name;
+                if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
+                const linkHref = data.link || '#';
 
+                const escapedText = data.text.replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+
+                item.innerHTML = `
+                    <div class="event-header">
+                        ${iconHtml}
+                        <a href="${linkHref}" class="event-chat-link" title="${chatLabel}">${chatLabel}</a>
+                    </div>
+                    <div class="event-text-wrapper" data-full-html="${escapedText}">
+                        <div class="event-text">${data.text}</div>
+                    </div>
+                `;
+
+                window.parseAppleEmojis(item);
                 feedContainer.insertBefore(item, feedContainer.firstChild);
+
                 const items = feedContainer.querySelectorAll('.event-item');
                 if (items.length > 10) items[items.length - 1].remove();
             };

@@ -35,6 +35,7 @@ BE PROTECTED via some app like tinyauth.
 
 ~~~yaml
 services:
+  # it actually that minimal config, single monolith image container
   tg-manager:
     image: ghcr.io/mayurifag/tg-ai-manager:latest
     ports:
@@ -47,22 +48,37 @@ services:
       - CACHE_MAX_SIZE_MB=500
     volumes:
       - ./tg_data:/app_data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/login"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
 ~~~
 
 ## TODO
 
-- Reacts and msgs - use apple emojis.
-- Animated custom emojis arent working
-- Posts of group inside this chat are not correctly reacted by app. Optimistic updates might be not needed??
-- Quotes are not seen on frontend.
-- Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine
-- Can i do something if I done anything like reading on another client? Only autofetch every n seconds?
+- Debug settings. Message debug on hover button becomes debug option.
+  - Debug mode enable/disable in settings
+  - Debug option - for live events on hover show original json of event
+  - Debug option - "Reset everything" has to be debug option
+  - Debug option - Live events have to be hidden
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
+- Restyle user indication in sidebar. Switch between users easily
+- Live events to include user/avatar?
+- AI integration to skip ads
+- AI integration to help with advice
+- AI integration to notify on liked and/or useful posts. Make a feed?
+- AI integration to help find answer in chats
+- Refactor to have Telethon queue - mark as read / react and so on have to be done on queue with telethon internal throttling
+- Support large quotes on frontend.
+- png -> webp
+- I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted
+- Settings cards - have better UI what do they do
+
+## Known bugs
+
+- Animated custom emojis arent working
+- Reacts - not correctly done for posts in groupchat that are reposts from group.
+- Reacts - some messages are not correctly shown that im the author of reaction
+- Autoreact - disabling - until reload wrong "dot" on card
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
-- performance issues after some time. seems i am throttled by telegram but not sure - maybe fixed
+
+### Bugs that perhaps fixed already
+
+- performance issues after some time. seems i am throttled by telegram but not sure
+- Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
@@ -28,8 +28,21 @@ class ChatInteractor:
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
         return await self.repository.get_chat(chat_id)
 
+    async def get_recent_authors(self, chat_id: int) -> List[Dict[str, Any]]:
+        return await self.repository.get_recent_authors(chat_id)
+
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return await self.repository.get_forum_topics(chat_id)
+
+    async def get_message_by_id(self, chat_id: int, msg_id: int) -> Optional[Message]:
+        messages = await self.repository.get_messages(chat_id, ids=[msg_id])
+        if messages:
+            return messages[0]
+        return None
+
+    async def get_single_message(self, chat_id: int, msg_id: int) -> Optional[Message]:
+        # Alias for get_message_by_id
+        return await self.get_message_by_id(chat_id, msg_id)
 
     async def get_chat_messages(
         self, chat_id: int, topic_id: Optional[int] = None, offset_id: int = 0
@@ -40,11 +53,6 @@ class ChatInteractor:
         return self._group_messages_into_albums(raw_messages)
 
     def _group_messages_into_albums(self, messages: List[Message]) -> List[Message]:
-        """
-        Groups consecutive messages with the same grouped_id.
-        Assuming 'messages' list is ordered Newest -> Oldest (standard fetch).
-        We collapse the older parts into the newest message of the group.
-        """
         if not messages:
             return []
 
@@ -54,7 +62,6 @@ class ChatInteractor:
             current_msg = messages[i]
 
             if current_msg.grouped_id:
-                # Start of a group (technically the last/newest part of it)
                 album_parts = [current_msg]
                 j = i + 1
                 while j < len(messages):
@@ -65,11 +72,6 @@ class ChatInteractor:
                     else:
                         break
 
-                # We consumed messages from i to j-1
-                # The 'current_msg' will be the container.
-                # It should hold the others.
-                # However, usually only one has text (caption). We should surface it.
-
                 final_caption = current_msg.text
                 if not final_caption:
                     for part in album_parts:
@@ -78,7 +80,6 @@ class ChatInteractor:
                             break
 
                 current_msg.text = final_caption
-                # Store parts reversed (Oldest first) for display order 1..N
                 current_msg.album_parts = sorted(album_parts, key=lambda m: m.id)
 
                 grouped_messages.append(current_msg)
@@ -90,21 +91,20 @@ class ChatInteractor:
         return grouped_messages
 
     async def mark_chat_as_read(
-        self, chat_id: int, topic_id: Optional[int] = None
+        self,
+        chat_id: int,
+        topic_id: Optional[int] = None,
+        max_id: Optional[int] = None,
     ) -> None:
-        # 1. Perform Telegram Action
-        await self.repository.mark_as_read(chat_id, topic_id)
+        await self.repository.mark_as_read(chat_id, topic_id, max_id=max_id)
 
-        # 2. Fetch Chat Info for Log
         chat = await self.repository.get_chat(chat_id)
         chat_name = chat.name if chat else f"Chat {chat_id}"
 
-        # 3. Determine Link and Action Name
         link = f"/chat/{chat_id}"
         action_name = "read_chat"
 
         if topic_id:
-            # Fetch topic name for better logging
             t_name = await self.repository.get_topic_name(chat_id, topic_id)
             name_part = t_name if t_name else f"Topic {topic_id}"
 
@@ -116,7 +116,6 @@ class ChatInteractor:
             link = f"/forum/{chat_id}"
             action_name = "read_forum"
 
-        # 4. Create Log
         log = ActionLog(
             action=action_name,
             chat_id=chat_id,
@@ -145,19 +144,15 @@ class ChatInteractor:
         self, callback: Callable[[SystemEvent], Awaitable[None]]
     ):
         async def wrapped_callback(event: SystemEvent):
-            # Persist event to Valkey
             await self.event_repo.add_event(event)
-            # Forward to original callback (SSE broadcast)
             await callback(event)
 
         self.repository.add_event_listener(wrapped_callback)
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
-        """Fetches recent system events from persistence layer."""
         return await self.event_repo.get_recent_events(limit)
 
     async def run_storage_maintenance(self):
-        """Triggers the repository storage cleanup."""
         await self.repository.run_storage_maintenance()
 
     async def get_self_premium_status(self) -> bool:

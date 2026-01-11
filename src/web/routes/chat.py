@@ -1,6 +1,7 @@
 from quart import Blueprint, abort, jsonify, render_template, request
 
 from src.container import get_chat_interactor, get_rule_service, get_user_repo
+from src.rules.models import RuleType
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -32,10 +33,19 @@ async def chat_view(chat_id: int):
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
 
-    # Load initial messages for regular chats (same as topics)
     messages = await interactor.get_chat_messages(chat_id, topic_id=None)
 
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
+
+    # Determine Autoreact Status
+    react_rule = await rule_service.get_rule(chat_id, None, RuleType.AUTOREACT)
+    autoreact_status = "off"
+    if react_rule:
+        if not react_rule.config.get("target_users"):
+            autoreact_status = "all"
+        else:
+            autoreact_status = "some"
+
     return await render_template(
         "chat/chat.html.j2",
         messages=messages,
@@ -43,6 +53,7 @@ async def chat_view(chat_id: int):
         chat_id=chat_id,
         topic_id=None,
         autoread_enabled=autoread_enabled,
+        autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
 
@@ -60,6 +71,15 @@ async def topic_view(chat_id: int, topic_id: int):
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
 
+    # Determine Autoreact Status
+    react_rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
+    autoreact_status = "off"
+    if react_rule:
+        if not react_rule.config.get("target_users"):
+            autoreact_status = "all"
+        else:
+            autoreact_status = "some"
+
     return await render_template(
         "chat/chat.html.j2",
         messages=messages,
@@ -67,6 +87,7 @@ async def topic_view(chat_id: int, topic_id: int):
         chat_id=chat_id,
         topic_id=topic_id,
         autoread_enabled=autoread_enabled,
+        autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
 
@@ -99,6 +120,13 @@ async def mark_read(chat_id: int):
     return jsonify({"status": "ok"})
 
 
+@chat_bp.route("/api/chat/<int(signed=True):chat_id>/authors")
+async def api_get_authors(chat_id: int):
+    interactor = get_chat_interactor()
+    authors = await interactor.get_recent_authors(chat_id)
+    return jsonify({"authors": authors})
+
+
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/card")
 async def api_get_chat_card(chat_id: int):
     interactor = get_chat_interactor()
@@ -107,6 +135,23 @@ async def api_get_chat_card(chat_id: int):
         return "Chat not found", 404
 
     return await render_template("partials/chat_card_wrapper.html.j2", chat=chat)
+
+
+@chat_bp.route("/api/chat/<int(signed=True):chat_id>/info")
+async def api_get_chat_info(chat_id: int):
+    interactor = get_chat_interactor()
+    chat = await interactor.get_chat(chat_id)
+    if not chat:
+        return jsonify({"error": "Chat not found"}), 404
+
+    return jsonify(
+        {
+            "id": chat.id,
+            "name": chat.name,
+            "type": chat.type.value,
+            "avatar_url": chat.image_url,
+        }
+    )
 
 
 @chat_bp.route(

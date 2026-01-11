@@ -1,4 +1,4 @@
-.PHONY: all up up-prod down logs clean
+.PHONY: all up up-prod down logs clean ci
 
 # Default target
 all: up
@@ -31,3 +31,7 @@ logs:
 clean:
 	rm -rf __pycache__
 	rm -rf cache/*
+
+ci:
+	uv run --no-sync ruff format
+	uv run --no-sync ruff check --fix

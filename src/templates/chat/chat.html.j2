@@ -35,162 +35,46 @@ Messages
     <h3 style="margin: 0; font-size: 1.1rem;">{{ chat.name }}</h3>
     <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9rem;">{{ chat.type.value | title }}</p>
 </div>
+
+<!-- ACTIONS CONTAINER -->
+<div class="chat-actions-container">
+    <div class="actions-header">Actions</div>
+    <div class="actions-grid">
+        <!-- Autoread Toggle -->
+        <div class="action-item" id="btn-toggle-autoread" title="Toggle Autoread">
+            <span class="icon">👀</span>
+            <span class="label">Autoread</span>
+            <div class="status-indicator {{ 'on' if autoread_enabled else 'off' }}"></div>
+        </div>
+
+        <!-- Autoreact Modal Trigger -->
+        <div class="action-item" id="btn-open-autoreact" title="Configure Autoreact">
+            <span class="icon">⚡</span>
+            <span class="label">Autoreact</span>
+            <!-- Status: all (green), some (yellow), off (grey) -->
+            <div class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator"></div>
+        </div>
+
+        <!-- Mark Read Button -->
+        <div class="action-item" id="btn-read-chat" title="Mark All Read">
+            <span class="icon">✅</span>
+            <span class="label">Mark Read</span>
+        </div>
+
+        {% if topic_id %}
+        <!-- Apply to All Topics (Forum specific) -->
+        <div class="action-item" id="btn-apply-topics" title="Copy Autoread to All Topics">
+            <span class="icon">📋</span>
+            <span class="label">Copy All</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
 {% endif %}
 {% endblock %}
 
 {% block settings %}
-<div class="setting-option">
-    <label style="display: flex; align-items: center; cursor: pointer; font-weight: 500;">
-        <input type="checkbox" id="autoread-checkbox" {% if autoread_enabled %}checked{% endif %}>
-        <span style="margin-left: 8px;">Autoread messages</span>
-    </label>
-</div>
-
-{% if topic_id %}
-<div class="setting-option" id="apply-all-topics"
-    style="margin-top: 12px; color: #ff9800; font-weight: 500; cursor: pointer; display: flex; align-items: center; padding: 5px 0;">
-    <span style="margin-right: 6px;">📋</span> Copy setting to all topics
-</div>
-{% endif %}
-
-<div class="setting-option" id="btn-read-chat"
-    style="margin-top: 20px; color: #2e7d32; font-weight: 500; cursor: pointer;">
-    ✅ Mark as Read
-</div>
-
-<script>
-    const chatId = {{ chat_id }};
-    const topicId = {{ topic_id or 'null' }};
-    const isPremium = {{ 'true' if is_premium else 'false' }};
-
-    // --- Optimistic Reaction Logic ---
-    async function toggleReaction(el, msgId, emoji) {
-        // Optimistic UI Update
-        const container = el.parentNode;
-        const isChosen = el.classList.contains('chosen');
-        const countSpan = el.querySelector('.reaction-count');
-        let count = parseInt(countSpan ? countSpan.textContent : '0');
-
-        // Logic based on Premium Status
-        // If Premium: We can toggle this specific emoji without affecting others (Stacking)
-        // If Not Premium: Selecting a new emoji removes ALL other 'chosen' emojis (Replacing)
-
-        if (!isPremium) {
-            // Uncheck all other chosen reactions in this container
-            const siblings = container.querySelectorAll('.reaction-pill.chosen');
-            siblings.forEach(sib => {
-                if (sib !== el) {
-                    sib.classList.remove('chosen');
-                    const sibCountSpan = sib.querySelector('.reaction-count');
-                    let sibCount = parseInt(sibCountSpan.textContent);
-                    if (sibCount > 0) sibCountSpan.textContent = sibCount - 1;
-                }
-            });
-        }
-
-        // Toggle the clicked element
-        if (isChosen) {
-            el.classList.remove('chosen');
-            if (count > 0) countSpan.textContent = count - 1;
-        } else {
-            el.classList.add('chosen');
-            countSpan.textContent = count + 1;
-
-            // Animation
-            el.style.transform = 'scale(1.2)';
-            setTimeout(() => el.style.transform = '', 150);
-        }
-
-        try {
-            const url = `/api/chat/${chatId}/message/${msgId}/reaction`;
-            await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reaction: emoji.toString() })
-            });
-            // SSE 'reaction_update' will eventually enforce authoritative state
-        } catch (e) {
-            console.error('Failed to toggle reaction', e);
-            // Revert changes on error? Optional, but strict approach:
-            if (isChosen) {
-                el.classList.add('chosen');
-                countSpan.textContent = count;
-            } else {
-                el.classList.remove('chosen');
-                countSpan.textContent = count;
-            }
-        }
-    }
-
-    document.getElementById('autoread-checkbox').addEventListener('change', async (e) => {
-        const enabled = e.target.checked;
-        await fetch('/api/rules/autoread/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, topic_id: topicId, enabled })
-        });
-    });
-
-    {% if topic_id %}
-    document.getElementById('apply-all-topics').addEventListener('click', async () => {
-        const btn = document.getElementById('apply-all-topics');
-        const originalHTML = btn.innerHTML;
-        btn.innerHTML = '<span style="margin-right: 6px;">⏳</span> Applying...';
-        btn.style.opacity = '0.7';
-        btn.style.pointerEvents = 'none';
-
-        const checkbox = document.getElementById('autoread-checkbox');
-        const enabled = checkbox.checked;
-
-        try {
-            await fetch('/api/rules/autoread/apply_all', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ forum_id: chatId, enabled })
-            });
-            btn.innerHTML = '<span style="margin-right: 6px;">✅</span> Done!';
-        } catch (e) {
-            console.error(e);
-            btn.innerHTML = '<span style="margin-right: 6px;">❌</span> Error';
-        } finally {
-            setTimeout(() => {
-                btn.innerHTML = originalHTML;
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            }, 1500);
-        }
-    });
-    {% endif %}
-
-    document.getElementById('btn-read-chat').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-read-chat');
-        btn.style.opacity = '0.5';
-        btn.style.pointerEvents = 'none';
-
-        try {
-            const url = `/api/chat/${chatId}/read`;
-            await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ topic_id: topicId })
-            });
-
-            // Navigate back after marking as read
-            if (topicId) {
-                window.location.href = `/forum/${chatId}`;
-            } else {
-                window.location.href = `/`;
-            }
-        } catch (e) {
-            console.error(e);
-            // Restore button if error
-            setTimeout(() => {
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            }, 500);
-        }
-    });
-</script>
+<!-- Settings moved to sidebar footer -->
 {% endblock %}
 
 {% block content %}
@@ -202,7 +86,409 @@ Messages
     Loading...
 </div>
 
+<!-- Toast Container -->
+<div id="toast"></div>
+
+<!-- Autoreact Modal -->
+<div id="autoreact-modal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Autoreact Configuration</h3>
+            <span class="modal-close" onclick="closeArModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            <label class="toggle-switch-wrapper">
+                <input type="checkbox" id="autoreact-checkbox">
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">Enable Autoreact</span>
+            </label>
+
+            <div class="section-label">Reaction Emoji</div>
+            <div class="emoji-selector" id="emoji-selector">
+                <div class="emoji-opt selected" data-emoji="💩">💩</div>
+                <div class="emoji-opt" data-emoji="🤡">🤡</div>
+                <div class="emoji-opt" data-emoji="❤️">❤️</div>
+                <input type="text" id="custom-emoji-input" placeholder="Custom" maxlength="4">
+            </div>
+
+            <!-- CHANNEL CHECK START -->
+            <!-- If chat is channel, we hide user selector & warning -->
+            <div id="ar-user-section" style="display: {{ 'none' if chat.type.value == 'channel' else 'block' }};">
+                <div class="section-label">Target Users (Optional)</div>
+                <div class="user-selector-wrapper">
+                    <div class="user-selector-display" id="user-display" onclick="toggleUserDropdown()">
+                        <span style="color: #666; font-style: italic;">Loading...</span>
+                    </div>
+                    <div class="user-dropdown" id="user-dropdown">
+                        <div style="padding: 10px; color: #aaa; font-style: italic;">Loading users...</div>
+                    </div>
+                </div>
+
+                <!-- Warning Message -->
+                <div id="ar-warning-box"
+                    style="margin-top: 15px; background: rgba(244, 67, 54, 0.1); border: 1px solid #f44336; border-radius: 4px; padding: 10px; display: none;">
+                    <strong style="color: #f44336;">⚠️ High Risk of Flood Wait</strong>
+                    <p style="margin: 5px 0 0 0; color: #ddd; font-size: 0.85rem;">
+                        Autoreacting to <strong>ALL messages</strong> may cause Telegram to temporarily ban this account
+                        from interactions. Use with caution.
+                    </p>
+                </div>
+
+                <div class="help-text" id="ar-help-text">Leave empty to react to ALL incoming messages.</div>
+            </div>
+            <!-- CHANNEL CHECK END -->
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeArModal()">Cancel</button>
+            <button class="btn-save" id="save-ar-btn">Save Configuration</button>
+        </div>
+    </div>
+</div>
+
 <script>
+    const chatId = {{ chat_id }};
+    const topicId = {{ topic_id or 'null' }};
+    const isPremium = {{ 'true' if is_premium else 'false' }};
+    const isChannel = {{ 'true' if chat.type.value == 'channel' else 'false' }};
+
+    let arConfig = {
+        enabled: false,
+        emoji: '💩',
+        target_users: []
+    };
+    let availableUsers = [];
+    let usersLoaded = false;
+
+    // --- Toast Logic ---
+    function showToast(message) {
+        const x = document.getElementById("toast");
+        x.textContent = message;
+        x.className = "show";
+        setTimeout(function () { x.className = x.className.replace("show", ""); }, 3000);
+    }
+
+    // --- Autoread Logic ---
+    const autoreadBtn = document.getElementById('btn-toggle-autoread');
+    if (autoreadBtn) {
+        autoreadBtn.addEventListener('click', async () => {
+            const indicator = autoreadBtn.querySelector('.status-indicator');
+            const wasEnabled = indicator.classList.contains('on');
+            const newState = !wasEnabled;
+
+            indicator.classList.toggle('on', newState);
+            indicator.classList.toggle('off', !newState);
+
+            try {
+                await fetch('/api/rules/autoread/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, topic_id: topicId, enabled: newState })
+                });
+                showToast(newState ? "Autoread Enabled" : "Autoread Disabled");
+            } catch (e) {
+                console.error(e);
+                indicator.classList.toggle('on', wasEnabled);
+                indicator.classList.toggle('off', !wasEnabled);
+                showToast("Failed to toggle Autoread");
+            }
+        });
+    }
+
+    // --- Mark Read Logic ---
+    const markReadBtn = document.getElementById('btn-read-chat');
+    if (markReadBtn) {
+        markReadBtn.addEventListener('click', async () => {
+            markReadBtn.style.opacity = '0.5';
+            markReadBtn.style.pointerEvents = 'none';
+
+            try {
+                const url = `/api/chat/${chatId}/read`;
+                await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic_id: topicId })
+                });
+
+                showToast("Marked as Read");
+                if (topicId) {
+                    window.location.href = `/forum/${chatId}`;
+                } else {
+                    window.location.href = `/`;
+                }
+            } catch (e) {
+                console.error(e);
+                showToast("Failed to mark read");
+                setTimeout(() => {
+                    markReadBtn.style.opacity = '1';
+                    markReadBtn.style.pointerEvents = 'auto';
+                }, 500);
+            }
+        });
+    }
+
+    // --- Copy to All Topics ---
+    const copyTopicsBtn = document.getElementById('btn-apply-topics');
+    if (copyTopicsBtn) {
+        copyTopicsBtn.addEventListener('click', async () => {
+            if (!confirm("Enable autoread for ALL topics in this forum?")) return;
+
+            copyTopicsBtn.style.opacity = '0.5';
+            try {
+                await fetch('/api/rules/autoread/apply_all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ forum_id: chatId, enabled: true })
+                });
+                showToast("Applied to all topics");
+            } catch (e) {
+                showToast("Failed to apply");
+            } finally {
+                copyTopicsBtn.style.opacity = '1';
+            }
+        });
+    }
+
+    // --- Autoreact Modal Logic ---
+    const arModal = document.getElementById('autoreact-modal');
+
+    document.getElementById('btn-open-autoreact').addEventListener('click', () => {
+        arModal.classList.add('show');
+        loadArSettings();
+    });
+
+    function closeArModal() {
+        arModal.classList.remove('show');
+        document.getElementById('user-dropdown').classList.remove('show');
+    }
+
+    arModal.addEventListener('click', (e) => {
+        if (e.target === arModal) closeArModal();
+    });
+
+    // Close Dropdown on Mouse Leave
+    const userSelectorWrapper = document.querySelector('.user-selector-wrapper');
+    if (userSelectorWrapper) {
+        userSelectorWrapper.addEventListener('mouseleave', () => {
+            const dd = document.getElementById('user-dropdown');
+            if (dd && dd.classList.contains('show')) {
+                dd.classList.remove('show');
+            }
+        });
+    }
+
+    async function loadArSettings() {
+        try {
+            let url = `/api/rules/autoreact/get?chat_id=${chatId}`;
+            if (topicId) url += `&topic_id=${topicId}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
+            arConfig.enabled = data.enabled;
+            if (data.config.emoji) arConfig.emoji = data.config.emoji;
+            if (data.config.target_users) arConfig.target_users = data.config.target_users;
+
+            // Load users only if not channel and we have IDs
+            if (!isChannel && arConfig.target_users.length > 0) {
+                await loadUsers();
+            }
+
+            renderArUi();
+        } catch (e) { console.error("Failed to load AR settings", e); }
+    }
+
+    function renderArUi() {
+        document.getElementById('autoreact-checkbox').checked = arConfig.enabled;
+
+        document.querySelectorAll('.emoji-opt').forEach(el => {
+            if (el.getAttribute('data-emoji') === arConfig.emoji) {
+                el.classList.add('selected');
+                document.getElementById('custom-emoji-input').value = '';
+            } else {
+                el.classList.remove('selected');
+            }
+        });
+
+        const predefined = ['💩', '🤡', '❤️'];
+        if (!predefined.includes(arConfig.emoji)) {
+            document.getElementById('custom-emoji-input').value = arConfig.emoji;
+        }
+
+        if (!isChannel) {
+            renderUserDisplay();
+        }
+    }
+
+    async function loadUsers() {
+        if (usersLoaded || isChannel) return;
+        const dd = document.getElementById('user-dropdown');
+        try {
+            const res = await fetch(`/api/chat/${chatId}/authors`);
+            const data = await res.json();
+            availableUsers = data.authors;
+            usersLoaded = true;
+            renderUserDropdown();
+            renderUserDisplay();
+        } catch (e) {
+            dd.innerHTML = '<div style="padding:10px; color:red;">Failed to load users</div>';
+        }
+    }
+
+    function renderUserDisplay() {
+        if (isChannel) return;
+
+        const display = document.getElementById('user-display');
+        display.innerHTML = '';
+
+        // --- Warning Toggle Logic ---
+        const warningBox = document.getElementById('ar-warning-box');
+        const helpText = document.getElementById('ar-help-text');
+
+        if (arConfig.target_users.length === 0) {
+            display.innerHTML = '<span style="color: #666; font-style: italic;">All incoming messages (Dangerous)</span>';
+            // Show Warning
+            warningBox.style.display = 'block';
+            helpText.style.display = 'none';
+        } else {
+            // Hide Warning
+            warningBox.style.display = 'none';
+            helpText.style.display = 'block';
+
+            arConfig.target_users.forEach(uid => {
+                const user = availableUsers.find(u => u.id === uid);
+                const name = user ? user.name : `ID: ${uid}`;
+
+                let avatarHtml = '';
+                if (user && user.avatar_url) {
+                    avatarHtml = `<img src="${user.avatar_url}" style="width:16px;height:16px;border-radius:50%;margin-right:5px;object-fit:cover;">`;
+                } else {
+                    const initial = (user ? user.name : '?').charAt(0).toUpperCase();
+                    avatarHtml = `<div style="width:16px;height:16px;background:#555;border-radius:50%;margin-right:5px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">${initial}</div>`;
+                }
+
+                const chip = document.createElement('div');
+                chip.className = 'user-chip';
+                chip.innerHTML = `${avatarHtml} ${name} <span style="margin-left:5px; cursor:pointer;" onclick="event.stopPropagation(); removeUser(${uid})">&times;</span>`;
+                display.appendChild(chip);
+            });
+        }
+    }
+
+    function renderUserDropdown() {
+        const dd = document.getElementById('user-dropdown');
+        dd.innerHTML = '';
+        availableUsers.forEach(u => {
+            const isSelected = arConfig.target_users.includes(u.id);
+            const item = document.createElement('div');
+            item.className = 'user-item ' + (isSelected ? 'active' : '');
+
+            let avatar = '';
+            if (u.avatar_url) {
+                avatar = `<img src="${u.avatar_url}" style="width:24px;height:24px;border-radius:50%;margin-right:10px;object-fit:cover;">`;
+            } else {
+                avatar = `<div style="width:24px;height:24px;background:#555;border-radius:50%;margin-right:10px;display:flex;align-items:center;justify-content:center;color:#fff;">${u.name.charAt(0).toUpperCase()}</div>`;
+            }
+
+            item.innerHTML = `${avatar} <div>${u.name} <div style="font-size:0.75rem;color:#888;">${u.username || ''}</div></div>`;
+            item.onclick = (e) => {
+                event.stopPropagation();
+                toggleUser(u.id);
+            }
+            dd.appendChild(item);
+        });
+    }
+
+    window.toggleUserDropdown = function () {
+        if (isChannel) return;
+        const dd = document.getElementById('user-dropdown');
+        if (!dd.classList.contains('show')) {
+            loadUsers();
+        }
+        dd.classList.toggle('show');
+    };
+
+    function toggleUser(uid) {
+        if (arConfig.target_users.includes(uid)) {
+            arConfig.target_users = arConfig.target_users.filter(id => id !== uid);
+        } else {
+            arConfig.target_users.push(uid);
+        }
+        renderUserDisplay();
+        renderUserDropdown();
+    }
+
+    window.removeUser = function (uid) {
+        arConfig.target_users = arConfig.target_users.filter(id => id !== uid);
+        renderUserDisplay();
+        renderUserDropdown();
+    };
+
+    // Emoji Logic
+    document.querySelectorAll('.emoji-opt').forEach(el => {
+        el.addEventListener('click', () => {
+            arConfig.emoji = el.getAttribute('data-emoji');
+            renderArUi();
+        });
+    });
+
+    document.getElementById('custom-emoji-input').addEventListener('input', (e) => {
+        if (e.target.value) {
+            arConfig.emoji = e.target.value;
+            document.querySelectorAll('.emoji-opt').forEach(opt => opt.classList.remove('selected'));
+        }
+    });
+
+    document.getElementById('autoreact-checkbox').addEventListener('change', (e) => {
+        arConfig.enabled = e.target.checked;
+    });
+
+    document.getElementById('save-ar-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('save-ar-btn');
+        btn.textContent = 'Saving...';
+        btn.disabled = true;
+        try {
+            // For channels, force empty target users
+            const targets = isChannel ? [] : arConfig.target_users;
+
+            await fetch('/api/rules/autoreact/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    topic_id: topicId,
+                    enabled: arConfig.enabled,
+                    config: {
+                        emoji: arConfig.emoji,
+                        target_users: targets
+                    }
+                })
+            });
+
+            // Update Client-Side Status Indicator immediately
+            const ind = document.getElementById('autoreact-indicator');
+            if (arConfig.enabled) {
+                if (targets.length === 0) {
+                    ind.className = 'status-indicator status-all';
+                } else {
+                    ind.className = 'status-indicator status-some';
+                }
+            } else {
+                ind.className = 'status-indicator status-off';
+            }
+
+            btn.textContent = 'Saved!';
+            setTimeout(() => {
+                btn.textContent = 'Save Configuration';
+                btn.disabled = false;
+                closeArModal();
+            }, 800);
+            showToast("Autoreact Configured");
+        } catch (e) {
+            btn.textContent = 'Error';
+            btn.disabled = false;
+        }
+    });
+
+    // --- Message Logic ---
     const container = document.getElementById('messages-container');
     const currentTopicId = {{ topic_id or 'null' }};
     let isLoading = false;
@@ -243,6 +529,7 @@ Messages
                 allLoaded = true;
             } else {
                 container.insertAdjacentHTML('beforeend', data.html);
+                window.parseAppleEmojis(container);
                 const newHeight = document.body.scrollHeight;
                 window.scrollTo(0, newHeight - previousHeight);
             }
@@ -254,20 +541,79 @@ Messages
         }
     }
 
-    // Helper to build reaction HTML from JSON data
+    async function toggleReaction(el, msgId, emoji) {
+        const container = el.parentNode;
+        const isChosen = el.classList.contains('chosen');
+        const countSpan = el.querySelector('.reaction-count');
+        let count = parseInt(countSpan ? countSpan.textContent : '0');
+
+        if (!isPremium) {
+            const siblings = container.querySelectorAll('.reaction-pill.chosen');
+            siblings.forEach(sib => {
+                if (sib !== el) {
+                    sib.classList.remove('chosen');
+                    const sibCountSpan = sib.querySelector('.reaction-count');
+                    let sibCount = parseInt(sibCountSpan.textContent);
+                    if (sibCount > 0) sibCountSpan.textContent = sibCount - 1;
+                }
+            });
+        }
+
+        if (isChosen) {
+            el.classList.remove('chosen');
+            if (count > 0) countSpan.textContent = count - 1;
+        } else {
+            el.classList.add('chosen');
+            countSpan.textContent = count + 1;
+            el.style.transform = 'scale(1.2)';
+            setTimeout(() => el.style.transform = '', 150);
+        }
+
+        try {
+            const url = `/api/chat/${chatId}/message/${msgId}/reaction`;
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reaction: emoji.toString() })
+            });
+        } catch (e) {
+            console.error('Failed to toggle reaction', e);
+        }
+    }
+
+    // Debug Process
+    async function debugProcessMessage(el, msgId) {
+        el.style.opacity = '0.5';
+        try {
+            const res = await fetch('/api/debug/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, msg_id: msgId })
+            });
+            const data = await res.json();
+            let text = "Debug:\n";
+            if (data.autoread) text += `Read: ${data.autoread.status} (${data.autoread.reason})\n`;
+            if (data.autoreact) text += `React: ${data.autoreact.status} (${data.autoreact.detail})`;
+            showToast(text);
+        } catch (e) {
+            console.error(e);
+            showToast("Debug Request Failed");
+        } finally {
+            el.style.opacity = '1';
+        }
+    }
+
     function buildReactionsHtml(msgId, reactions) {
         let html = '';
         reactions.forEach(r => {
             const chosenClass = r.is_chosen ? 'chosen' : '';
             const emojiVal = r.custom_emoji_id || r.emoji;
-
             let innerContent = '';
             if (r.custom_emoji_id) {
                 innerContent = `<img src="/media/custom_emoji/${r.custom_emoji_id}" style="width: 20px; height: 20px; margin-right: 4px;">`;
             } else {
-                innerContent = `<span>${r.emoji}</span>`;
+                innerContent = `<span>${r.emoji}\uFE0F</span>`;
             }
-
             html += `
             <div class="reaction-pill ${chosenClass}" data-emoji="${emojiVal}"
                 onclick="toggleReaction(this, ${msgId}, '${emojiVal}')">
@@ -280,58 +626,42 @@ Messages
 
     document.addEventListener('tg:event', (e) => {
         const data = e.detail;
-
         if (data.chat_id !== chatId) return;
-
         if (currentTopicId && data.topic_id !== currentTopicId) {
-            // If topic is defined but doesn't match, ignore (unless it's a generic chat update)
             if (data.topic_id) return;
         }
 
-        if (data.type === 'message') {
-            if (data.rendered_html) {
-                container.insertAdjacentHTML('afterbegin', data.rendered_html);
-                if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
-                    window.scrollTo(0, document.body.scrollHeight);
-                }
+        if (data.type === 'message' && data.rendered_html) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = data.rendered_html;
+            window.parseAppleEmojis(tempDiv);
+            container.insertAdjacentHTML('afterbegin', tempDiv.innerHTML);
+            if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
+                window.scrollTo(0, document.body.scrollHeight);
             }
-        }
-        else if (data.type === 'edited' && data.message_model) {
+        } else if (data.type === 'edited' && data.message_model) {
             const msgId = data.message_model.id;
             const msgRow = document.getElementById(`msg-${msgId}`);
             if (msgRow) {
                 const textEl = msgRow.querySelector('.text');
                 if (textEl) {
                     textEl.innerHTML = data.message_model.text;
-
-                    if (!msgRow.querySelector('.edited-label')) {
-                        const timeEl = msgRow.querySelector('.time');
-                        const editedSpan = document.createElement('span');
-                        editedSpan.className = 'edited-label';
-                        editedSpan.style.fontSize = '0.7em';
-                        editedSpan.style.color = '#999';
-                        editedSpan.style.marginRight = '4px';
-                        editedSpan.innerText = '(edited)';
-                        if (timeEl) timeEl.parentNode.insertBefore(editedSpan, timeEl);
-                    }
+                    window.parseAppleEmojis(textEl);
                 }
             }
-        }
-        else if (data.type === 'deleted' && data.message_model) {
+        } else if (data.type === 'deleted' && data.message_model) {
             const msgId = data.message_model.id;
             const msgRow = document.getElementById(`msg-${msgId}`);
             if (msgRow) {
-                msgRow.style.transition = 'opacity 0.3s, height 0.3s';
                 msgRow.style.opacity = '0';
                 setTimeout(() => msgRow.remove(), 300);
             }
-        }
-        else if (data.type === 'reaction_update' && data.message_model) {
+        } else if (data.type === 'reaction_update' && data.message_model) {
             const msgId = data.message_model.id;
             const reactionsContainer = document.getElementById(`reactions-${msgId}`);
             if (reactionsContainer) {
-                // Rebuild content
                 reactionsContainer.innerHTML = buildReactionsHtml(msgId, data.message_model.reactions);
+                window.parseAppleEmojis(reactionsContainer);
             }
         }
     });

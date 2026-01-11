@@ -2,286 +2,365 @@
 
 {% block title %}Settings{% endblock %}
 
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/settings.css?t={{ 'static/css/settings.css' | file_mtime }}">
+{% endblock %}
+
 {% block sidebar_back %}
 <a href="/" class="back-link">← Back to Chats</a>
 {% endblock %}
 
 {% block content %}
-<div class="header">
-    <h1>Global User Settings</h1>
-</div>
 
-<div style="max-width: 600px; background: #1e1e20; padding: 20px; border-radius: 8px; border: 1px solid #333;">
-    <form id="settings-form">
+<div class="settings-container">
 
-        <h3 style="margin-top: 0; color: #6ab7ff;">Account</h3>
-        <p style="color: #888; font-size: 0.9rem; margin-bottom: 20px;">
-            {% if settings.username %}
-            Logged in as <strong style="color: #fff;">{{ settings.username }}</strong>
-            {% else %}
-            Not logged in
+    <!-- 1. Global Settings (Grid, No Header) -->
+    <div class="section-card">
+
+        <div class="gs-grid">
+            <!-- Toggle Card: Service Messages -->
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')">
+                <input type="checkbox" id="t-service" {% if settings.autoread_service_messages %}checked{% endif %}>
+                <div class="gs-content">
+                    <span class="gs-label">Service Messages</span>
+                    <span class="gs-status-badge"></span>
+                </div>
+            </label>
+
+            <!-- Toggle Card: Polls -->
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_polls')">
+                <input type="checkbox" id="t-polls" {% if settings.autoread_polls %}checked{% endif %}>
+                <div class="gs-content">
+                    <span class="gs-label">Polls</span>
+                    <span class="gs-status-badge"></span>
+                </div>
+            </label>
+
+            <!-- Toggle Card: Self -->
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_self')">
+                <input type="checkbox" id="t-self" {% if settings.autoread_self %}checked{% endif %}>
+                <div class="gs-content">
+                    <span class="gs-label">My Messages</span>
+                    <span class="gs-status-badge"></span>
+                </div>
+            </label>
+        </div>
+
+        <!-- Expanded Inputs (Grid Row 2) -->
+        <div class="gs-expanded-row">
+            <!-- Autoread Users Card -->
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}">
+                <div class="gs-display-header">
+                    <span>Autoread Users</span>
+                    <button class="edit-icon-btn" onclick="openModal('modal-bots')">✏️ Edit</button>
+                </div>
+                <div class="gs-display-content">
+                    {% if settings.autoread_bots %}
+                    <div class="bot-tags">
+                        {% for bot in settings.autoread_bots.split(',') %}
+                        {% if bot.strip() %}
+                        <span class="bot-tag">{{ bot.strip() }}</span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <span class="gs-none">None configured</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Autoread Regex Card -->
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}">
+                <div class="gs-display-header">
+                    <span>Autoread Regex</span>
+                    <button class="edit-icon-btn" onclick="openModal('modal-regex')">✏️ Edit</button>
+                </div>
+                <div class="gs-display-content">
+                    {% if settings.autoread_regex %}
+                    <code class="regex-block">{{ settings.autoread_regex }}</code>
+                    {% else %}
+                    <span class="gs-none">None configured</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Active Rules Summary (No Header, Full Width) -->
+    <div class="section-card">
+        {% if grouped_rules %}
+        {% for chat_id, data in grouped_rules.items() %}
+        <div class="rule-group-card" data-chat-id="{{ chat_id }}">
+            <a href="/chat/{{ chat_id }}" class="rg-header" title="Open Chat">
+                <div class="rg-avatar">?</div>
+                <div class="rg-info">
+                    <div class="rg-name">Chat ID: {{ chat_id }}</div>
+                    <div class="rg-type rg-loading">Loading info...</div>
+                </div>
+                <div style="font-size: 0.8rem; color: #555;">ID: {{ chat_id }}</div>
+            </a>
+
+            {% if data.chat_rules %}
+            <div class="rule-list">
+                {% for rule in data.chat_rules %}
+                <div class="rule-item">
+                    <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
+                    <div class="rule-detail">
+                        {% if rule.rule_type.value == 'autoreact' %}
+                        <div class="ar-display">
+                            <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
+                            <div class="ar-targets">
+                                {% if rule.config.target_users %}
+                                {% for uid in rule.config.target_users %}
+                                <div class="user-chip-lazy" data-user-id="{{ uid }}">
+                                    <div class="u-avatar">?</div>
+                                    <span class="u-name">{{ uid }}</span>
+                                </div>
+                                {% endfor %}
+                                {% else %}
+                                <span class="ar-default">Default (Channel/Main)</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% else %}
+                        {% if rule.config %}
+                        <span class="rule-config">{{ rule.config }}</span>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
             {% endif %}
-        </p>
 
-        <!-- Credentials removed from UI as per security policy -->
-
-        <hr style="border: 0; border-top: 1px solid #333; margin: 30px 0;">
-
-        <h3 style="color: #6ab7ff;">Smart Autoread Rules</h3>
-        <p
-            style="color: #888; font-size: 0.9rem; margin-bottom: 20px; border-left: 2px solid #ff9800; padding-left: 10px;">
-            ℹ️ <strong>Note:</strong> Global rules below only trigger if the incoming message is the
-            <strong>only new message</strong> in the chat.
-        </p>
-
-        <div class="setting-row">
-            <label class="toggle-switch">
-                <input type="checkbox" name="autoread_service_messages" {% if settings.autoread_service_messages
-                    %}checked{% endif %}>
-                <span class="slider"></span>
-            </label>
-            <div class="setting-label">
-                <strong>Autoread Service Messages</strong>
-                <div class="desc">Pins, joins, leaves, photo changes, group setting changes, etc.</div>
+            {% if data.topics %}
+            <div class="rule-list" style="padding-top: 0;">
+                {% for topic_id, t_rules in data.topics.items() %}
+                <div class="topic-group">
+                    <div class="topic-header">
+                        <span style="margin-right: 5px;">#</span> Topic ID: {{ topic_id }}
+                    </div>
+                    {% for rule in t_rules %}
+                    <div class="rule-item">
+                        <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
+                        <div class="rule-detail">
+                            {% if rule.rule_type.value == 'autoreact' %}
+                            <div class="ar-display">
+                                <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
+                                <div class="ar-targets">
+                                    {% if rule.config.target_users %}
+                                    {% for uid in rule.config.target_users %}
+                                    <div class="user-chip-lazy" data-user-id="{{ uid }}">
+                                        <div class="u-avatar">?</div>
+                                        <span class="u-name">{{ uid }}</span>
+                                    </div>
+                                    {% endfor %}
+                                    {% else %}
+                                    <span class="ar-default">Default (Channel/Main)</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% else %}
+                            {% if rule.config %}
+                            <span class="rule-config">{{ rule.config }}</span>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
             </div>
+            {% endif %}
         </div>
+        {% endfor %}
+        {% else %}
+        <div style="text-align: center; color: #777; padding: 30px;">
+            No specific rules configured.
+        </div>
+        {% endif %}
+    </div>
 
-        <div class="setting-row">
-            <label class="toggle-switch">
-                <input type="checkbox" name="autoread_polls" {% if settings.autoread_polls %}checked{% endif %}>
-                <span class="slider"></span>
-            </label>
-            <div class="setting-label">
-                <strong>Autoread Polls</strong>
-                <div class="desc">Automatically mark polls as read.</div>
-            </div>
-        </div>
+    <!-- Danger Zone Footer -->
+    <div class="danger-zone">
+        <button type="button" class="reset-btn" id="reset-btn">Reset everything</button>
+    </div>
 
-        <div class="setting-row">
-            <label class="toggle-switch">
-                <input type="checkbox" name="autoread_self" {% if settings.autoread_self %}checked{% endif %}>
-                <span class="slider"></span>
-            </label>
-            <div class="setting-label">
-                <strong>Autoread My Messages</strong>
-                <div class="desc">If the message sender is you (outgoing).</div>
-            </div>
-        </div>
-
-        <div class="setting-group">
-            <label>Autoread Bots / Users (Usernames)</label>
-            <input type="text" name="autoread_bots" value="{{ settings.autoread_bots }}"
-                placeholder="@BotFather, @OtherBot">
-            <div class="desc">Comma separated list of usernames.</div>
-        </div>
-
-        <div class="setting-group">
-            <label>Autoread Regex</label>
-            <input type="text" name="autoread_regex" value="{{ settings.autoread_regex }}"
-                placeholder="(crypto|buy|sell)">
-            <div class="desc">Regular expression to match against message text.</div>
-        </div>
-
-        <div style="margin-top: 30px; display: flex; justify-content: space-between; align-items: center;">
-            <button type="button" class="reset-btn" id="reset-btn">Reset Account</button>
-            <button type="submit" class="save-btn" id="save-btn">Save Settings</button>
-        </div>
-    </form>
 </div>
 
-<style>
-    .setting-row {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 20px;
-        padding-bottom: 15px;
-        border-bottom: 1px solid #333;
-    }
+<!-- MODALS -->
+<!-- 1. Bots Modal -->
+<div id="modal-bots" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Autoread Users</h3>
+            <span class="modal-close" onclick="closeModal('modal-bots')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <textarea id="input-bots"
+                style="width:100%; height:100px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
+                placeholder="@BotFather, @OtherBot">{{ settings.autoread_bots }}</textarea>
+            <div class="help-text">Comma separated list of usernames.</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeModal('modal-bots')">Cancel</button>
+            <button class="btn-save" onclick="saveField('autoread_bots', 'input-bots')">Save</button>
+        </div>
+    </div>
+</div>
 
-    .setting-row:last-of-type {
-        border-bottom: none;
-    }
-
-    .setting-label {
-        margin-left: 15px;
-    }
-
-    .setting-label strong {
-        display: block;
-        font-size: 1rem;
-        margin-bottom: 4px;
-    }
-
-    .desc {
-        color: #888;
-        font-size: 0.85rem;
-    }
-
-    .setting-group {
-        margin-bottom: 20px;
-    }
-
-    .setting-group label {
-        display: block;
-        font-weight: bold;
-        margin-bottom: 8px;
-    }
-
-    .setting-group input[type="text"],
-    .setting-group input[type="number"] {
-        width: 100%;
-        background: #2a2a2c;
-        border: 1px solid #444;
-        padding: 10px;
-        color: #fff;
-        border-radius: 4px;
-        font-size: 1rem;
-        box-sizing: border-box;
-    }
-
-    .save-btn {
-        background-color: #2e7d32;
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        font-size: 1rem;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.2s;
-    }
-
-    .save-btn:hover {
-        background-color: #388e3c;
-    }
-
-    .reset-btn {
-        background-color: #c62828;
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        font-size: 1rem;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.2s;
-    }
-
-    .reset-btn:hover {
-        background-color: #d32f2f;
-    }
-
-    /* Switch CSS */
-    .toggle-switch {
-        position: relative;
-        display: inline-block;
-        width: 50px;
-        height: 24px;
-        flex-shrink: 0;
-    }
-
-    .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-
-    .slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #444;
-        transition: .4s;
-        border-radius: 24px;
-    }
-
-    .slider:before {
-        position: absolute;
-        content: "";
-        height: 16px;
-        width: 16px;
-        left: 4px;
-        bottom: 4px;
-        background-color: white;
-        transition: .4s;
-        border-radius: 50%;
-    }
-
-    input:checked+.slider {
-        background-color: #2196F3;
-    }
-
-    input:checked+.slider:before {
-        transform: translateX(26px);
-    }
-</style>
+<!-- 2. Regex Modal -->
+<div id="modal-regex" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit Autoread Regex</h3>
+            <span class="modal-close" onclick="closeModal('modal-regex')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="input-regex"
+                style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
+                value="{{ settings.autoread_regex }}" placeholder="(crypto|buy|sell)">
+            <div class="help-text">Regular expression to match against message text.</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeModal('modal-regex')">Cancel</button>
+            <button class="btn-save" onclick="saveField('autoread_regex', 'input-regex')">Save</button>
+        </div>
+    </div>
+</div>
 
 <script>
-    document.getElementById('settings-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const btn = document.getElementById('save-btn');
-        btn.textContent = "Saving...";
-        btn.disabled = true;
-
-        const formData = new FormData(e.target);
-        const data = {
-            autoread_service_messages: formData.get('autoread_service_messages') === 'on',
-            autoread_polls: formData.get('autoread_polls') === 'on',
-            autoread_self: formData.get('autoread_self') === 'on',
-            autoread_bots: formData.get('autoread_bots'),
-            autoread_regex: formData.get('autoread_regex')
-        };
-
+    // --- API Helper ---
+    async function patchSetting(payload) {
         try {
             const res = await fetch('/api/settings', {
-                method: 'POST',
+                method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
-                btn.textContent = "Saved!";
-                setTimeout(() => {
-                    btn.textContent = "Save Settings";
-                    btn.disabled = false;
-                }, 1000);
+                window.location.reload();
             } else {
-                btn.textContent = "Error";
-                btn.disabled = false;
+                alert("Failed to save setting");
             }
-        } catch (err) {
-            console.error(err);
-            btn.textContent = "Error";
-            btn.disabled = false;
+        } catch (e) {
+            console.error(e);
+            alert("Network Error");
         }
+    }
+
+    // --- Toggle Logic ---
+    function toggleSetting(key) {
+        const checkbox = document.querySelector(`input[name="${key}"]`) || document.getElementById(key === 'autoread_service_messages' ? 't-service' : key === 'autoread_polls' ? 't-polls' : 't-self');
+        setTimeout(() => {
+            const val = checkbox.checked;
+            const payload = {};
+            payload[key] = val;
+            patchSetting(payload);
+        }, 50);
+    }
+
+    // --- Modal Logic ---
+    function openModal(id) {
+        document.getElementById(id).classList.add('show');
+    }
+
+    function closeModal(id) {
+        document.getElementById(id).classList.remove('show');
+    }
+
+    function saveField(key, inputId) {
+        const val = document.getElementById(inputId).value;
+        const payload = {};
+        payload[key] = val;
+        patchSetting(payload);
+    }
+
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                overlay.classList.remove('show');
+            }
+        });
     });
 
+    // --- Reset Logic ---
     document.getElementById('reset-btn').addEventListener('click', async () => {
-        if (!confirm("Are you sure? This will delete your account and all associated rules from this manager. This cannot be undone.")) {
+        if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) {
             return;
         }
-
         const btn = document.getElementById('reset-btn');
         btn.textContent = "Resetting...";
         btn.disabled = true;
 
         try {
-            const res = await fetch('/api/settings/reset', {
-                method: 'POST'
-            });
+            const res = await fetch('/api/settings/reset', { method: 'POST' });
             if (res.ok) {
                 window.location.href = '/login';
             } else {
                 alert("Failed to reset account.");
-                btn.textContent = "Reset Account";
+                btn.textContent = "Reset everything";
                 btn.disabled = false;
             }
         } catch (err) {
-            console.error(err);
             alert("Network Error");
-            btn.textContent = "Reset Account";
+            btn.textContent = "Reset everything";
             btn.disabled = false;
         }
+    });
+
+    // --- Active Rules List Lazy Loading ---
+    document.addEventListener('DOMContentLoaded', async () => {
+        const cards = document.querySelectorAll('.rule-group-card');
+        cards.forEach(async (card) => {
+            const chatId = card.getAttribute('data-chat-id');
+            if (!chatId) return;
+
+            try {
+                const res = await fetch(`/api/chat/${chatId}/info`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const nameEl = card.querySelector('.rg-name');
+                    const typeEl = card.querySelector('.rg-type');
+                    const avatarEl = card.querySelector('.rg-avatar');
+
+                    nameEl.textContent = data.name;
+                    typeEl.textContent = data.type;
+                    typeEl.classList.remove('rg-loading');
+
+                    if (data.avatar_url) {
+                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    } else {
+                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
+                    }
+                } else {
+                    card.querySelector('.rg-type').textContent = "Info unavailable";
+                }
+            } catch (e) {
+                console.error("Failed to load info for chat", chatId, e);
+            }
+        });
+
+        const userChips = document.querySelectorAll('.user-chip-lazy');
+        userChips.forEach(async (chip) => {
+            const uid = chip.getAttribute('data-user-id');
+            if (!uid) return;
+            try {
+                const res = await fetch(`/api/chat/${uid}/info`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const avatarEl = chip.querySelector('.u-avatar');
+                    const nameEl = chip.querySelector('.u-name');
+                    nameEl.textContent = data.name;
+                    if (data.avatar_url) {
+                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    } else {
+                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
+                    }
+                    chip.title = `@${data.username || 'unknown'}`;
+                }
+            } catch (e) { }
+        });
     });
 </script>
 {% endblock %}

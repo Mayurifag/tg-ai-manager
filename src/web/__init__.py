@@ -104,14 +104,18 @@ def create_app() -> Quart:
         connected_queues.clear()
 
     @app.context_processor
-    async def inject_recent_events():
+    async def inject_globals():
         """
-        Injects recent events into the template context.
-        Async context processors are supported in Quart.
+        Injects recent events and current user into the template context.
         """
         interactor = get_chat_interactor()
+        user_repo = get_user_repo()
+
         events = await interactor.get_recent_events()
-        return {"recent_events": events}
+        # Fetch user 1 (Global User) for sidebar display
+        user = await user_repo.get_user(1)
+
+        return {"recent_events": events, "current_user": user}
 
     return app
 

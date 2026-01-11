@@ -10,34 +10,56 @@ body {
     color: #e0e0e0;
 }
 
+img.emoji {
+    height: 1.2em;
+    width: 1.2em;
+    margin: 0 .05em 0 .1em;
+    vertical-align: -0.1em;
+    display: inline-block;
+}
+
 .app-container {
     display: flex;
     min-height: 100vh;
 }
 
+/* --- SIDEBARS --- */
 .sidebar {
     width: 280px;
     background-color: #1a1a1c;
-    border-right: 1px solid #333;
     padding: 20px;
     display: flex;
     flex-direction: column;
     position: fixed;
     height: 100vh;
     box-sizing: border-box;
-    left: 0;
     top: 0;
     z-index: 1000;
 }
 
+.left-sidebar {
+    left: 0;
+    border-right: 1px solid #333;
+}
+
+.right-sidebar {
+    right: 0;
+    border-left: 1px solid #333;
+    width: 300px;
+}
+
+/* --- MAIN CONTENT --- */
 .main-content {
     flex: 1;
     margin-left: 280px;
+    margin-right: 300px;
     padding: 20px;
-    max-width: 1000px;
+    max-width: 1200px;
     background-color: #0e0e10;
+    min-width: 0;
 }
 
+/* Common Sidebar Styles */
 .sidebar-top {
     margin-bottom: 20px;
     min-height: 40px;
@@ -63,27 +85,104 @@ body {
 .sidebar-content {
     flex: 1;
     overflow-y: auto;
+    margin-bottom: 10px;
 }
 
-.sidebar-settings {
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid #333;
-}
-
-.sidebar-feed {
-    margin-bottom: 20px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #333;
-    /* Ensure flex container handles layout properly */
+/* Navigation Links Section */
+.sidebar-nav {
+    margin-bottom: 10px;
     display: flex;
     flex-direction: column;
+    gap: 5px;
+    border-top: 1px solid #333;
+    padding-top: 15px;
+}
+
+.setting-option {
+    display: block;
+    padding: 10px 12px;
+    color: #bbb;
+    cursor: pointer;
+    font-size: 15px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.2s, color 0.2s;
+}
+
+.setting-option:hover {
+    color: #fff;
+    background: #2a2a2c;
+}
+
+/* USER PROFILE SECTION (Pinned Bottom) */
+.user-profile-section {
+    display: flex;
+    align-items: center;
+    background: #252527;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: auto; /* Push to bottom */
+    border: 1px solid #333;
+    overflow: hidden;
+}
+
+.sidebar-avatar {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    background: #0088cc;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: bold;
+    margin-right: 10px;
+    font-size: 1rem;
+    text-transform: uppercase;
+}
+
+.sidebar-user-info {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.sidebar-username {
+    font-weight: 600;
+    color: #fff;
+    font-size: 0.85rem; /* Reduced font size */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+
+.sidebar-status {
+    font-size: 0.7rem;
+    color: #4caf50;
+    line-height: 1.2;
+    margin-top: 2px;
+}
+
+/* Right Sidebar Feed */
+.sidebar-feed {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 #event-feed-list {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow-y: auto;
+    flex: 1;
+    padding-right: 5px;
+    min-height: 0;
 }
 
 .empty-feed {
@@ -96,14 +195,11 @@ body {
 .event-item {
     background: #242426;
     border: 1px solid #333;
-    padding: 8px;
+    padding: 10px;
     border-radius: 6px;
     font-size: 0.85rem;
     border-left: 3px solid #555;
     animation: fadeIn 0.3s ease-in-out;
-
-    /* Fix overlap issues: ensure content stays inside the box */
-    overflow: hidden;
     display: flex;
     flex-direction: column;
 }
@@ -120,37 +216,74 @@ body {
 
 .event-header {
     display: flex;
-    justify-content: space-between;
-    margin-bottom: 4px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-bottom: 6px;
     font-size: 0.75rem;
     color: #aaa;
     flex-shrink: 0;
 }
 
-.event-type {
-    font-weight: bold;
-    font-size: 0.7rem;
+.event-type-icon {
+    font-size: 1rem;
+    margin-right: auto;
 }
 
-.event-chat {
+.event-chat-link {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 140px;
+    max-width: 200px;
+    text-align: right;
+    color: #6ab7ff;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.event-chat-link:hover {
+    text-decoration: underline;
+}
+
+.event-text-wrapper {
+    cursor: default;
 }
 
 .event-text {
     color: #ddd;
-    line-height: 1.3;
-
-    /* Improved text handling: Allow multiple lines but truncate with ellipsis */
+    line-height: 1.4;
     display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: normal;
-    word-break: break-word; /* Prevent long words from overflowing */
+    word-break: break-word;
+}
+
+.event-text strong, .event-text b {
+    font-weight: bold;
+    color: #fff;
+}
+
+/* Global Tooltip */
+#global-tooltip {
+    position: fixed;
+    display: none;
+    background: #111;
+    border: 1px solid #444;
+    padding: 12px;
+    border-radius: 6px;
+    z-index: 9999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+    pointer-events: none;
+    max-width: 300px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.85rem;
+    color: #eee;
+    opacity: 0;
+    transition: opacity 0.1s ease-in;
 }
 
 .settings-header {
@@ -162,23 +295,11 @@ body {
     letter-spacing: 0.5px;
 }
 
-.setting-option {
-    display: block;
-    padding: 8px 0;
-    color: #bbb;
-    cursor: pointer;
-    font-size: 15px;
-}
-
-.setting-option:hover {
-    color: #6ab7ff;
-}
-
 .header {
     margin-bottom: 1rem;
 }
 
-/* --- Lightbox Styles --- */
+/* Lightbox */
 #lightbox {
     position: fixed;
     top: 0;
@@ -207,7 +328,7 @@ body {
     border-radius: 4px;
     box-shadow: 0 0 20px rgba(0,0,0,0.5);
     transition: transform 0.2s;
-    display: none; /* Hidden until loaded */
+    display: none;
 }
 
 #lightbox-loading {

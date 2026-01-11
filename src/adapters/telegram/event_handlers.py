@@ -40,9 +40,6 @@ class EventHandlersMixin:
     def _extract_topic_id(self, message: Any) -> Optional[int]:
         raise NotImplementedError
 
-    # get_topic_name removed: Implemented in ChatOperationsMixin
-    # If we define it here as raise NotImplementedError, it blocks MRO if this Mixin is first.
-
     def _cache_message_chat(self, msg_id: int, chat_id: int):
         raise NotImplementedError
 
@@ -79,17 +76,12 @@ class EventHandlersMixin:
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                # Expects implementation in sibling Mixin (ChatOperationsMixin)
                 if hasattr(self, "get_topic_name"):
                     topic_name = await getattr(self, "get_topic_name")(
                         event.chat_id, topic_id
                     )
 
             display_chat_name = chat_name
-            if topic_name:
-                display_chat_name = f"{topic_name} - {chat_name}"
-
-            # DRY: Use shared model method, no truncation here (frontend handles it)
             preview = domain_msg.get_preview_text()
 
             sys_event = SystemEvent(
@@ -123,27 +115,20 @@ class EventHandlersMixin:
                 pass
 
             domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
-
-            # DRY: Use shared model method, no truncation here
             preview = domain_msg.get_preview_text()
 
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                # Expects implementation in sibling Mixin
                 if hasattr(self, "get_topic_name"):
                     topic_name = await getattr(self, "get_topic_name")(
                         event.chat_id, topic_id
                     )
 
-            display_chat_name = chat_name
-            if topic_name:
-                display_chat_name = f"{topic_name} - {chat_name}"
-
             sys_event = SystemEvent(
                 type="edited",
                 text=preview,
-                chat_name=display_chat_name,
+                chat_name=chat_name,
                 topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
@@ -176,15 +161,10 @@ class EventHandlersMixin:
             chat_name = "Unknown"
             if chat_id:
                 try:
-                    # 'client' is injected via Adapter
                     entity = await self.client.get_entity(chat_id)
                     chat_name = utils.get_display_name(entity)
                 except Exception:
                     chat_name = f"Chat {chat_id}"
-            else:
-                logger.debug(
-                    "unresolved_chat_id_for_delete", deleted_ids=event.deleted_ids
-                )
 
             if chat_id and event.deleted_ids:
                 sys_event = SystemEvent(
@@ -213,7 +193,6 @@ class EventHandlersMixin:
 
     async def _handle_chat_action(self, event):
         try:
-            # Handle Cache Invalidation for Avatar
             action = getattr(event.action_message, "action", None)
             if isinstance(
                 action, (MessageActionChatEditPhoto, MessageActionChatDeletePhoto)
@@ -252,57 +231,68 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_raw_updates(self, event):
-        """Captures low-level updates like reactions."""
+    async def _handle_other_updates(self, event):
+        """Captures other relevant updates like reactions."""
         try:
             if isinstance(event, UpdateMessageReactions):
-                # 1. Resolve Chat ID
-                chat_id = 0
-                if isinstance(event.peer, PeerUser):
-                    chat_id = event.peer.user_id
-                elif isinstance(event.peer, PeerChannel):
-                    chat_id = utils.get_peer_id(event.peer)
-                elif isinstance(event.peer, PeerChat):
-                    chat_id = utils.get_peer_id(event.peer)
-
-                if not chat_id:
-                    return
-
-                # 2. Reuse extract logic via Mock object
-                class MockMsg:
-                    def __init__(self, r):
-                        self.reactions = r
-
-                mock_msg = MockMsg(event.reactions)
-
-                # _extract_reactions is implemented in MessageParserMixin
-                if hasattr(self, "_extract_reactions"):
-                    reactions_list = getattr(self, "_extract_reactions")(mock_msg)
-                else:
-                    reactions_list = []
-
-                # 3. Create partial message model
-                msg_model = Message(
-                    id=event.msg_id,
-                    text="",
-                    date=datetime.now(),
-                    sender_name="",
-                    is_outgoing=False,
-                    reactions=reactions_list,
-                )
-
-                sys_event = SystemEvent(
-                    type="reaction_update",
-                    text="",
-                    chat_name="",
-                    chat_id=chat_id,
-                    message_model=msg_model,
-                )
-                await self._dispatch(sys_event)
+                await self._process_reaction_update(event)
+                return
 
         except Exception as e:
             logger.error(
-                "handle_raw_update_error",
+                "handle_other_updates_error",
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )
+
+    async def _process_reaction_update(self, event):
+        chat_id = 0
+        if isinstance(event.peer, PeerUser):
+            chat_id = event.peer.user_id
+        elif isinstance(event.peer, PeerChannel):
+            chat_id = utils.get_peer_id(event.peer)
+        elif isinstance(event.peer, PeerChat):
+            chat_id = utils.get_peer_id(event.peer)
+
+        if not chat_id:
+            return
+
+        chat_name = "Unknown"
+        link = f"/chat/{chat_id}"
+        try:
+            # Resolve Chat Name for the sidebar
+            chat_entity = await self.client.get_entity(chat_id)
+            chat_name = utils.get_display_name(chat_entity)
+        except Exception:
+            pass
+
+        # We need a dummy message model for the chat view to process the reaction update
+        class MockMsg:
+            def __init__(self, r):
+                self.reactions = r
+
+        mock_msg = MockMsg(event.reactions)
+
+        if hasattr(self, "_extract_reactions"):
+            reactions_list = getattr(self, "_extract_reactions")(mock_msg)
+        else:
+            reactions_list = []
+
+        msg_model = Message(
+            id=event.msg_id,
+            text="",
+            date=datetime.now(),
+            sender_name="",
+            is_outgoing=False,
+            reactions=reactions_list,
+        )
+
+        sys_event = SystemEvent(
+            type="reaction_update",
+            text="Reaction updated",
+            chat_name=chat_name,
+            chat_id=chat_id,
+            link=link,
+            message_model=msg_model,
+        )
+        await self._dispatch(sys_event)
