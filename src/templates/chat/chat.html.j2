@@ -72,11 +72,7 @@ Messages
         let count = parseInt(countSpan ? countSpan.textContent : '0');
 
         // Logic based on Premium Status
-        // If Premium: We can toggle this specific emoji without affecting others (Stacking)
-        // If Not Premium: Selecting a new emoji removes ALL other 'chosen' emojis (Replacing)
-
         if (!isPremium) {
-            // Uncheck all other chosen reactions in this container
             const siblings = container.querySelectorAll('.reaction-pill.chosen');
             siblings.forEach(sib => {
                 if (sib !== el) {
@@ -108,10 +104,9 @@ Messages
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reaction: emoji.toString() })
             });
-            // SSE 'reaction_update' will eventually enforce authoritative state
         } catch (e) {
             console.error('Failed to toggle reaction', e);
-            // Revert changes on error? Optional, but strict approach:
+            // Revert changes on error? Optional
             if (isChosen) {
                 el.classList.add('chosen');
                 countSpan.textContent = count;
@@ -175,7 +170,6 @@ Messages
                 body: JSON.stringify({ topic_id: topicId })
             });
 
-            // Navigate back after marking as read
             if (topicId) {
                 window.location.href = `/forum/${chatId}`;
             } else {
@@ -183,7 +177,6 @@ Messages
             }
         } catch (e) {
             console.error(e);
-            // Restore button if error
             setTimeout(() => {
                 btn.style.opacity = '1';
                 btn.style.pointerEvents = 'auto';
@@ -243,6 +236,7 @@ Messages
                 allLoaded = true;
             } else {
                 container.insertAdjacentHTML('beforeend', data.html);
+                window.parseAppleEmojis(container);
                 const newHeight = document.body.scrollHeight;
                 window.scrollTo(0, newHeight - previousHeight);
             }
@@ -265,7 +259,8 @@ Messages
             if (r.custom_emoji_id) {
                 innerContent = `<img src="/media/custom_emoji/${r.custom_emoji_id}" style="width: 20px; height: 20px; margin-right: 4px;">`;
             } else {
-                innerContent = `<span>${r.emoji}</span>`;
+                // Force Emoji Presentation (\uFE0F) so Twemoji picks it up
+                innerContent = `<span>${r.emoji}\uFE0F</span>`;
             }
 
             html += `
@@ -284,13 +279,16 @@ Messages
         if (data.chat_id !== chatId) return;
 
         if (currentTopicId && data.topic_id !== currentTopicId) {
-            // If topic is defined but doesn't match, ignore (unless it's a generic chat update)
             if (data.topic_id) return;
         }
 
         if (data.type === 'message') {
             if (data.rendered_html) {
-                container.insertAdjacentHTML('afterbegin', data.rendered_html);
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = data.rendered_html;
+                window.parseAppleEmojis(tempDiv);
+
+                container.insertAdjacentHTML('afterbegin', tempDiv.innerHTML);
                 if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
                     window.scrollTo(0, document.body.scrollHeight);
                 }
@@ -303,6 +301,7 @@ Messages
                 const textEl = msgRow.querySelector('.text');
                 if (textEl) {
                     textEl.innerHTML = data.message_model.text;
+                    window.parseAppleEmojis(textEl);
 
                     if (!msgRow.querySelector('.edited-label')) {
                         const timeEl = msgRow.querySelector('.time');
@@ -330,8 +329,8 @@ Messages
             const msgId = data.message_model.id;
             const reactionsContainer = document.getElementById(`reactions-${msgId}`);
             if (reactionsContainer) {
-                // Rebuild content
                 reactionsContainer.innerHTML = buildReactionsHtml(msgId, data.message_model.reactions);
+                window.parseAppleEmojis(reactionsContainer);
             }
         }
     });

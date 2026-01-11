@@ -178,6 +178,15 @@
     background: rgba(255, 255, 255, 0.2);
 }
 
+/* Strict size enforcement for reactions: 20px for both custom & apple emojis */
+.reaction-pill img,
+.reaction-pill img.emoji {
+    width: 20px !important;
+    height: 20px !important;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
 .reaction-pill.chosen {
     background: rgba(100, 181, 246, 0.2);
     border-color: #64b5f6;
@@ -185,7 +194,7 @@
 }
 
 .reaction-count {
-    margin-left: 5px;
+    margin-left: 2px;
     font-weight: 600;
     font-size: 0.75rem;
 }
@@ -208,6 +217,12 @@
     box-shadow: 0 2px 5px rgba(0,0,0,0.5);
     font-size: 1.2rem;
     z-index: 10;
+}
+
+/* Ensure the hover emoji is also parsed nicely if needed */
+.hover-reaction img.emoji {
+    width: 18px;
+    height: 18px;
 }
 
 .message-bubble:hover .hover-reaction {

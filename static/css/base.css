@@ -10,6 +10,15 @@ body {
     color: #e0e0e0;
 }
 
+/* Emoji replacement styling */
+img.emoji {
+    height: 1.2em;
+    width: 1.2em;
+    margin: 0 .05em 0 .1em;
+    vertical-align: -0.1em;
+    display: inline-block;
+}
+
 .app-container {
     display: flex;
     min-height: 100vh;
