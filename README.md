@@ -52,6 +52,7 @@ services:
 
 ## TODO
 
+- All settings viewer - which rules I have with chat names
 - Can i do something if I done anything like reading on another client? Only autofetch every n seconds? Or do I have events for that case
 - Support large quotes on frontend.
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
