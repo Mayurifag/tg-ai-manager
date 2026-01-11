@@ -17,11 +17,7 @@
                 folder: 'svg',
                 ext: '.svg',
                 callback: function (icon, options, variant) {
-                    // 1. Apple Datasource filenames do not have the 'fe0f' suffix.
-                    //    We strip it from the code Twemoji generates.
                     const cleanIcon = icon.replace(/-fe0f/g, '');
-
-                    // 2. Return path to local static file
                     return '/static/emoji/apple/' + cleanIcon + '.png';
                 }
             });
@@ -32,7 +28,8 @@
 
 <body>
     <div class="app-container">
-        <aside class="sidebar">
+        <!-- LEFT SIDEBAR -->
+        <aside class="sidebar left-sidebar">
             <div class="sidebar-top">
                 {% block sidebar_back %}
                 {% endblock %}
@@ -43,6 +40,29 @@
                 {% endblock %}
             </div>
 
+            <div class="sidebar-settings">
+                <div class="settings-header">Settings</div>
+
+                <a href="/settings" class="setting-option" style="text-decoration: none;">
+                    ⚙️ Global Settings
+                </a>
+
+                <a href="/actions" class="setting-option" style="text-decoration: none;">
+                    📜 Actions Log
+                </a>
+
+                {% block settings %}
+                {% endblock %}
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- RIGHT SIDEBAR (Live Events) -->
+        <aside class="sidebar right-sidebar">
             <div class="sidebar-feed">
                 <div class="settings-header">Live Events</div>
                 <div id="event-feed-list">
@@ -65,26 +85,7 @@
                     {% endif %}
                 </div>
             </div>
-
-            <div class="sidebar-settings">
-                <div class="settings-header">Settings</div>
-
-                <a href="/settings" class="setting-option" style="text-decoration: none;">
-                    ⚙️ Global Settings
-                </a>
-
-                <a href="/actions" class="setting-option" style="text-decoration: none;">
-                    📜 Actions Log
-                </a>
-
-                {% block settings %}
-                {% endblock %}
-            </div>
         </aside>
-
-        <main class="main-content">
-            {% block content %}{% endblock %}
-        </main>
     </div>
 
     <!-- Lightbox Modal -->
@@ -191,7 +192,7 @@
 
                 feedContainer.insertBefore(item, feedContainer.firstChild);
                 const items = feedContainer.querySelectorAll('.event-item');
-                if (items.length > 10) items[items.length - 1].remove();
+                if (items.length > 20) items[items.length - 1].remove();
             };
         });
     </script>

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, Message, SystemEvent
 
@@ -34,6 +34,13 @@ class ChatRepository(ABC):
         topic_id: Optional[int] = None,
         offset_id: int = 0,
     ) -> List[Message]:
+        pass
+
+    @abstractmethod
+    async def get_recent_authors(
+        self, chat_id: int, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Fetches distinct authors from recent messages."""
         pass
 
     @abstractmethod
