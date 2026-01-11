@@ -51,6 +51,8 @@ Messages
         <div class="action-item" id="btn-open-autoreact" title="Configure Autoreact">
             <span class="icon">⚡</span>
             <span class="label">Autoreact</span>
+            <!-- Status: all (green), some (yellow), off (grey) -->
+            <div class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator"></div>
         </div>
 
         <!-- Mark Read Button -->
@@ -118,7 +120,18 @@ Messages
                     <div style="padding: 10px; color: #aaa; font-style: italic;">Loading users...</div>
                 </div>
             </div>
-            <div class="help-text">Leave empty to react to main content (Channel/Group default)</div>
+
+            <!-- Warning Message -->
+            <div id="ar-warning-box"
+                style="margin-top: 15px; background: rgba(244, 67, 54, 0.1); border: 1px solid #f44336; border-radius: 4px; padding: 10px; display: none;">
+                <strong style="color: #f44336;">⚠️ High Risk of Flood Wait</strong>
+                <p style="margin: 5px 0 0 0; color: #ddd; font-size: 0.85rem;">
+                    Autoreacting to <strong>ALL messages</strong> may cause Telegram to temporarily ban this account
+                    from interactions. Use with caution.
+                </p>
+            </div>
+
+            <div class="help-text" id="ar-help-text">Leave empty to react to ALL incoming messages.</div>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeArModal()">Cancel</button>
@@ -316,28 +329,38 @@ Messages
         const display = document.getElementById('user-display');
         display.innerHTML = '';
 
+        // --- Warning Toggle Logic ---
+        const warningBox = document.getElementById('ar-warning-box');
+        const helpText = document.getElementById('ar-help-text');
+
         if (arConfig.target_users.length === 0) {
-            display.innerHTML = '<span style="color: #666; font-style: italic;">Default (Channel/Main)</span>';
-            return;
+            display.innerHTML = '<span style="color: #666; font-style: italic;">All incoming messages (Dangerous)</span>';
+            // Show Warning
+            warningBox.style.display = 'block';
+            helpText.style.display = 'none';
+        } else {
+            // Hide Warning
+            warningBox.style.display = 'none';
+            helpText.style.display = 'block';
+
+            arConfig.target_users.forEach(uid => {
+                const user = availableUsers.find(u => u.id === uid);
+                const name = user ? user.name : `ID: ${uid}`;
+
+                let avatarHtml = '';
+                if (user && user.avatar_url) {
+                    avatarHtml = `<img src="${user.avatar_url}" style="width:16px;height:16px;border-radius:50%;margin-right:5px;object-fit:cover;">`;
+                } else {
+                    const initial = (user ? user.name : '?').charAt(0).toUpperCase();
+                    avatarHtml = `<div style="width:16px;height:16px;background:#555;border-radius:50%;margin-right:5px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">${initial}</div>`;
+                }
+
+                const chip = document.createElement('div');
+                chip.className = 'user-chip';
+                chip.innerHTML = `${avatarHtml} ${name} <span style="margin-left:5px; cursor:pointer;" onclick="event.stopPropagation(); removeUser(${uid})">&times;</span>`;
+                display.appendChild(chip);
+            });
         }
-
-        arConfig.target_users.forEach(uid => {
-            const user = availableUsers.find(u => u.id === uid);
-            const name = user ? user.name : `ID: ${uid}`;
-
-            let avatarHtml = '';
-            if (user && user.avatar_url) {
-                avatarHtml = `<img src="${user.avatar_url}" style="width:16px;height:16px;border-radius:50%;margin-right:5px;object-fit:cover;">`;
-            } else {
-                const initial = (user ? user.name : '?').charAt(0).toUpperCase();
-                avatarHtml = `<div style="width:16px;height:16px;background:#555;border-radius:50%;margin-right:5px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;">${initial}</div>`;
-            }
-
-            const chip = document.createElement('div');
-            chip.className = 'user-chip';
-            chip.innerHTML = `${avatarHtml} ${name} <span style="margin-left:5px; cursor:pointer;" onclick="event.stopPropagation(); removeUser(${uid})">&times;</span>`;
-            display.appendChild(chip);
-        });
     }
 
     function renderUserDropdown() {
@@ -425,6 +448,19 @@ Messages
                     }
                 })
             });
+
+            // Update Client-Side Status Indicator immediately
+            const ind = document.getElementById('autoreact-indicator');
+            if (arConfig.enabled) {
+                if (arConfig.target_users.length === 0) {
+                    ind.className = 'status-indicator status-all';
+                } else {
+                    ind.className = 'status-indicator status-some';
+                }
+            } else {
+                ind.className = 'status-indicator status-off';
+            }
+
             btn.textContent = 'Saved!';
             setTimeout(() => {
                 btn.textContent = 'Save Configuration';

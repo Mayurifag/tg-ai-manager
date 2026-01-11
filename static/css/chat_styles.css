@@ -328,7 +328,7 @@
     font-weight: 500;
 }
 
-/* Status Indicator (Autoread) */
+/* Status Indicator (Autoread/Autoreact) */
 .status-indicator {
     position: absolute;
     top: 6px;
@@ -338,11 +338,16 @@
     border-radius: 50%;
     background: #555;
     box-shadow: 0 0 4px rgba(0,0,0,0.5);
-    transition: background 0.3s;
+    transition: background 0.3s, box-shadow 0.3s;
 }
 
 .status-indicator.on { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
-.status-indicator.off { background: #555; }
+.status-indicator.off { background: #555; box-shadow: none; }
+
+/* Status Tri-State */
+.status-indicator.status-off { background: #555; box-shadow: none; }
+.status-indicator.status-all { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.status-indicator.status-some { background: #ffc107; box-shadow: 0 0 6px #ffc107; }
 
 /* --- MODAL STYLES --- */
 .modal-overlay {

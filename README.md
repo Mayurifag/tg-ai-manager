@@ -64,6 +64,7 @@ services:
 - AI integration to help with advice
 - AI integration to notify on liked and/or useful posts. Make a feed?
 - AI integration to help find answer in chats
+- Refactor to have Telethon queue - mark as read / react and so on have to be done on queue with telethon internal throttling
 - Support large quotes on frontend.
 - png -> webp
 - I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted
