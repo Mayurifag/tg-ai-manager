@@ -85,15 +85,86 @@ img.emoji {
 .sidebar-content {
     flex: 1;
     overflow-y: auto;
-    /* Margin for sticky footer effect */
     margin-bottom: 10px;
 }
 
-.sidebar-settings {
-    /* Pinned to bottom via flex layout */
-    margin-top: auto;
-    padding-top: 20px;
+/* Navigation Links Section */
+.sidebar-nav {
+    margin-bottom: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
     border-top: 1px solid #333;
+    padding-top: 15px;
+}
+
+.setting-option {
+    display: block;
+    padding: 10px 12px;
+    color: #bbb;
+    cursor: pointer;
+    font-size: 15px;
+    border-radius: 6px;
+    text-decoration: none;
+    transition: background 0.2s, color 0.2s;
+}
+
+.setting-option:hover {
+    color: #fff;
+    background: #2a2a2c;
+}
+
+/* USER PROFILE SECTION (Pinned Bottom) */
+.user-profile-section {
+    display: flex;
+    align-items: center;
+    background: #252527;
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: auto; /* Push to bottom */
+    border: 1px solid #333;
+    overflow: hidden;
+}
+
+.sidebar-avatar {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    background: #0088cc;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: bold;
+    margin-right: 10px;
+    font-size: 1rem;
+    text-transform: uppercase;
+}
+
+.sidebar-user-info {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.sidebar-username {
+    font-weight: 600;
+    color: #fff;
+    font-size: 0.85rem; /* Reduced font size */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+
+.sidebar-status {
+    font-size: 0.7rem;
+    color: #4caf50;
+    line-height: 1.2;
+    margin-top: 2px;
 }
 
 /* Right Sidebar Feed */
@@ -101,7 +172,7 @@ img.emoji {
     height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: hidden; /* Prevent parent scroll */
+    overflow: hidden;
 }
 
 #event-feed-list {
@@ -111,7 +182,7 @@ img.emoji {
     overflow-y: auto;
     flex: 1;
     padding-right: 5px;
-    min-height: 0; /* Important for nested flex scrolling */
+    min-height: 0;
 }
 
 .empty-feed {
@@ -205,7 +276,7 @@ img.emoji {
     border-radius: 6px;
     z-index: 9999;
     box-shadow: 0 4px 20px rgba(0,0,0,0.8);
-    pointer-events: none; /* Let clicks pass through */
+    pointer-events: none;
     max-width: 300px;
     white-space: pre-wrap;
     word-break: break-word;
@@ -222,18 +293,6 @@ img.emoji {
     font-size: 14px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-}
-
-.setting-option {
-    display: block;
-    padding: 8px 0;
-    color: #bbb;
-    cursor: pointer;
-    font-size: 15px;
-}
-
-.setting-option:hover {
-    color: #6ab7ff;
 }
 
 .header {

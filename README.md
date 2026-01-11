@@ -55,10 +55,11 @@ services:
 - Debug settings. Message debug on hover button becomes debug option.
   - Debug mode enable/disable in settings
   - Debug option - for live events on hover show original json of event
-- Global settings have to be moved onto rules, it has to be the same page
+  - Debug option - "Reset everything" has to be debug option
+  - Debug option - Live events have to be hidden
 - Live events to include user/avatar
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
-- Switch between users easily - show their avatar and names on left top
+- Restyle user indication in sidebar. Switch between users easily
 - AI integration to skip ads
 - AI integration to help with advice
 - AI integration to notify on liked and/or useful posts. Make a feed?
@@ -67,6 +68,7 @@ services:
 - Support large quotes on frontend.
 - png -> webp
 - I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted
+- Settings cards - have better UI what do they do
 
 ## Known bugs
 
