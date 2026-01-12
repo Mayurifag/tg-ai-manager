@@ -134,7 +134,8 @@
 
             if (cardWrapper && !isForum) {
                 const previewEl = cardWrapper.querySelector('.preview');
-                if (previewEl) previewEl.textContent = data.text;
+                // FIX: Use innerHTML to render bold/italic tags correctly
+                if (previewEl) previewEl.innerHTML = data.text;
 
                 const chatCard = cardWrapper.querySelector('.chat-card');
 
