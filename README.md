@@ -54,7 +54,6 @@ services:
 
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - Restyle user indication in sidebar. Switch between users easily
-- Live events to include user/avatar?
 - AI integration to skip ads
 - AI integration to help with advice
 - AI integration to notify on liked and/or useful posts. Make a feed?
@@ -70,11 +69,11 @@ services:
 - Animated custom emojis arent working
 - Reacts - not correctly done for posts in groupchat that are reposts from group.
 - Reacts - some messages are not correctly shown that im the author of reaction
-- Autoreact - disabling - until reload wrong "dot" on card
 - forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
 
 ### Bugs that perhaps fixed already
 
 - Certain groups autoread doesnt work
+- Autoreact - disabling - until reload wrong "dot" on card
 - performance issues after some time. seems i am throttled by telegram but not sure
 - Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine

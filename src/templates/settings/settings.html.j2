@@ -19,7 +19,8 @@
 
         <div class="gs-grid">
             <!-- Toggle Card: Service Messages -->
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')">
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')"
+                data-tooltip="Automatically mark service messages (joins, pins, etc.) as read.">
                 <input type="checkbox" id="t-service" {% if settings.autoread_service_messages %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">Service Messages</span>
@@ -28,7 +29,8 @@
             </label>
 
             <!-- Toggle Card: Polls -->
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_polls')">
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_polls')"
+                data-tooltip="Automatically read messages containing Polls.">
                 <input type="checkbox" id="t-polls" {% if settings.autoread_polls %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">Polls</span>
@@ -37,7 +39,8 @@
             </label>
 
             <!-- Toggle Card: Self -->
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_self')">
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_self')"
+                data-tooltip="Mark chat as read if I send a message from another device.">
                 <input type="checkbox" id="t-self" {% if settings.autoread_self %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">My Messages</span>
@@ -46,10 +49,12 @@
             </label>
 
             <!-- Toggle Card: Debug Mode -->
-            <label class="gs-card toggle-card" onclick="toggleSetting('debug_mode')">
+            <label class="gs-card toggle-card" onclick="toggleSetting('debug_mode')"
+                data-tooltip="Enable right sidebar with live event stream and dry-run tools.">
                 <input type="checkbox" id="t-debug" {% if settings.debug_mode %}checked{% endif %}>
                 <div class="gs-content">
-                    <span class="gs-label" style="color: #6ab7ff;">Debug Mode</span>
+                    <!-- FIX: Removed inline color style to match other cards -->
+                    <span class="gs-label">Debug Mode</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
@@ -58,7 +63,8 @@
         <!-- Expanded Inputs (Grid Row 2) -->
         <div class="gs-expanded-row">
             <!-- Autoread Users Card -->
-            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}">
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}"
+                data-tooltip="Messages from these usernames will be auto-read everywhere.">
                 <div class="gs-display-header">
                     <span>Autoread Users</span>
                     <button class="edit-icon-btn" onclick="openModal('modal-bots')">✏️ Edit</button>
@@ -79,7 +85,8 @@
             </div>
 
             <!-- Autoread Regex Card -->
-            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}">
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}"
+                data-tooltip="Auto-read messages matching this RegEx pattern.">
                 <div class="gs-display-header">
                     <span>Autoread Regex</span>
                     <button class="edit-icon-btn" onclick="openModal('modal-regex')">✏️ Edit</button>
