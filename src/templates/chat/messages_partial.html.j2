@@ -142,12 +142,15 @@
             💩
         </div>
 
-        {# --- Debug Process Button --- #}
+        {# --- Debug Process Button (Only in Debug Mode) --- #}
+        {% if current_user.debug_mode %}
         <div class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" title="Dry Run Rules">
             ⚙️
         </div>
+        {% endif %}
 
-        <div class="time">{{ msg.date.strftime('%H:%M') }}</div>
+        <!-- Client-Side Time Rendering -->
+        <div class="time local-time" data-timestamp="{{ msg.date.isoformat() }}"></div>
     </div>
 </div>
 {% endif %}

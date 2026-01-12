@@ -34,10 +34,10 @@ class MessageParserMixin:
     def _extract_topic_id(self, message: Any) -> Optional[int]:
         reply_header = getattr(message, "reply_to", None)
         if reply_header:
-            tid = getattr(reply_header, "reply_to_top_id", None)
-            if not tid:
-                tid = getattr(reply_header, "reply_to_msg_id", None)
-            return tid
+            # Strictly use reply_to_top_id.
+            # Using reply_to_msg_id here causes basic group replies to be treated as topics,
+            # which breaks mark_as_read (it tries to use ReadDiscussionRequest).
+            return getattr(reply_header, "reply_to_top_id", None)
         return None
 
     def _cache_message_chat(self, msg_id: int, chat_id: int):

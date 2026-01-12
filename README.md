@@ -52,11 +52,6 @@ services:
 
 ## TODO
 
-- Debug settings. Message debug on hover button becomes debug option.
-  - Debug mode enable/disable in settings
-  - Debug option - for live events on hover show original json of event
-  - Debug option - "Reset everything" has to be debug option
-  - Debug option - Live events have to be hidden
 - **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
 - Restyle user indication in sidebar. Switch between users easily
 - Live events to include user/avatar?
@@ -80,5 +75,6 @@ services:
 
 ### Bugs that perhaps fixed already
 
+- Certain groups autoread doesnt work
 - performance issues after some time. seems i am throttled by telegram but not sure
 - Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine

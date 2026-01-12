@@ -9,12 +9,15 @@ class User:
     api_hash: Optional[str] = None
     username: Optional[str] = None
     session_string: Optional[str] = None
-    is_premium: bool = False  # New field
+    is_premium: bool = False
 
     # Settings (Strict Booleans)
     autoread_service_messages: bool = False
     autoread_polls: bool = False
     autoread_self: bool = False
+
+    # Debug
+    debug_mode: bool = False
 
     autoread_bots: str = "@lolsBotCatcherBot"
     autoread_regex: str = ""

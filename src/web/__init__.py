@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 
@@ -17,6 +18,7 @@ from src.container import (
 from src.infrastructure.logging import configure_logging, get_logger
 from src.jinja_filters import file_mtime_filter
 from src.web.routes import register_routes
+from src.web.serializers import json_serializer
 from src.web.sse import broadcast_event, connected_queues, shutdown_event
 
 logger = get_logger(__name__)
@@ -54,6 +56,10 @@ def create_app() -> Quart:
     # Register filters
     file_mtime_filter(app)
 
+    @app.template_filter("to_json")
+    def to_json_filter(obj):
+        return json.dumps(obj, default=json_serializer, indent=2)
+
     # Register routes
     register_routes(app)
 
@@ -62,7 +68,6 @@ def create_app() -> Quart:
         logger.info("application_startup")
 
         # 1. Run Database Migrations
-        # Running synchronously is fine here as it blocks startup until DB is ready
         run_migrations(root_path)
 
         # Reset shutdown event
@@ -131,7 +136,6 @@ async def job_background_maintenance():
     while not shutdown_event.is_set():
         try:
             # 1. Always safe to clean local DB logs (Valkey) if available
-            # Note: If valkey is down, these will log errors but not crash app
             await action_repo.cleanup_expired()
             await event_repo.cleanup_expired()
 
