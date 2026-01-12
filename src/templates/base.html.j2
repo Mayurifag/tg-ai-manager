@@ -148,50 +148,72 @@
         // --- Global Tooltip Logic ---
         const tooltip = document.getElementById('global-tooltip');
         let activeTooltipTarget = null;
-        // Only active if sidebar is present (Debug Mode)
-        const isDebug = {{ 'true' if current_user and current_user.debug_mode else 'false' }};
 
+        // General function to show tooltip
+        function showTooltip(target, content) {
+            activeTooltipTarget = target;
+            tooltip.innerHTML = content;
+            tooltip.style.display = 'block';
+            tooltip.style.opacity = '1';
+        }
+
+        function hideTooltip(target) {
+            if (activeTooltipTarget === target) {
+                tooltip.style.display = 'none';
+                tooltip.style.opacity = '0';
+                activeTooltipTarget = null;
+            }
+        }
+
+        // 1. Debug Event Tooltips (JSON)
+        const isDebug = {{ 'true' if current_user and current_user.debug_mode else 'false' }};
         if (isDebug) {
             document.body.addEventListener('mouseover', (e) => {
                 const wrapper = e.target.closest('.event-text-wrapper');
                 if (wrapper) {
-                    activeTooltipTarget = wrapper;
                     const rawData = wrapper.getAttribute('data-full-html');
-
-                    // In debug mode, we just show the raw string (JSON) inside a pre tag
-                    tooltip.innerHTML = '<pre style="margin:0; font-size: 0.75rem;">' + rawData + '</pre>';
-
-                    tooltip.style.display = 'block';
-                    tooltip.style.opacity = '1';
+                    showTooltip(wrapper, '<pre style="margin:0; font-size: 0.75rem;">' + rawData + '</pre>');
                 }
             });
-
             document.body.addEventListener('mouseout', (e) => {
-                if (activeTooltipTarget && (e.target.closest('.event-text-wrapper') === activeTooltipTarget)) {
-                    if (!e.relatedTarget || !e.relatedTarget.closest('.event-text-wrapper')) {
-                        tooltip.style.display = 'none';
-                        tooltip.style.opacity = '0';
-                        activeTooltipTarget = null;
-                    }
-                }
-            });
-
-            document.body.addEventListener('mousemove', (e) => {
-                if (tooltip.style.display === 'block') {
-                    const width = tooltip.offsetWidth;
-                    const height = tooltip.offsetHeight;
-
-                    let left = e.clientX - width - 15;
-                    let top = e.clientY + 15;
-
-                    if (left < 10) left = e.clientX + 15;
-                    if (top + height > window.innerHeight) top = e.clientY - height - 10;
-
-                    tooltip.style.left = left + 'px';
-                    tooltip.style.top = top + 'px';
-                }
+                const wrapper = e.target.closest('.event-text-wrapper');
+                if (wrapper) hideTooltip(wrapper);
             });
         }
+
+        // 2. Generic Data Tooltips (data-tooltip attribute)
+        document.body.addEventListener('mouseover', (e) => {
+            const el = e.target.closest('[data-tooltip]');
+            if (el) {
+                const text = el.getAttribute('data-tooltip');
+                if (text) {
+                    showTooltip(el, `<div style="max-width:200px; line-height:1.4;">${text}</div>`);
+                }
+            }
+        });
+        document.body.addEventListener('mouseout', (e) => {
+            const el = e.target.closest('[data-tooltip]');
+            if (el) hideTooltip(el);
+        });
+
+        // Mouse Move Listener for Tooltip Position
+        document.body.addEventListener('mousemove', (e) => {
+            if (tooltip.style.display === 'block') {
+                const width = tooltip.offsetWidth;
+                const height = tooltip.offsetHeight;
+
+                let left = e.clientX - width - 15;
+                let top = e.clientY + 15;
+
+                // Collision detection
+                if (left < 10) left = e.clientX + 15;
+                if (top + height > window.innerHeight) top = e.clientY - height - 10;
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+        });
+
 
         // --- Lightbox Logic (Standard) ---
         let currentLightboxIndex = -1;
