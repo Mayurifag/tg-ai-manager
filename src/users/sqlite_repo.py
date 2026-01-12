@@ -21,7 +21,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         """
                         SELECT id, username, session_string,
                                autoread_service_messages, autoread_polls, autoread_self,
-                               autoread_bots, autoread_regex, is_premium
+                               autoread_bots, autoread_regex, is_premium, debug_mode
                         FROM users WHERE id = ?
                     """,
                         (user_id,),
@@ -41,6 +41,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             autoread_bots=row[6] or "",
                             autoread_regex=row[7] or "",
                             is_premium=bool(row[8]),
+                            debug_mode=bool(row[9]),
                         )
                 except Exception:
                     pass
@@ -62,7 +63,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         UPDATE users
                         SET username = ?, session_string = ?,
                             autoread_service_messages = ?, autoread_polls = ?, autoread_self = ?,
-                            autoread_bots = ?, autoread_regex = ?, is_premium = ?
+                            autoread_bots = ?, autoread_regex = ?, is_premium = ?, debug_mode = ?
                         WHERE id = ?
                         """,
                         (
@@ -74,6 +75,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             user.autoread_bots,
                             user.autoread_regex,
                             int(user.is_premium),
+                            int(user.debug_mode),
                             user.id,
                         ),
                     )
@@ -83,8 +85,8 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         INSERT INTO users (
                             id, username, session_string,
                             autoread_service_messages, autoread_polls, autoread_self,
-                            autoread_bots, autoread_regex, is_premium
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            autoread_bots, autoread_regex, is_premium, debug_mode
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             user.id,
@@ -96,6 +98,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             user.autoread_bots,
                             user.autoread_regex,
                             int(user.is_premium),
+                            int(user.debug_mode),
                         ),
                     )
                 conn.commit()

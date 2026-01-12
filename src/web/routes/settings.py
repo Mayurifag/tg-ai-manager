@@ -68,6 +68,8 @@ async def save_settings():
         autoread_self=bool(get_val("autoread_self", current_user.autoread_self)),
         autoread_bots=get_val("autoread_bots", current_user.autoread_bots),
         autoread_regex=get_val("autoread_regex", current_user.autoread_regex),
+        # Debug Mode
+        debug_mode=bool(get_val("debug_mode", current_user.debug_mode)),
     )
 
     await repo.save_user(updated_user)
@@ -86,7 +88,7 @@ async def reset_account():
     return jsonify({"status": "ok"})
 
 
-# --- Rule API Endpoints (Moved from rules.py) ---
+# --- Rule API Endpoints ---
 
 
 @settings_bp.route("/api/rules/autoread/toggle", methods=["POST"])

@@ -496,6 +496,9 @@ Messages
 
     window.scrollTo(0, document.body.scrollHeight);
 
+    // Initial time render
+    window.renderLocalTimes(container);
+
     window.addEventListener('scroll', () => {
         if (isLoading || allLoaded) return;
         if (window.scrollY < 100) {
@@ -530,6 +533,7 @@ Messages
             } else {
                 container.insertAdjacentHTML('beforeend', data.html);
                 window.parseAppleEmojis(container);
+                window.renderLocalTimes(container); // Render times for new nodes
                 const newHeight = document.body.scrollHeight;
                 window.scrollTo(0, newHeight - previousHeight);
             }
@@ -635,6 +639,7 @@ Messages
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = data.rendered_html;
             window.parseAppleEmojis(tempDiv);
+            window.renderLocalTimes(tempDiv); // Render time for new incoming msg
             container.insertAdjacentHTML('afterbegin', tempDiv.innerHTML);
             if (window.scrollY > document.body.scrollHeight - window.innerHeight - 300) {
                 window.scrollTo(0, document.body.scrollHeight);

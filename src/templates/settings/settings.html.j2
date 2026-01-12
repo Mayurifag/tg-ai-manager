@@ -44,6 +44,15 @@
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
+
+            <!-- Toggle Card: Debug Mode -->
+            <label class="gs-card toggle-card" onclick="toggleSetting('debug_mode')">
+                <input type="checkbox" id="t-debug" {% if settings.debug_mode %}checked{% endif %}>
+                <div class="gs-content">
+                    <span class="gs-label" style="color: #6ab7ff;">Debug Mode</span>
+                    <span class="gs-status-badge"></span>
+                </div>
+            </label>
         </div>
 
         <!-- Expanded Inputs (Grid Row 2) -->
@@ -181,10 +190,12 @@
         {% endif %}
     </div>
 
-    <!-- Danger Zone Footer -->
+    <!-- Danger Zone Footer (Only in Debug Mode) -->
+    {% if settings.debug_mode %}
     <div class="danger-zone">
         <button type="button" class="reset-btn" id="reset-btn">Reset everything</button>
     </div>
+    {% endif %}
 
 </div>
 
@@ -251,7 +262,16 @@
 
     // --- Toggle Logic ---
     function toggleSetting(key) {
-        const checkbox = document.querySelector(`input[name="${key}"]`) || document.getElementById(key === 'autoread_service_messages' ? 't-service' : key === 'autoread_polls' ? 't-polls' : 't-self');
+        // Handle mapped keys for IDs
+        let idMap = {
+            'autoread_service_messages': 't-service',
+            'autoread_polls': 't-polls',
+            'autoread_self': 't-self',
+            'debug_mode': 't-debug'
+        };
+        let elId = idMap[key] || key;
+        const checkbox = document.getElementById(elId);
+
         setTimeout(() => {
             const val = checkbox.checked;
             const payload = {};
@@ -285,29 +305,31 @@
     });
 
     // --- Reset Logic ---
-    document.getElementById('reset-btn').addEventListener('click', async () => {
-        if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) {
-            return;
-        }
-        const btn = document.getElementById('reset-btn');
-        btn.textContent = "Resetting...";
-        btn.disabled = true;
-
-        try {
-            const res = await fetch('/api/settings/reset', { method: 'POST' });
-            if (res.ok) {
-                window.location.href = '/login';
-            } else {
-                alert("Failed to reset account.");
-                btn.textContent = "Reset everything";
-                btn.disabled = false;
+    const resetBtn = document.getElementById('reset-btn');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', async () => {
+            if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) {
+                return;
             }
-        } catch (err) {
-            alert("Network Error");
-            btn.textContent = "Reset everything";
-            btn.disabled = false;
-        }
-    });
+            resetBtn.textContent = "Resetting...";
+            resetBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/settings/reset', { method: 'POST' });
+                if (res.ok) {
+                    window.location.href = '/login';
+                } else {
+                    alert("Failed to reset account.");
+                    resetBtn.textContent = "Reset everything";
+                    resetBtn.disabled = false;
+                }
+            } catch (err) {
+                alert("Network Error");
+                resetBtn.textContent = "Reset everything";
+                resetBtn.disabled = false;
+            }
+        });
+    }
 
     // --- Active Rules List Lazy Loading ---
     document.addEventListener('DOMContentLoaded', async () => {
