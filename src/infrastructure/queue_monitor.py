@@ -1,7 +1,9 @@
 import json
 import time
 from typing import Any, Dict, List
+
 from redis.asyncio import Redis
+
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)

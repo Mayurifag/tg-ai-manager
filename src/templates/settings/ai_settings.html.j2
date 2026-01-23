@@ -1,0 +1,104 @@
+<div class="section-card">
+    <div class="settings-header" style="padding: 10px 15px; border-bottom: 1px solid #333; background: #252527;">
+        🤖 AI Configuration
+    </div>
+    
+    <div style="padding: 15px;">
+        <label class="toggle-switch-wrapper" style="margin-bottom: 20px;">
+            <input type="checkbox" id="t-ai-enabled" {% if settings.ai_enabled %}checked{% endif %} 
+                   onchange="toggleSetting('ai_enabled')">
+            <span class="toggle-slider"></span>
+            <span class="toggle-label">Enable AI Features</span>
+        </label>
+
+        <div id="ai-config-panel" style="display: {{ 'block' if settings.ai_enabled else 'none' }};">
+            <div class="form-group">
+                <label>Provider</label>
+                <select id="i-ai-provider" class="form-control" onchange="saveAIField('ai_provider')">
+                    <option value="gemini" {% if settings.ai_provider == 'gemini' %}selected{% endif %}>Google Gemini</option>
+                    <option value="openai" {% if settings.ai_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+                    <option value="local" {% if settings.ai_provider == 'local' %}selected{% endif %}>Local (Ollama/Compatible)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Model Name</label>
+                <input type="text" id="i-ai-model" class="form-control" 
+                       value="{{ settings.ai_model }}" placeholder="gemini-pro"
+                       onblur="saveAIField('ai_model')">
+            </div>
+
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="i-ai-key" class="form-control" 
+                       placeholder="{{ '••••••••' if settings.ai_api_key else 'Enter API Key' }}"
+                       onblur="saveAIKey()">
+            </div>
+
+            <div class="form-group">
+                <label>Base URL (Optional for Local/OpenAI)</label>
+                <input type="text" id="i-ai-base" class="form-control" 
+                       value="{{ settings.ai_base_url or '' }}" placeholder="https://..."
+                       onblur="saveAIField('ai_base_url')">
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #444; margin: 20px 0;">
+
+            <div class="settings-header" style="color: #6ab7ff; margin-bottom: 10px;">Active Features</div>
+            
+            <label class="gs-card toggle-card" onclick="toggleSetting('skip_ads_enabled')">
+                <input type="checkbox" id="t-skip-ads" {% if settings.skip_ads_enabled %}checked{% endif %}>
+                <div class="gs-content">
+                    <span class="gs-label">🚫 Skip Ads (Auto-read advertisements)</span>
+                    <span class="gs-status-badge"></span>
+                </div>
+            </label>
+        </div>
+    </div>
+</div>
+
+<style>
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; color: #aaa; margin-bottom: 5px; font-size: 0.9rem; }
+    .form-control { 
+        width: 100%; 
+        padding: 8px; 
+        background: #2a2a2c; 
+        border: 1px solid #444; 
+        color: #fff; 
+        border-radius: 4px; 
+        box-sizing: border-box;
+    }
+    .form-control:focus { border-color: #6ab7ff; outline: none; }
+</style>
+
+<script>
+    function saveAIField(key) {
+        const el = document.getElementById('i-' + key.replace(/_/g, '-'));
+        const val = el.value;
+        const payload = {};
+        payload[key] = val;
+        patchSetting(payload);
+    }
+
+    function saveAIKey() {
+        const el = document.getElementById('i-ai-key');
+        const val = el.value;
+        if (!val) return; // Don't clear on blur if empty
+        const payload = { 'ai_api_key': val };
+        patchSetting(payload);
+        el.value = '';
+        el.placeholder = '••••••••';
+    }
+
+    // Hook into toggle to show/hide panel
+    const originalToggle = window.toggleSetting;
+    window.toggleSetting = function(key) {
+        originalToggle(key);
+        if (key === 'ai_enabled') {
+            const panel = document.getElementById('ai-config-panel');
+            const checkbox = document.getElementById('t-ai-enabled');
+            panel.style.display = checkbox.checked ? 'block' : 'none';
+        }
+    };
+</script>

@@ -14,9 +14,14 @@
 
 <div class="settings-container">
 
-    <!-- 1. Global Settings (Grid, No Header) -->
-    <div class="section-card">
+    <!-- Queue Status Monitor (Phase 4) -->
+    <!-- Loads initially via hx-get to check for errors immediately -->
+    <div hx-get="/api/queue/failed" hx-trigger="load" hx-swap="outerHTML">
+        <!-- Placeholder -->
+    </div>
 
+    <!-- 1. Global Settings (Grid) -->
+    <div class="section-card">
         <div class="gs-grid">
             <!-- Toggle Card: Service Messages -->
             <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')"
@@ -53,18 +58,16 @@
                 data-tooltip="Enable right sidebar with live event stream and dry-run tools.">
                 <input type="checkbox" id="t-debug" {% if settings.debug_mode %}checked{% endif %}>
                 <div class="gs-content">
-                    <!-- FIX: Removed inline color style to match other cards -->
                     <span class="gs-label">Debug Mode</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
         </div>
 
-        <!-- Expanded Inputs (Grid Row 2) -->
+        <!-- Expanded Inputs -->
         <div class="gs-expanded-row">
-            <!-- Autoread Users Card -->
-            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}"
-                data-tooltip="Messages from these usernames will be auto-read everywhere.">
+            <!-- Autoread Users -->
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}">
                 <div class="gs-display-header">
                     <span>Autoread Users</span>
                     <button class="edit-icon-btn" onclick="openModal('modal-bots')">✏️ Edit</button>
@@ -84,9 +87,8 @@
                 </div>
             </div>
 
-            <!-- Autoread Regex Card -->
-            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}"
-                data-tooltip="Auto-read messages matching this RegEx pattern.">
+            <!-- Regex -->
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}">
                 <div class="gs-display-header">
                     <span>Autoread Regex</span>
                     <button class="edit-icon-btn" onclick="openModal('modal-regex')">✏️ Edit</button>
@@ -102,7 +104,7 @@
         </div>
     </div>
 
-    <!-- 2. Active Rules Summary (No Header, Full Width) -->
+    <!-- 2. Active Rules Summary -->
     <div class="section-card">
         {% if grouped_rules %}
         {% for chat_id, data in grouped_rules.items() %}
@@ -197,7 +199,7 @@
         {% endif %}
     </div>
 
-    <!-- Danger Zone Footer (Only in Debug Mode) -->
+    <!-- Danger Zone -->
     {% if settings.debug_mode %}
     <div class="danger-zone">
         <button type="button" class="reset-btn" id="reset-btn">Reset everything</button>
@@ -207,7 +209,6 @@
 </div>
 
 <!-- MODALS -->
-<!-- 1. Bots Modal -->
 <div id="modal-bots" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-header">
@@ -227,7 +228,6 @@
     </div>
 </div>
 
-<!-- 2. Regex Modal -->
 <div id="modal-regex" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-header">
@@ -248,7 +248,8 @@
 </div>
 
 <script>
-    // --- API Helper ---
+    // Note: Inline JS kept for legacy components, will migrate to Alpine in later iterations.
+
     async function patchSetting(payload) {
         try {
             const res = await fetch('/api/settings', {
@@ -256,20 +257,12 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (res.ok) {
-                window.location.reload();
-            } else {
-                alert("Failed to save setting");
-            }
-        } catch (e) {
-            console.error(e);
-            alert("Network Error");
-        }
+            if (res.ok) window.location.reload();
+            else alert("Failed to save setting");
+        } catch (e) { console.error(e); alert("Network Error"); }
     }
 
-    // --- Toggle Logic ---
     function toggleSetting(key) {
-        // Handle mapped keys for IDs
         let idMap = {
             'autoread_service_messages': 't-service',
             'autoread_polls': 't-polls',
@@ -278,7 +271,6 @@
         };
         let elId = idMap[key] || key;
         const checkbox = document.getElementById(elId);
-
         setTimeout(() => {
             const val = checkbox.checked;
             const payload = {};
@@ -287,14 +279,8 @@
         }, 50);
     }
 
-    // --- Modal Logic ---
-    function openModal(id) {
-        document.getElementById(id).classList.add('show');
-    }
-
-    function closeModal(id) {
-        document.getElementById(id).classList.remove('show');
-    }
+    function openModal(id) { document.getElementById(id).classList.add('show'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
     function saveField(key, inputId) {
         const val = document.getElementById(inputId).value;
@@ -305,87 +291,54 @@
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.classList.remove('show');
-            }
+            if (e.target === overlay) overlay.classList.remove('show');
         });
     });
 
-    // --- Reset Logic ---
     const resetBtn = document.getElementById('reset-btn');
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
-            if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) {
-                return;
-            }
+            if (!confirm("Are you sure? This will delete your account.")) return;
             resetBtn.textContent = "Resetting...";
             resetBtn.disabled = true;
-
             try {
                 const res = await fetch('/api/settings/reset', { method: 'POST' });
-                if (res.ok) {
-                    window.location.href = '/login';
-                } else {
-                    alert("Failed to reset account.");
-                    resetBtn.textContent = "Reset everything";
-                    resetBtn.disabled = false;
-                }
-            } catch (err) {
-                alert("Network Error");
-                resetBtn.textContent = "Reset everything";
-                resetBtn.disabled = false;
-            }
+                if (res.ok) window.location.href = '/login';
+                else { alert("Failed"); resetBtn.disabled = false; }
+            } catch (err) { alert("Network Error"); resetBtn.disabled = false; }
         });
     }
 
-    // --- Active Rules List Lazy Loading ---
+    // Lazy load user info
     document.addEventListener('DOMContentLoaded', async () => {
         const cards = document.querySelectorAll('.rule-group-card');
         cards.forEach(async (card) => {
             const chatId = card.getAttribute('data-chat-id');
             if (!chatId) return;
-
             try {
                 const res = await fetch(`/api/chat/${chatId}/info`);
                 if (res.ok) {
                     const data = await res.json();
-                    const nameEl = card.querySelector('.rg-name');
-                    const typeEl = card.querySelector('.rg-type');
+                    card.querySelector('.rg-name').textContent = data.name;
+                    card.querySelector('.rg-type').textContent = data.type;
+                    card.querySelector('.rg-type').classList.remove('rg-loading');
                     const avatarEl = card.querySelector('.rg-avatar');
-
-                    nameEl.textContent = data.name;
-                    typeEl.textContent = data.type;
-                    typeEl.classList.remove('rg-loading');
-
-                    if (data.avatar_url) {
-                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
-                    } else {
-                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
-                    }
-                } else {
-                    card.querySelector('.rg-type').textContent = "Info unavailable";
+                    if (data.avatar_url) avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    else avatarEl.textContent = data.name.charAt(0).toUpperCase();
                 }
-            } catch (e) {
-                console.error("Failed to load info for chat", chatId, e);
-            }
+            } catch (e) { }
         });
 
-        const userChips = document.querySelectorAll('.user-chip-lazy');
-        userChips.forEach(async (chip) => {
+        document.querySelectorAll('.user-chip-lazy').forEach(async (chip) => {
             const uid = chip.getAttribute('data-user-id');
             if (!uid) return;
             try {
                 const res = await fetch(`/api/chat/${uid}/info`);
                 if (res.ok) {
                     const data = await res.json();
-                    const avatarEl = chip.querySelector('.u-avatar');
-                    const nameEl = chip.querySelector('.u-name');
-                    nameEl.textContent = data.name;
-                    if (data.avatar_url) {
-                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
-                    } else {
-                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
-                    }
+                    chip.querySelector('.u-name').textContent = data.name;
+                    if (data.avatar_url) chip.querySelector('.u-avatar').innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+                    else chip.querySelector('.u-avatar').textContent = data.name.charAt(0).toUpperCase();
                     chip.title = `@${data.username || 'unknown'}`;
                 }
             } catch (e) { }

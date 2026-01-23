@@ -1,0 +1,7 @@
+<div id="lightbox" onclick="closeLightbox()">
+    <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
+    <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
+    <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
+    <div id="lightbox-loading">Loading full size...</div>
+    <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
+</div>

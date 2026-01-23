@@ -1,0 +1,113 @@
+<div class="queue-status-container" id="queue-status-component">
+    {% if failed_jobs and failed_jobs|length > 0 %}
+    <div class="qs-card error-state">
+        <div class="qs-header">
+            <span class="qs-title">⚠️ System Queue Issues ({{ failed_jobs|length }})</span>
+            <button class="qs-btn-clear" hx-post="/api/queue/clear" hx-target="#queue-status-component"
+                hx-swap="outerHTML">
+                Dismiss All
+            </button>
+        </div>
+
+        <div class="qs-list">
+            {% for job in failed_jobs %}
+            <div class="qs-item">
+                <div class="qs-info">
+                    <span class="qs-func">{{ job.function }}</span>
+                    <span class="qs-time">{{ job.timestamp | int }}</span> <!-- JS will format this -->
+                </div>
+                <div class="qs-error" title="{{ job.error }}">{{ job.error }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <script>
+        // Simple timestamp formatter for this partial
+        (function () {
+            const times = document.querySelectorAll('#queue-status-component .qs-time');
+            times.forEach(el => {
+                try {
+                    const ts = parseInt(el.textContent) * 1000;
+                    el.textContent = new Date(ts).toLocaleTimeString();
+                } catch (e) { }
+            });
+        })();
+    </script>
+    <style>
+        .queue-status-container {
+            margin-bottom: 20px;
+        }
+
+        .qs-card {
+            background: #2a1a1a;
+            border: 1px solid #d32f2f;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .qs-header {
+            background: #3b1010;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #5a1a1a;
+        }
+
+        .qs-title {
+            color: #ff867c;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .qs-btn-clear {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #ff867c;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+
+        .qs-btn-clear:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .qs-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .qs-item {
+            padding: 10px 15px;
+            border-bottom: 1px solid #3a1a1a;
+        }
+
+        .qs-item:last-child {
+            border-bottom: none;
+        }
+
+        .qs-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+
+        .qs-func {
+            font-family: monospace;
+            color: #e0e0e0;
+        }
+
+        .qs-error {
+            color: #e57373;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    </style>
+    {% endif %}
+</div>

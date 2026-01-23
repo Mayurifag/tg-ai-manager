@@ -6,24 +6,12 @@ from src.settings.ports import SettingsRepository
 class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
     def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
-        self._init_db()
+        # _init_db is handled by Alembic mostly now, but we ensure the row exists
+        self._ensure_row()
 
-    def _init_db(self):
+    def _ensure_row(self):
         with self._connect() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS global_settings (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    autoread_service_messages INTEGER DEFAULT 0,
-                    autoread_polls INTEGER DEFAULT 0,
-                    autoread_bots TEXT DEFAULT '@lolsBotCatcherBot',
-                    autoread_regex TEXT DEFAULT '',
-                    autoread_self INTEGER DEFAULT 0
-                )
-            """)
-            # Ensure default row exists
-            conn.execute("""
-                INSERT OR IGNORE INTO global_settings (id) VALUES (1)
-            """)
+            conn.execute("INSERT OR IGNORE INTO global_settings (id) VALUES (1)")
             conn.commit()
 
     async def get_settings(self) -> GlobalSettings:
@@ -32,7 +20,9 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                 try:
                     cursor = conn.execute("""
                         SELECT autoread_service_messages, autoread_polls,
-                               autoread_bots, autoread_regex, autoread_self
+                               autoread_bots, autoread_regex, autoread_self,
+                               ai_enabled, ai_provider, ai_model, ai_api_key, ai_base_url,
+                               skip_ads_enabled
                         FROM global_settings WHERE id = 1
                     """)
                     row = cursor.fetchone()
@@ -45,6 +35,12 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                             autoread_bots=row[2] or "",
                             autoread_regex=row[3] or "",
                             autoread_self=bool(row[4]),
+                            ai_enabled=bool(row[5]),
+                            ai_provider=row[6] or "gemini",
+                            ai_model=row[7] or "gemini-pro",
+                            ai_api_key=row[8],
+                            ai_base_url=row[9],
+                            skip_ads_enabled=bool(row[10]),
                         )
                 except Exception:
                     pass
@@ -62,7 +58,13 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                         autoread_polls = ?,
                         autoread_bots = ?,
                         autoread_regex = ?,
-                        autoread_self = ?
+                        autoread_self = ?,
+                        ai_enabled = ?,
+                        ai_provider = ?,
+                        ai_model = ?,
+                        ai_api_key = ?,
+                        ai_base_url = ?,
+                        skip_ads_enabled = ?
                     WHERE id = 1
                 """,
                     (
@@ -71,6 +73,12 @@ class SqliteSettingsRepository(BaseSqliteRepository, SettingsRepository):
                         settings.autoread_bots,
                         settings.autoread_regex,
                         int(settings.autoread_self),
+                        int(settings.ai_enabled),
+                        settings.ai_provider,
+                        settings.ai_model,
+                        settings.ai_api_key,
+                        settings.ai_base_url,
+                        int(settings.skip_ads_enabled),
                     ),
                 )
                 conn.commit()

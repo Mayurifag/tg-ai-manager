@@ -1,0 +1,96 @@
+{% extends "settings/settings.html.j2" %}
+
+{% block content %}
+<div class="settings-container">
+    <!-- Queue Status -->
+    <div hx-get="/api/queue/failed" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- AI Settings Partial -->
+    {% include "settings/ai_settings.html.j2" %}
+
+    <!-- Standard Settings (inherited content from original settings.html.j2 usually goes here) -->
+    <!-- Since we extend, we need to restructure settings.html.j2 to be a partial or copy content here. -->
+    <!-- For simplicity, I will copy the content of settings.html.j2 here and include AI settings at the top. -->
+    
+    <!-- 1. Global Settings -->
+    <div class="section-card">
+        <div class="gs-grid">
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')" data-tooltip="Automatically mark service messages as read.">
+                <input type="checkbox" id="t-service" {% if settings.autoread_service_messages %}checked{% endif %}>
+                <div class="gs-content"><span class="gs-label">Service Messages</span><span class="gs-status-badge"></span></div>
+            </label>
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_polls')" data-tooltip="Automatically read messages containing Polls.">
+                <input type="checkbox" id="t-polls" {% if settings.autoread_polls %}checked{% endif %}>
+                <div class="gs-content"><span class="gs-label">Polls</span><span class="gs-status-badge"></span></div>
+            </label>
+            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_self')" data-tooltip="Mark chat as read if I send a message from another device.">
+                <input type="checkbox" id="t-self" {% if settings.autoread_self %}checked{% endif %}>
+                <div class="gs-content"><span class="gs-label">My Messages</span><span class="gs-status-badge"></span></div>
+            </label>
+            <!-- Debug Mode is on User object, handled via legacy JS currently, we pass it via template vars if available -->
+            <label class="gs-card toggle-card" onclick="toggleSetting('debug_mode')" data-tooltip="Enable right sidebar with live event stream.">
+                <input type="checkbox" id="t-debug" {% if current_user.debug_mode %}checked{% endif %}>
+                <div class="gs-content"><span class="gs-label">Debug Mode</span><span class="gs-status-badge"></span></div>
+            </label>
+        </div>
+        <div class="gs-expanded-row">
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}">
+                <div class="gs-display-header"><span>Autoread Users</span><button class="edit-icon-btn" onclick="openModal('modal-bots')">✏️ Edit</button></div>
+                <div class="gs-display-content">
+                    {% if settings.autoread_bots %}
+                    <div class="bot-tags">{% for bot in settings.autoread_bots.split(',') %}{% if bot.strip() %}<span class="bot-tag">{{ bot.strip() }}</span>{% endif %}{% endfor %}</div>
+                    {% else %}<span class="gs-none">None configured</span>{% endif %}
+                </div>
+            </div>
+            <div class="gs-display-card {{ 'has-content' if settings.autoread_regex else '' }}">
+                <div class="gs-display-header"><span>Autoread Regex</span><button class="edit-icon-btn" onclick="openModal('modal-regex')">✏️ Edit</button></div>
+                <div class="gs-display-content">
+                    {% if settings.autoread_regex %}<code class="regex-block">{{ settings.autoread_regex }}</code>{% else %}<span class="gs-none">None configured</span>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Active Rules Summary -->
+    <div class="section-card">
+        {% if grouped_rules %}
+        {% for chat_id, data in grouped_rules.items() %}
+        <div class="rule-group-card" data-chat-id="{{ chat_id }}">
+            <a href="/chat/{{ chat_id }}" class="rg-header">
+                <div class="rg-avatar">?</div>
+                <div class="rg-info"><div class="rg-name">Chat {{ chat_id }}</div><div class="rg-type rg-loading">Loading...</div></div>
+            </a>
+            {% if data.chat_rules %}
+            <div class="rule-list">
+                {% for rule in data.chat_rules %}
+                <div class="rule-item">
+                    <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
+                    <div class="rule-detail">{% if rule.rule_type.value == 'autoreact' %}{{ rule.config.emoji }}{% endif %}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        <div style="text-align: center; color: #777; padding: 30px;">No specific rules configured.</div>
+        {% endif %}
+    </div>
+</div>
+<!-- Modals included via inheritance or we can copy them if needed. base.html.j2 has them? No, settings.html.j2 had them. -->
+<!-- Since we are replacing content, we must include modals here. -->
+<div id="modal-bots" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header"><h3>Edit Autoread Users</h3><span class="modal-close" onclick="closeModal('modal-bots')">&times;</span></div>
+        <div class="modal-body"><textarea id="input-bots" style="width:100%;height:100px;background:#2a2a2c;border:1px solid #444;color:#fff;" placeholder="@Bot">{{ settings.autoread_bots }}</textarea></div>
+        <div class="modal-footer"><button class="btn-cancel" onclick="closeModal('modal-bots')">Cancel</button><button class="btn-save" onclick="saveField('autoread_bots', 'input-bots')">Save</button></div>
+    </div>
+</div>
+<div id="modal-regex" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header"><h3>Edit Autoread Regex</h3><span class="modal-close" onclick="closeModal('modal-regex')">&times;</span></div>
+        <div class="modal-body"><input type="text" id="input-regex" style="width:100%;background:#2a2a2c;border:1px solid #444;color:#fff;" value="{{ settings.autoread_regex }}"></div>
+        <div class="modal-footer"><button class="btn-cancel" onclick="closeModal('modal-regex')">Cancel</button><button class="btn-save" onclick="saveField('autoread_regex', 'input-regex')">Save</button></div>
+    </div>
+</div>
+{% endblock %}

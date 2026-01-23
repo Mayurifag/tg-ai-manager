@@ -8,331 +8,38 @@
     <title>{% block title %}Telegram Manager{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
-    <!-- Local Twemoji Library -->
-    <script src="/static/libs/twemoji/twemoji.min.js"></script>
-    <script>
-        // Global helper to parse Apple Emojis using local assets
-        window.parseAppleEmojis = function (container) {
-            twemoji.parse(container, {
-                folder: 'svg',
-                ext: '.svg',
-                callback: function (icon, options, variant) {
-                    const cleanIcon = icon.replace(/-fe0f/g, '');
-                    return '/static/emoji/apple/' + cleanIcon + '.png';
-                }
-            });
-        };
 
-        // Timezone Helper
-        window.renderLocalTimes = function (context) {
-            const els = (context || document).querySelectorAll('.local-time[data-timestamp]');
-            els.forEach(el => {
-                const iso = el.getAttribute('data-timestamp');
-                if (iso) {
-                    const date = new Date(iso);
-                    // HH:MM format
-                    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-                    el.textContent = timeStr;
-                    el.classList.add('rendered');
-                }
-            });
-        };
-    </script>
+    <!-- Phase 4: Local Libraries -->
+    <script src="/static/libs/alpine.min.js" defer></script>
+    <script src="/static/libs/htmx.min.js"></script>
+    <script src="/static/libs/lottie.min.js"></script>
+
+    <!-- Legacy / Utility Scripts -->
+    <script src="/static/libs/twemoji/twemoji.min.js"></script>
+    <script src="/static/js/main.js?t={{ 'static/js/main.js' | file_mtime }}"></script>
+
     {% block head_extra %}{% endblock %}
 </head>
 
-<body>
+<body hx-boost="false"> <!-- hx-boost disabled globally to prevent interference with legacy nav -->
     <div class="app-container">
         <!-- LEFT SIDEBAR -->
-        <aside class="sidebar left-sidebar">
-            <div class="sidebar-top">
-                {% block sidebar_back %}
-                {% endblock %}
-            </div>
-
-            <div class="sidebar-content">
-                {% block sidebar_info %}
-                {% endblock %}
-            </div>
-
-            <!-- Navigation Links -->
-            <div class="sidebar-nav">
-                <a href="/settings" class="setting-option">
-                    ⚙️ Settings
-                </a>
-                <a href="/actions" class="setting-option">
-                    📜 Actions Log
-                </a>
-                {% block settings %}
-                {% endblock %}
-            </div>
-
-            <!-- User Profile Section (Pinned Bottom) -->
-            {% if current_user and current_user.username %}
-            <div class="user-profile-section">
-                <div class="sidebar-avatar">
-                    {{ current_user.username[1] | upper if current_user.username|length > 1 else '?' }}
-                </div>
-                <div class="sidebar-user-info">
-                    <div class="sidebar-username">{{ current_user.username }}</div>
-                    <div class="sidebar-status">{{ 'Premium' if current_user.is_premium else 'Standard' }}</div>
-                </div>
-            </div>
-            {% endif %}
-        </aside>
+        {% include "partials/sidebar_left.html.j2" %}
 
         <!-- MAIN CONTENT -->
         <main class="main-content">
             {% block content %}{% endblock %}
         </main>
 
-        <!-- RIGHT SIDEBAR (Live Events) - HIDDEN UNLESS DEBUG MODE -->
-        {% if current_user and current_user.debug_mode %}
-        <aside class="sidebar right-sidebar">
-            <div class="sidebar-feed">
-                <div class="settings-header" style="color: #6ab7ff;">Live Events (Debug)</div>
-                <div id="event-feed-list">
-                    {% if recent_events %}
-                    {% for event in recent_events %}
-                    {% if event.type not in ['read', 'edited', 'raw'] %}
-                    <div class="event-item type-{{ event.type }}">
-                        <div class="event-header">
-                            {% if event.type == 'deleted' %}
-                            <span class="event-type-icon" title="Deleted">🗑️</span>
-                            {% elif event.type == 'action' %}
-                            <span class="event-type-icon" title="Action">⚡</span>
-                            {% elif event.type == 'reaction_update' %}
-                            <span class="event-type-icon" title="Reaction">👍</span>
-                            {% endif %}
-
-                            <a href="{{ event.link or '#' }}" class="event-chat-link" {% if event.topic_name
-                                %}title="{{ event.topic_name }}" {% endif %}>
-                                {{ event.topic_name ~ ' - ' if event.topic_name else '' }}{{ event.chat_name }}
-                            </a>
-                        </div>
-
-                        <!--
-                          Event Text Wrapper
-                          DEBUG MODE: shows raw JSON in tooltip via data-full-html
-                        -->
-                        <div class="event-text-wrapper" data-full-html="{{ event | to_json | escape }}">
-                            <div class="event-text">
-                                {{ event.text | safe }}
-                            </div>
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                    {% else %}
-                    <div class="empty-feed">No recent events</div>
-                    {% endif %}
-                </div>
-            </div>
-        </aside>
-        {% endif %}
+        <!-- RIGHT SIDEBAR (Live Events) -->
+        {% include "partials/sidebar_right.html.j2" %}
     </div>
 
     <!-- Global Tooltip -->
     <div id="global-tooltip"></div>
 
     <!-- Lightbox Modal -->
-    <div id="lightbox" onclick="closeLightbox()">
-        <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
-        <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
-        <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
-        <div id="lightbox-loading">Loading full size...</div>
-        <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
-    </div>
-
-    <script>
-        // --- Global Tooltip Logic ---
-        const tooltip = document.getElementById('global-tooltip');
-        let activeTooltipTarget = null;
-
-        // General function to show tooltip
-        function showTooltip(target, content) {
-            activeTooltipTarget = target;
-            tooltip.innerHTML = content;
-            tooltip.style.display = 'block';
-            tooltip.style.opacity = '1';
-        }
-
-        function hideTooltip(target) {
-            if (activeTooltipTarget === target) {
-                tooltip.style.display = 'none';
-                tooltip.style.opacity = '0';
-                activeTooltipTarget = null;
-            }
-        }
-
-        // 1. Debug Event Tooltips (JSON)
-        const isDebug = {{ 'true' if current_user and current_user.debug_mode else 'false' }};
-        if (isDebug) {
-            document.body.addEventListener('mouseover', (e) => {
-                const wrapper = e.target.closest('.event-text-wrapper');
-                if (wrapper) {
-                    const rawData = wrapper.getAttribute('data-full-html');
-                    showTooltip(wrapper, '<pre style="margin:0; font-size: 0.75rem;">' + rawData + '</pre>');
-                }
-            });
-            document.body.addEventListener('mouseout', (e) => {
-                const wrapper = e.target.closest('.event-text-wrapper');
-                if (wrapper) hideTooltip(wrapper);
-            });
-        }
-
-        // 2. Generic Data Tooltips (data-tooltip attribute)
-        document.body.addEventListener('mouseover', (e) => {
-            const el = e.target.closest('[data-tooltip]');
-            if (el) {
-                const text = el.getAttribute('data-tooltip');
-                if (text) {
-                    showTooltip(el, `<div style="max-width:200px; line-height:1.4;">${text}</div>`);
-                }
-            }
-        });
-        document.body.addEventListener('mouseout', (e) => {
-            const el = e.target.closest('[data-tooltip]');
-            if (el) hideTooltip(el);
-        });
-
-        // Mouse Move Listener for Tooltip Position
-        document.body.addEventListener('mousemove', (e) => {
-            if (tooltip.style.display === 'block') {
-                const width = tooltip.offsetWidth;
-                const height = tooltip.offsetHeight;
-
-                let left = e.clientX - width - 15;
-                let top = e.clientY + 15;
-
-                // Collision detection
-                if (left < 10) left = e.clientX + 15;
-                if (top + height > window.innerHeight) top = e.clientY - height - 10;
-
-                tooltip.style.left = left + 'px';
-                tooltip.style.top = top + 'px';
-            }
-        });
-
-
-        // --- Lightbox Logic (Standard) ---
-        let currentLightboxIndex = -1;
-        let lightboxItems = [];
-
-        function refreshLightboxItems() {
-            const triggers = document.querySelectorAll('.lightbox-trigger');
-            lightboxItems = Array.from(triggers).map(el => ({
-                el: el,
-                src: el.src,
-                fullSrc: el.getAttribute('data-full-src')
-            }));
-        }
-
-        function openLightbox(element) {
-            refreshLightboxItems();
-            currentLightboxIndex = lightboxItems.findIndex(item => item.el === element);
-            if (currentLightboxIndex === -1) return;
-            updateLightboxView();
-            document.getElementById('lightbox').classList.add('active');
-        }
-
-        function updateLightboxView() {
-            const item = lightboxItems[currentLightboxIndex];
-            const img = document.getElementById('lightbox-img');
-            const loader = document.getElementById('lightbox-loading');
-            if (!item) return;
-            img.style.display = 'none';
-            loader.style.display = 'block';
-            img.onload = () => {
-                loader.style.display = 'none';
-                img.style.display = 'block';
-            };
-            img.onerror = () => {
-                img.src = item.src;
-                loader.style.display = 'none';
-                img.style.display = 'block';
-            };
-            img.src = item.fullSrc;
-        }
-
-        function navigateLightbox(dir) {
-            const newIndex = currentLightboxIndex + dir;
-            if (newIndex >= 0 && newIndex < lightboxItems.length) {
-                currentLightboxIndex = newIndex;
-                updateLightboxView();
-            }
-        }
-
-        function closeLightbox() {
-            document.getElementById('lightbox').classList.remove('active');
-            setTimeout(() => document.getElementById('lightbox-img').src = "", 300);
-        }
-
-        document.addEventListener('keydown', (e) => {
-            if (!document.getElementById('lightbox').classList.contains('active')) return;
-            if (e.key === 'Escape') closeLightbox();
-            if (e.key === 'ArrowLeft') navigateLightbox(-1);
-            if (e.key === 'ArrowRight') navigateLightbox(1);
-        });
-
-        document.addEventListener('DOMContentLoaded', () => {
-            window.parseAppleEmojis(document.body);
-            window.renderLocalTimes(document.body);
-
-            // If not debug, we don't attach SSE for the feed, but SSE is used for chat updates too.
-            // We'll keep SSE active but only render feed items if container exists.
-            const feedContainer = document.getElementById('event-feed-list');
-            const evtSource = new EventSource("/api/events/stream");
-
-            evtSource.onmessage = function (e) {
-                const data = JSON.parse(e.data);
-                const customEvent = new CustomEvent('tg:event', { detail: data });
-                document.dispatchEvent(customEvent);
-
-                if (data.type === 'read' || data.type === 'edited') return;
-
-                if (feedContainer) {
-                    const emptyMsg = feedContainer.querySelector('.empty-feed');
-                    if (emptyMsg) emptyMsg.remove();
-
-                    const item = document.createElement('div');
-                    item.className = `event-item type-${data.type}`;
-
-                    let iconHtml = '';
-                    if (data.type === 'deleted') iconHtml = '<span class="event-type-icon">🗑️</span>';
-                    else if (data.type === 'action') iconHtml = '<span class="event-type-icon">⚡</span>';
-                    else if (data.type === 'reaction_update') iconHtml = '<span class="event-type-icon">👍</span>';
-
-                    let chatLabel = data.chat_name;
-                    if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
-                    const linkHref = data.link || '#';
-
-                    // For debug mode tooltip, we use the raw JSON of data
-                    const debugJson = isDebug ? JSON.stringify(data, null, 2)
-                        .replace(/&/g, "&amp;")
-                        .replace(/</g, "&lt;")
-                        .replace(/>/g, "&gt;")
-                        .replace(/"/g, "&quot;") : "";
-
-                    item.innerHTML = `
-                        <div class="event-header">
-                            ${iconHtml}
-                            <a href="${linkHref}" class="event-chat-link" title="${chatLabel}">${chatLabel}</a>
-                        </div>
-                        <div class="event-text-wrapper" data-full-html="${debugJson}">
-                            <div class="event-text">${data.text}</div>
-                        </div>
-                    `;
-
-                    window.parseAppleEmojis(item);
-                    feedContainer.insertBefore(item, feedContainer.firstChild);
-
-                    const items = feedContainer.querySelectorAll('.event-item');
-                    if (items.length > 10) items[items.length - 1].remove();
-                }
-            };
-        });
-    </script>
+    {% include "partials/lightbox.html.j2" %}
 </body>
 
 </html>

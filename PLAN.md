@@ -7,16 +7,15 @@ Complete architectural overhaul of the Telegram AI Manager application. This pla
 ## User Review Required
 
 > [!IMPORTANT]
-> **Technology Decisions Requiring Confirmation:**
-> - **Dramatiq** as queue library (uses Valkey as backend, provides retry/dead-letter/dashboard)
+> **Technology Decisions:**
+> - **Arq** as queue library (asyncio-native, uses Valkey, integrates with Telethon loop)
 > - **Alpine.js + htmx** for frontend reactivity (no build step, incremental refactor)
 > - **File-per-tenant SQLite** for future multi-tenancy
 
 > [!WARNING]
 > **Breaking Changes:**
-> - Docker image will need additional dependencies (dramatiq, htmx, alpine.js, lottie-web)
+> - Docker image will need additional dependencies (htmx, alpine.js, lottie-web)
 > - SSE connection behavior changes (events come from queue, not direct dispatch)
-> - Some API endpoints may change signatures during Phase 2
 
 ---
 
@@ -30,10 +29,11 @@ graph TB
         TW[TelethonWriter]
     end
 
-    subgraph "Queue Layer"
+    subgraph "Queue Layer (Arq)"
         EB[Event Bus]
         TQ[Telegram Operation Queue]
         DLQ[Dead Letter Queue]
+        CB[Global FloodLock (Redis)]
     end
 
     subgraph "Handlers"
@@ -62,7 +62,8 @@ graph TB
     EB --> SSEH
     ARH --> TQ
     AReH --> TQ
-    TQ --> TW
+    TQ --> CB
+    CB --> TW
     TW --> TG
     TQ -.-> DLQ
     SSEH --> SSE
@@ -74,153 +75,36 @@ graph TB
 ~~~
 
 ---
+---
 
 ## Phase 1: Queue Pipeline Architecture
 
-**Goal:** Replace synchronous Telegram operations with queued, retriable operations using Dramatiq.
+**Goal:** Replace synchronous Telegram operations with queued, retriable operations using Arq.
 
 ### Proposed Changes
 
----
+#### [UPDATED] [arq_config.py](src/infrastructure/arq_config.py)
 
-#### [NEW] [dramatiq_config.py](file:///Users/mayurifag/Code/tg-ai-manager/src/infrastructure/dramatiq_config.py)
+Configure Arq with Valkey (Redis-compatible) backend.
 
-Configure Dramatiq with Valkey (Redis-compatible) backend:
-- Valkey broker setup
-- Exponential backoff middleware (base 1s, max 5 retries)
-- Dead-letter queue configuration
-- Global rate limiter (0.1s between operations)
+#### [NEW] [queue_jobs.py](src/infrastructure/queue_jobs.py)
 
----
+Arq jobs for Telegram operations:
+- `mark_as_read_job`
+- `send_reaction_job`
+- **Circuit Breaker:** Global Redis lock for `FloodWaitError`.
+- **Dead Letter Queue:** `on_job_completion` hook to log failures.
 
-#### [NEW] [queue_actors.py](file:///Users/mayurifag/Code/tg-ai-manager/src/infrastructure/queue_actors.py)
-
-Dramatiq actors for Telegram operations:
-- `mark_as_read_actor(chat_id, topic_id, max_id)` - queued read operation
-- `send_reaction_actor(chat_id, msg_id, emoji)` - queued reaction operation
-- `auto_engage_actor(chat_id, msg_id, read: bool, react_emoji: str)` - combined operation (Option C)
-- Error handling with structured logging
-- FloodWaitError detection → pause queue globally
-
----
-
-#### [NEW] [queue_monitor.py](file:///Users/mayurifag/Code/tg-ai-manager/src/infrastructure/queue_monitor.py)
+#### [NEW] [queue_monitor.py](src/infrastructure/queue_monitor.py)
 
 Queue monitoring service:
 - Track failed operations in Valkey
-- Store: operation type, chat_id, error message, attempt count, last failure time
-- Provide retry-single and retry-all methods
 - Expose status for frontend
 
----
+#### [MODIFY] [container.py](src/container.py)
 
-#### [MODIFY] [container.py](file:///Users/mayurifag/Code/tg-ai-manager/src/container.py)
-
-- Add `get_queue_monitor()` factory
-- Initialize Dramatiq broker on startup
-- Add `get_telegram_writer()` for queue-based writes
-
----
-
-#### [MODIFY] [docker-compose.yml](file:///Users/mayurifag/Code/tg-ai-manager/docker-compose.yml)
-
-- Add `dramatiq` worker service
-- Shared Valkey connection
-- Health checks
-
----
-
-### Verification Plan - Phase 1
-
-**Automated:**
-~~~bash
-# Start dramatiq worker
-dramatiq src.infrastructure.queue_actors
-
-# Test queue enqueue
-python -c "from src.infrastructure.queue_actors import mark_as_read_actor; mark_as_read_actor.send(123, None, None)"
-
-# Verify in Valkey
-valkey-cli KEYS "dramatiq:*"
-~~~
-
-**Manual:**
-- Trigger mark-as-read from UI, verify operation logged in Valkey
-- Simulate Telegram error, verify retry with backoff
-- Check dead-letter queue after max retries
-
----
-
-## Phase 2: Event-Driven Architecture Refactor
-
-**Goal:** Decouple event producers from consumers. Each handler (autoread, autoreact, SSE) subscribes independently.
-
-### Proposed Changes
-
----
-
-#### [NEW] [event_bus.py](file:///Users/mayurifag/Code/tg-ai-manager/src/domain/event_bus.py)
-
-Internal event bus abstraction:
-- `publish(event: DomainEvent)` - push to Valkey stream
-- `subscribe(event_type: str, handler: Callable)` - register handler
-- Use Valkey Streams for durability
-- Support reconnection without losing events
-
----
-
-#### [MODIFY] [event_handlers.py](file:///Users/mayurifag/Code/tg-ai-manager/src/adapters/telegram/event_handlers.py)
-
-Change from direct dispatch to event bus publish:
-- `_dispatch()` → `event_bus.publish()`
-- Remove listener list management
-- File stays under 100 lines after split
-
----
-
-#### [NEW] [handlers/autoread_handler.py](file:///Users/mayurifag/Code/tg-ai-manager/src/handlers/autoread_handler.py)
-
-Dedicated autoread handler:
-- Subscribe to `message` events
-- Check autoread rules
-- Enqueue `auto_engage_actor` if enabled
-- ~50 lines
-
----
-
-#### [NEW] [handlers/autoreact_handler.py](file:///Users/mayurifag/Code/tg-ai-manager/src/handlers/autoreact_handler.py)
-
-Dedicated autoreact handler:
-- Subscribe to `message` events
-- Check autoreact rules
-- If autoreact enabled → enqueue `auto_engage_actor` with emoji
-- Skip autoread if autoreact fires (Option C: combined engagement)
-- ~60 lines
-
----
-
-#### [NEW] [handlers/sse_handler.py](file:///Users/mayurifag/Code/tg-ai-manager/src/handlers/sse_handler.py)
-
-SSE broadcast handler:
-- Subscribe to ALL event types
-- Render templates (moved from sse.py)
-- Push to connected client queues
-- Include `is_read` status in events
-
----
-
-#### [DELETE] [sse.py](file:///Users/mayurifag/Code/tg-ai-manager/src/web/sse.py)
-
-Replaced by `handlers/sse_handler.py` and route-only code in `routes/sse.py`
-
----
-
-#### [MODIFY] [service.py](file:///Users/mayurifag/Code/tg-ai-manager/src/rules/service.py)
-
-- Remove `handle_new_message_event()` - logic moved to handlers
-- Keep rule CRUD operations
-- Keep `simulate_process_message()` for debugging
-- File shrinks from 377 to ~150 lines
+- Initialize Arq connection pool
+- Register `EmbeddedQueueWorker`
 
 ---
 

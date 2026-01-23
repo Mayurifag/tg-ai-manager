@@ -41,14 +41,7 @@
         {% if msg.album_parts %}
         <div class="media-content">
             {% set count = msg.album_parts | length %}
-            {% set grid_class = 'items-more' %}
-            {% if count == 1 %}{% set grid_class = 'items-1' %}
-            {% elif count == 2 %}{% set grid_class = 'items-2' %}
-            {% elif count == 3 %}{% set grid_class = 'items-3' %}
-            {% elif count == 4 %}{% set grid_class = 'items-4' %}
-            {% endif %}
-
-            <div class="album-grid {{ grid_class }}">
+            <div class="album-grid items-{{ count if count <= 4 else 'more' }}">
                 {% for part in msg.album_parts %}
                 <div class="album-item">
                     {% if part.is_video %}
@@ -74,6 +67,10 @@
             </video>
 
             {% elif msg.is_sticker %}
+            {% if msg.sticker_emoji %}<!-- Alt Text -->{% endif %}
+            <!-- Check if sticker is Lottie (JSON) or Image -->
+            <!-- We can detect this via JS usually, but for now simple img.
+                     Lottie Stickers would need separate handling if we download them as .json -->
             <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy"
                 style="max-width: 300px; max-height: 300px; display: block;" alt="Sticker">
 
@@ -125,10 +122,17 @@
             {% for r in msg.reactions %}
             <div class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
                 data-emoji="{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}"
-                onclick="toggleReaction(this, {{ msg.id }}, '{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}')">
+                onclick="window.toggleReaction(this, {{ msg.id }}, '{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}')">
                 {% if r.custom_emoji_id %}
-                <img src="/media/custom_emoji/{{ r.custom_emoji_id }}"
-                    style="width: 20px; height: 20px; margin-right: 4px;">
+                <!-- Use img for preview, JS checks if it needs Lottie replacement based on src extension -->
+                <!-- We use onerror to handle potential loading issues, but main logic is in JS if we want lottie. -->
+                <!-- Since backend now unzips .tgs to .json, we can check extension via JS or assume image for simple view.
+                         However, `src` here points to /media/custom_emoji/ID. The route returns redirect.
+                         Browser <img src="...json"> wont work.
+                         We need a div container for Lottie. -->
+
+                <div class="lottie-anim" data-path="/media/custom_emoji/{{ r.custom_emoji_id }}"
+                    style="width: 20px; height: 20px; margin-right: 4px;"></div>
                 {% else %}
                 <span>{{ r.emoji }}&#xFE0F;</span>
                 {% endif %}
@@ -137,19 +141,16 @@
             {% endfor %}
         </div>
 
-        {# --- Hover Poop --- #}
-        <div class="hover-reaction" onclick="toggleReaction(this, {{ msg.id }}, '💩')" title="React with 💩">
+        <div class="hover-reaction" onclick="window.toggleReaction(this, {{ msg.id }}, '💩')" title="React with 💩">
             💩
         </div>
 
-        {# --- Debug Process Button (Only in Debug Mode) --- #}
-        {% if current_user.debug_mode %}
+        {% if current_user and current_user.debug_mode %}
         <div class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" title="Dry Run Rules">
             ⚙️
         </div>
         {% endif %}
 
-        <!-- Client-Side Time Rendering -->
         <div class="time local-time" data-timestamp="{{ msg.date.isoformat() }}"></div>
     </div>
 </div>

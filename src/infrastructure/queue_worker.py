@@ -1,8 +1,10 @@
 import asyncio
+
 from arq import Worker
+
 from src.infrastructure.arq_config import get_redis_settings
-from src.infrastructure.queue_jobs import WorkerSettings
 from src.infrastructure.logging import get_logger
+from src.infrastructure.queue_jobs import WorkerSettings
 
 logger = get_logger(__name__)
 
@@ -20,6 +22,7 @@ class EmbeddedQueueWorker:
             redis_settings=redis_settings,
             on_startup=WorkerSettings.on_startup,
             on_shutdown=WorkerSettings.on_shutdown,
+            on_job_completion=WorkerSettings.on_job_completion,
             max_tries=WorkerSettings.max_tries,
             allow_abort_jobs=True,
         )

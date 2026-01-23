@@ -1,9 +1,11 @@
 import sqlite3
 
-from src.adapters.telegram import TelethonAdapter
+from src.adapters.telegram.client import TelethonAdapter
 from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
 from src.application.interactors import ChatInteractor
 from src.config import get_settings
+from src.infrastructure.alerts import AlertManager
+from src.infrastructure.event_bus import EventBus
 from src.infrastructure.queue_monitor import QueueMonitor
 from src.infrastructure.queue_service import QueueService
 from src.infrastructure.queue_worker import EmbeddedQueueWorker
@@ -18,11 +20,19 @@ _event_repo: ValkeyEventRepository | None = None
 _user_repo: SqliteUserRepository | None = None
 _interactor: ChatInteractor | None = None
 _rule_service: RuleService | None = None
+_event_bus: EventBus | None = None
 
-# New Singletons
 _queue_service: QueueService | None = None
 _queue_worker: EmbeddedQueueWorker | None = None
 _queue_monitor: QueueMonitor | None = None
+_alert_manager: AlertManager | None = None
+
+
+def get_event_bus() -> EventBus:
+    global _event_bus
+    if _event_bus is None:
+        _event_bus = EventBus()
+    return _event_bus
 
 
 def _get_tg_adapter() -> TelethonAdapter:
@@ -43,11 +53,16 @@ def _get_tg_adapter() -> TelethonAdapter:
     except Exception as e:
         print(f"Error fetching session for adapter: {e}")
 
+    bus = get_event_bus()
     _tg_adapter = TelethonAdapter(
         session_string=session_string,
         api_id=settings.TG_API_ID,
         api_hash=settings.TG_API_HASH,
     )
+    _tg_adapter.event_bus = bus
+    _tg_adapter.writer.event_bus = bus
+    _tg_adapter.listener.event_bus = bus
+
     return _tg_adapter
 
 
@@ -55,22 +70,21 @@ def reload_tg_adapter(
     api_id: int = None, api_hash: str = None, session_string: str = None
 ):
     global _tg_adapter
-
-    # 1. Preserve existing listeners (SSE broadcast, Rule engine) from the old adapter
     existing_listeners = []
     if _tg_adapter:
         existing_listeners = _tg_adapter.listeners
 
     settings = get_settings()
+    bus = get_event_bus()
 
-    # 2. Create the new adapter
     _tg_adapter = TelethonAdapter(
         session_string=session_string,
         api_id=settings.TG_API_ID,
         api_hash=settings.TG_API_HASH,
     )
-
-    # 3. Restore listeners so events continue to flow
+    _tg_adapter.event_bus = bus
+    _tg_adapter.writer.event_bus = bus
+    _tg_adapter.listener.event_bus = bus
     _tg_adapter.listeners = existing_listeners
 
     global _interactor
@@ -126,6 +140,14 @@ def get_queue_monitor() -> QueueMonitor:
         settings = get_settings()
         _queue_monitor = QueueMonitor(settings.VALKEY_URL)
     return _queue_monitor
+
+
+def get_alert_manager() -> AlertManager:
+    global _alert_manager
+    if _alert_manager is None:
+        settings = get_settings()
+        _alert_manager = AlertManager(settings.VALKEY_URL)
+    return _alert_manager
 
 
 def get_chat_interactor() -> ChatInteractor:

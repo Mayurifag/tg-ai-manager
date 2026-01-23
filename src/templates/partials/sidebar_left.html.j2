@@ -1,0 +1,33 @@
+<aside class="sidebar left-sidebar">
+    <div class="sidebar-top">
+        {% block sidebar_back %}{% endblock %}
+    </div>
+
+    <div class="sidebar-content">
+        {% block sidebar_info %}{% endblock %}
+    </div>
+
+    <!-- Navigation Links -->
+    <div class="sidebar-nav">
+        <a href="/settings" class="setting-option">
+            ⚙️ Settings
+        </a>
+        <a href="/actions" class="setting-option">
+            📜 Actions Log
+        </a>
+        {% block settings %}{% endblock %}
+    </div>
+
+    <!-- User Profile Section -->
+    {% if current_user and current_user.username %}
+    <div class="user-profile-section">
+        <div class="sidebar-avatar">
+            {{ current_user.username[1] | upper if current_user.username|length > 1 else '?' }}
+        </div>
+        <div class="sidebar-user-info">
+            <div class="sidebar-username">{{ current_user.username }}</div>
+            <div class="sidebar-status">{{ 'Premium' if current_user.is_premium else 'Standard' }}</div>
+        </div>
+    </div>
+    {% endif %}
+</aside>
