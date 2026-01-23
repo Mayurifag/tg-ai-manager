@@ -11,6 +11,7 @@ from quart import Quart
 from src.container import (
     get_action_repo,
     get_chat_interactor,
+    get_embedded_worker,
     get_event_repo,
     get_rule_service,
     get_user_repo,
@@ -76,6 +77,10 @@ def create_app() -> Quart:
         interactor = get_chat_interactor()
         await interactor.initialize()
 
+        # Start Embedded Worker
+        worker = get_embedded_worker()
+        await worker.start()
+
         # We wrap broadcast_event to ensure it runs within an app context
         async def _context_aware_broadcast(event):
             async with app.app_context():
@@ -97,6 +102,10 @@ def create_app() -> Quart:
 
         # Allow SSE generators to exit gracefully
         await asyncio.sleep(0.1)
+
+        # Stop Embedded Worker
+        worker = get_embedded_worker()
+        await worker.stop()
 
         interactor = get_chat_interactor()
         try:

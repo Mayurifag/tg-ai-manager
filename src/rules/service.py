@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from src.domain.models import ActionLog, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository
 from src.infrastructure.logging import get_logger
+from src.infrastructure.queue_service import QueueService
 from src.rules.models import Rule, RuleType
 from src.rules.ports import RuleRepository
 from src.users.ports import UserRepository
@@ -21,11 +22,13 @@ class RuleService:
         action_repo: ActionRepository,
         chat_repo: ChatRepository,
         user_repo: UserRepository,
+        queue_service: QueueService,
     ):
         self.rule_repo = rule_repo
         self.action_repo = action_repo
         self.chat_repo = chat_repo
         self.user_repo = user_repo
+        self.queue_service = queue_service
 
         # Cache for deduplicating album reactions: (chat_id, grouped_id) -> timestamp
         self._album_reaction_cache: Dict[Tuple[int, int], float] = {}
@@ -127,14 +130,14 @@ class RuleService:
 
         if should_read:
             max_id = msg.id
-            await self.chat_repo.mark_as_read(
+            await self.queue_service.enqueue_mark_read(
                 event.chat_id, event.topic_id, max_id=max_id
             )
             event.is_read = True
 
             await self.action_repo.add_log(
                 ActionLog(
-                    action="autoread",
+                    action="autoread_queued",
                     chat_id=event.chat_id,
                     chat_name=event.chat_name,
                     reason=reason,
@@ -196,7 +199,7 @@ class RuleService:
                         break
 
             if not already_reacted:
-                await self.chat_repo.send_reaction(chat_id, message.id, emoji)
+                await self.queue_service.enqueue_reaction(chat_id, message.id, emoji)
                 # We don't log actions for reactions to avoid spamming the log
 
     async def run_startup_scan(self):
@@ -214,10 +217,12 @@ class RuleService:
                         topics = await self.chat_repo.get_unread_topics(chat.id)
                         for topic in topics:
                             if await self.is_autoread_enabled(chat.id, topic.id):
-                                await self.chat_repo.mark_as_read(chat.id, topic.id)
+                                await self.queue_service.enqueue_mark_read(
+                                    chat.id, topic.id
+                                )
                                 await self.action_repo.add_log(
                                     ActionLog(
-                                        action="startup_read",
+                                        action="startup_read_queued",
                                         chat_id=chat.id,
                                         chat_name=f"{chat.name} (Topic {topic.id})",
                                         reason="autoread_rule_startup",
@@ -241,10 +246,10 @@ class RuleService:
                                 if reason:
                                     should_read = True
                         if should_read:
-                            await self.chat_repo.mark_as_read(chat.id)
+                            await self.queue_service.enqueue_mark_read(chat.id)
                             await self.action_repo.add_log(
                                 ActionLog(
-                                    action="startup_read",
+                                    action="startup_read_queued",
                                     chat_id=chat.id,
                                     chat_name=chat.name,
                                     reason=reason,

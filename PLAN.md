@@ -22,7 +22,7 @@ Complete architectural overhaul of the Telegram AI Manager application. This pla
 
 ## Architecture Overview
 
-```mermaid
+~~~mermaid
 graph TB
     subgraph "Telethon Layer"
         TG[Telegram API]
@@ -71,7 +71,7 @@ graph TB
     VK --> EB
     VK --> TQ
     SQL --> API
-```
+~~~
 
 ---
 
@@ -133,7 +133,7 @@ Queue monitoring service:
 ### Verification Plan - Phase 1
 
 **Automated:**
-```bash
+~~~bash
 # Start dramatiq worker
 dramatiq src.infrastructure.queue_actors
 
@@ -142,7 +142,7 @@ python -c "from src.infrastructure.queue_actors import mark_as_read_actor; mark_
 
 # Verify in Valkey
 valkey-cli KEYS "dramatiq:*"
-```
+~~~
 
 **Manual:**
 - Trigger mark-as-read from UI, verify operation logged in Valkey
@@ -227,10 +227,10 @@ Replaced by `handlers/sse_handler.py` and route-only code in `routes/sse.py`
 ### Verification Plan - Phase 2
 
 **Automated:**
-```bash
+~~~bash
 # Event bus integration test
 pytest tests/integration/test_event_bus.py
-```
+~~~
 
 **Manual:**
 - Send message to chat with autoread enabled
@@ -252,13 +252,13 @@ pytest tests/integration/test_event_bus.py
 
 Split into:
 
-| New File | Responsibility | Lines |
-|----------|----------------|-------|
-| `chat_reader.py` | `get_chats`, `get_chat`, `get_all_unread_chats` | ~80 |
-| `message_reader.py` | `get_messages`, `get_recent_authors` | ~70 |
-| `forum_reader.py` | `get_forum_topics`, `get_unread_topics`, `get_topic_name` | ~80 |
-| `telegram_writer.py` | `mark_as_read`, `send_reaction` (queue integration) | ~90 |
-| `premium_status.py` | `get_self_premium_status` | ~20 |
+| New File             | Responsibility                                            | Lines |
+| -------------------- | --------------------------------------------------------- | ----- |
+| `chat_reader.py`     | `get_chats`, `get_chat`, `get_all_unread_chats`           | ~80   |
+| `message_reader.py`  | `get_messages`, `get_recent_authors`                      | ~70   |
+| `forum_reader.py`    | `get_forum_topics`, `get_unread_topics`, `get_topic_name` | ~80   |
+| `telegram_writer.py` | `mark_as_read`, `send_reaction` (queue integration)       | ~90   |
+| `premium_status.py`  | `get_self_premium_status`                                 | ~20   |
 
 ---
 
@@ -266,13 +266,13 @@ Split into:
 
 Split into:
 
-| New File | Responsibility | Lines |
-|----------|----------------|-------|
-| `event_dispatcher.py` | Listener management, `_dispatch` | ~40 |
-| `message_event_handler.py` | `_handle_new_message`, `_handle_edited_message` | ~80 |
-| `delete_event_handler.py` | `_handle_deleted_message` | ~50 |
-| `action_event_handler.py` | `_handle_chat_action` | ~45 |
-| `reaction_event_handler.py` | `_handle_other_updates`, `_process_reaction_update` | ~60 |
+| New File                    | Responsibility                                      | Lines |
+| --------------------------- | --------------------------------------------------- | ----- |
+| `event_dispatcher.py`       | Listener management, `_dispatch`                    | ~40   |
+| `message_event_handler.py`  | `_handle_new_message`, `_handle_edited_message`     | ~80   |
+| `delete_event_handler.py`   | `_handle_deleted_message`                           | ~50   |
+| `action_event_handler.py`   | `_handle_chat_action`                               | ~45   |
+| `reaction_event_handler.py` | `_handle_other_updates`, `_process_reaction_update` | ~60   |
 
 ---
 
@@ -280,12 +280,12 @@ Split into:
 
 Split into:
 
-| New File | Responsibility | Lines |
-|----------|----------------|-------|
-| `rule_service.py` | CRUD operations, `_toggle_rule` | ~80 |
-| `rule_checker.py` | `get_rule`, `is_autoread_enabled`, `check_global_autoread_rules` | ~60 |
-| `startup_scanner.py` | `run_startup_scan` | ~60 |
-| `rule_simulator.py` | `simulate_process_message` | ~60 |
+| New File             | Responsibility                                                   | Lines |
+| -------------------- | ---------------------------------------------------------------- | ----- |
+| `rule_service.py`    | CRUD operations, `_toggle_rule`                                  | ~80   |
+| `rule_checker.py`    | `get_rule`, `is_autoread_enabled`, `check_global_autoread_rules` | ~60   |
+| `startup_scanner.py` | `run_startup_scan`                                               | ~60   |
+| `rule_simulator.py`  | `simulate_process_message`                                       | ~60   |
 
 ---
 
@@ -293,30 +293,30 @@ Split into:
 
 Split into:
 
-| New File | Responsibility |
-|----------|----------------|
-| `base.html.j2` | Layout only (~60 lines) |
-| `partials/sidebar_left.html.j2` | Left sidebar |
-| `partials/sidebar_right.html.j2` | Right sidebar (debug events) |
-| `partials/lightbox.html.j2` | Lightbox modal |
-| `static/js/tooltip.js` | Tooltip logic |
-| `static/js/lightbox.js` | Lightbox logic |
-| `static/js/sse_handler.js` | SSE connection and event handling |
-| `static/js/time_utils.js` | Timezone rendering |
+| New File                         | Responsibility                    |
+| -------------------------------- | --------------------------------- |
+| `base.html.j2`                   | Layout only (~60 lines)           |
+| `partials/sidebar_left.html.j2`  | Left sidebar                      |
+| `partials/sidebar_right.html.j2` | Right sidebar (debug events)      |
+| `partials/lightbox.html.j2`      | Lightbox modal                    |
+| `static/js/tooltip.js`           | Tooltip logic                     |
+| `static/js/lightbox.js`          | Lightbox logic                    |
+| `static/js/sse_handler.js`       | SSE connection and event handling |
+| `static/js/time_utils.js`        | Timezone rendering                |
 
 ---
 
 ### Verification Plan - Phase 3
 
 **Automated:**
-```bash
+~~~bash
 # Line count check
 find src -name "*.py" -exec wc -l {} \; | awk '$1 > 100 {print}'
 # Should return nothing
 
 # Import test
 python -c "from src.adapters.telegram import TelethonAdapter; print('OK')"
-```
+~~~
 
 ---
 
@@ -395,10 +395,10 @@ For animated custom emojis:
 ### Verification Plan - Phase 4
 
 **Automated:**
-```bash
+~~~bash
 # Lighthouse accessibility check
 npx lighthouse http://localhost:8000 --only-categories=accessibility
-```
+~~~
 
 **Manual:**
 - Toggle autoread in settings → verify no page reload
@@ -434,7 +434,7 @@ npx lighthouse http://localhost:8000 --only-categories=accessibility
 #### [MODIFY] [autoreact_handler.py](file:///Users/mayurifag/Code/tg-ai-manager/src/handlers/autoreact_handler.py)
 
 Add linked group reaction propagation:
-```python
+~~~python
 async def handle_autoreact(event):
     # ... existing logic ...
     if should_react:
@@ -444,7 +444,7 @@ async def handle_autoreact(event):
         linked_msg = await get_linked_discussion_message(chat_id, msg_id)
         if linked_msg:
             await queue_reaction(linked_msg.chat_id, linked_msg.id, emoji)
-```
+~~~
 
 ---
 
@@ -480,7 +480,7 @@ async def handle_autoreact(event):
 #### [NEW] [health.py](file:///Users/mayurifag/Code/tg-ai-manager/src/web/routes/health.py)
 
 Health endpoint `GET /health`:
-```json
+~~~json
 {
   "status": "healthy",
   "telegram_connected": true,
@@ -488,7 +488,7 @@ Health endpoint `GET /health`:
   "queue_workers": 1,
   "failed_jobs": 0
 }
-```
+~~~
 
 ---
 
@@ -510,13 +510,13 @@ Add alert banner at top for critical errors
 
 ### Verification Plan - Phase 6
 
-```bash
+~~~bash
 # Health check
 curl http://localhost:8000/health | jq
 
 # Log inspection
 tail -f logs/app.log | jq
-```
+~~~
 
 ---
 
@@ -531,7 +531,7 @@ tail -f logs/app.log | jq
 #### [NEW] [ai/ports.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/ports.py)
 
 Abstract AI provider interface:
-```python
+~~~python
 class AIProvider(ABC):
     @abstractmethod
     async def complete(self, prompt: str, system: str = None) -> str:
@@ -540,7 +540,7 @@ class AIProvider(ABC):
     @abstractmethod
     async def classify(self, text: str, categories: list[str]) -> str:
         pass
-```
+~~~
 
 ---
 
@@ -564,25 +564,25 @@ OpenAI-compatible API (Grok, local models via Ollama):
 #### [NEW] [ai/factory.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/factory.py)
 
 Provider factory:
-```python
+~~~python
 def get_provider(feature: str, user_id: int) -> AIProvider:
     # Look up user's provider config for this feature
     # Return appropriate provider instance
-```
+~~~
 
 ---
 
 #### [MODIFY] [settings/models.py](file:///Users/mayurifag/Code/tg-ai-manager/src/settings/models.py)
 
 Add AI configuration:
-```python
+~~~python
 @dataclass
 class AIConfig:
     provider: str  # "gemini", "openai", "local"
     model: str
     api_key_encrypted: Optional[str]
     base_url: Optional[str]  # For local/custom endpoints
-```
+~~~
 
 ---
 
@@ -598,14 +598,14 @@ AI settings page:
 
 ### Verification Plan - Phase 7
 
-```bash
+~~~bash
 # Test Gemini provider
 python -c "
 from src.ai.providers.gemini import GeminiProvider
 p = GeminiProvider(api_key='test')
 # Mock test
 "
-```
+~~~
 
 ---
 
@@ -620,7 +620,7 @@ p = GeminiProvider(api_key='test')
 #### [NEW] [ai/classifiers/ad_classifier.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/classifiers/ad_classifier.py)
 
 Ad classification:
-```python
+~~~python
 SYSTEM_PROMPT = """
 Classify if the following Telegram message is an advertisement.
 Respond with only: AD or NOT_AD
@@ -629,7 +629,7 @@ Respond with only: AD or NOT_AD
 async def is_ad(text: str, provider: AIProvider) -> bool:
     result = await provider.classify(text, ["AD", "NOT_AD"])
     return result == "AD"
-```
+~~~
 
 ---
 
@@ -677,7 +677,7 @@ Add `RuleType.SKIP_ADS`
 #### [NEW] [ai/summarizers/person_summarizer.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/summarizers/person_summarizer.py)
 
 Person summary generation:
-```python
+~~~python
 SYSTEM_PROMPT = """
 Based on the messages, extract and update facts about this person.
 Categories: location, birthday, interests, preferences, relationships, work, memorable quotes.
@@ -690,13 +690,13 @@ async def summarize_person(
     provider: AIProvider
 ) -> dict:
     # Merge new info with existing
-```
+~~~
 
 ---
 
 #### [NEW] [person/models.py](file:///Users/mayurifag/Code/tg-ai-manager/src/person/models.py)
 
-```python
+~~~python
 @dataclass
 class PersonProfile:
     user_id: int
@@ -705,7 +705,7 @@ class PersonProfile:
     notes: str  # User-editable notes
     last_processed_msg_id: int
     updated_at: datetime
-```
+~~~
 
 ---
 
@@ -754,7 +754,7 @@ Scheduled task (not event-driven):
 #### [NEW] [ai/advisors/reply_advisor.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/advisors/reply_advisor.py)
 
 Reply suggestion:
-```python
+~~~python
 SYSTEM_PROMPT = """
 You are a {role} (e.g., lawyer, teacher, friend).
 Based on the conversation, suggest 3 possible replies.
@@ -766,7 +766,7 @@ async def suggest_replies(
     role: str,
     provider: AIProvider
 ) -> list[str]:
-```
+~~~
 
 ---
 
@@ -800,7 +800,7 @@ async def suggest_replies(
 #### [NEW] [ai/aggregators/post_aggregator.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/aggregators/post_aggregator.py)
 
 Post aggregation:
-```python
+~~~python
 SYSTEM_PROMPT = """
 From these messages, identify the most valuable/useful ones.
 Consider: information density, insights, actionable advice.
@@ -812,7 +812,7 @@ async def aggregate_useful_posts(
     context: str,  # What type of content user finds valuable
     provider: AIProvider
 ) -> list[dict]:  # [{msg_id, reason}]
-```
+~~~
 
 Processing strategy:
 - Batch messages (e.g., 50 per API call)
@@ -823,7 +823,7 @@ Processing strategy:
 
 #### [NEW] [aggregation/models.py](file:///Users/mayurifag/Code/tg-ai-manager/src/aggregation/models.py)
 
-```python
+~~~python
 @dataclass
 class AggregationConfig:
     id: int
@@ -834,7 +834,7 @@ class AggregationConfig:
     lookback_days: int  # How far back to scan
     max_posts: int  # Max posts per aggregation
     context_prompt: str  # What is "useful"
-```
+~~~
 
 ---
 
@@ -894,7 +894,7 @@ Scheduled task:
 
 #### [NEW] [ai/search/chat_search.py](file:///Users/mayurifag/Code/tg-ai-manager/src/ai/search/chat_search.py)
 
-```python
+~~~python
 SYSTEM_PROMPT = """
 Search through these chat messages to answer the user's question.
 If the answer spans multiple messages, synthesize them.
@@ -907,7 +907,7 @@ async def search_chats(
     provider: AIProvider,
     chat_repo: ChatRepository
 ) -> SearchResult:
-```
+~~~
 
 ---
 
@@ -985,9 +985,9 @@ Browser tests (Playwright):
 
 ### Verification Plan - Phase 13
 
-```bash
+~~~bash
 pytest tests/ -v --cov=src --cov-report=html
-```
+~~~
 
 ---
 
@@ -1001,25 +1001,25 @@ pytest tests/ -v --cov=src --cov-report=html
 
 #### Current Singletons to Abstract
 
-| Current | Change |
-|---------|--------|
-| `_tg_adapter` global | Per-user adapter registry |
-| `_rule_service` global | Factory with user_id |
-| `user_id = 1` hardcoded | Extract from session |
-| Single SQLite file | File-per-user pattern |
+| Current                 | Change                    |
+| ----------------------- | ------------------------- |
+| `_tg_adapter` global    | Per-user adapter registry |
+| `_rule_service` global  | Factory with user_id      |
+| `user_id = 1` hardcoded | Extract from session      |
+| Single SQLite file      | File-per-user pattern     |
 
 ---
 
 #### [MODIFY] [container.py](file:///Users/mayurifag/Code/tg-ai-manager/src/container.py)
 
 Add user-scoped factories:
-```python
+~~~python
 def get_tg_adapter(user_id: int) -> TelethonAdapter:
     # Return cached or create new
 
 def get_user_db_path(user_id: int) -> str:
     return f"{DATA_DIR}/user_{user_id}.db"
-```
+~~~
 
 ---
 
@@ -1053,17 +1053,17 @@ Multi-user preparation:
 
 ### Verification Plan - Phase 14
 
-```bash
+~~~bash
 # Verify no hardcoded user_id = 1
 grep -r "user_id.*=.*1" src/ --include="*.py"
 # Should return minimal results (only defaults)
-```
+~~~
 
 ---
 
 ## Implementation Order Summary
 
-```mermaid
+~~~mermaid
 gantt
     title Refactoring Phases
     dateFormat X
@@ -1094,25 +1094,25 @@ gantt
 
     section Multi-tenant
     Phase 14 - Multi-Tenancy Prep :p14, after p12, 2
-```
+~~~
 
 ---
 
 ## File Count Impact
 
-| Category | Current | After Refactor |
-|----------|---------|----------------|
-| Python files | 46 | ~85 |
-| Max file lines | 564 | ≤100 |
-| Template files | 11 | ~18 |
-| JS files | 0 (inline) | 6 |
-| New handlers | 0 | 8+ |
+| Category       | Current    | After Refactor |
+| -------------- | ---------- | -------------- |
+| Python files   | 46         | ~85            |
+| Max file lines | 564        | ≤100           |
+| Template files | 11         | ~18            |
+| JS files       | 0 (inline) | 6              |
+| New handlers   | 0          | 8+             |
 
 ---
 
 ## Docker Changes Required
 
-```yaml
+~~~yaml
 # docker-compose.yml additions
 services:
   dramatiq-worker:
@@ -1122,12 +1122,12 @@ services:
       - valkey
     environment:
       - VALKEY_URL=valkey://valkey:6379
-```
+~~~
 
-```dockerfile
+~~~dockerfile
 # Dockerfile additions
 RUN pip install dramatiq[redis] lottie
-```
+~~~
 
 ---
 

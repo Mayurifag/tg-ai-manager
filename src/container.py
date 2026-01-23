@@ -4,6 +4,9 @@ from src.adapters.telegram import TelethonAdapter
 from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
 from src.application.interactors import ChatInteractor
 from src.config import get_settings
+from src.infrastructure.queue_monitor import QueueMonitor
+from src.infrastructure.queue_service import QueueService
+from src.infrastructure.queue_worker import EmbeddedQueueWorker
 from src.infrastructure.security import CryptoManager
 from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
@@ -15,6 +18,11 @@ _event_repo: ValkeyEventRepository | None = None
 _user_repo: SqliteUserRepository | None = None
 _interactor: ChatInteractor | None = None
 _rule_service: RuleService | None = None
+
+# New Singletons
+_queue_service: QueueService | None = None
+_queue_worker: EmbeddedQueueWorker | None = None
+_queue_monitor: QueueMonitor | None = None
 
 
 def _get_tg_adapter() -> TelethonAdapter:
@@ -98,11 +106,36 @@ def get_user_repo() -> SqliteUserRepository:
     return _user_repo
 
 
+def get_queue_service() -> QueueService:
+    global _queue_service
+    if _queue_service is None:
+        _queue_service = QueueService()
+    return _queue_service
+
+
+def get_embedded_worker() -> EmbeddedQueueWorker:
+    global _queue_worker
+    if _queue_worker is None:
+        _queue_worker = EmbeddedQueueWorker()
+    return _queue_worker
+
+
+def get_queue_monitor() -> QueueMonitor:
+    global _queue_monitor
+    if _queue_monitor is None:
+        settings = get_settings()
+        _queue_monitor = QueueMonitor(settings.VALKEY_URL)
+    return _queue_monitor
+
+
 def get_chat_interactor() -> ChatInteractor:
     global _interactor
     if _interactor is None:
         _interactor = ChatInteractor(
-            _get_tg_adapter(), get_action_repo(), get_event_repo()
+            _get_tg_adapter(),
+            get_action_repo(),
+            get_event_repo(),
+            get_queue_service(),
         )
     return _interactor
 
@@ -113,6 +146,10 @@ def get_rule_service() -> RuleService:
         settings = get_settings()
         rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
         _rule_service = RuleService(
-            rule_repo, get_action_repo(), _get_tg_adapter(), get_user_repo()
+            rule_repo,
+            get_action_repo(),
+            _get_tg_adapter(),
+            get_user_repo(),
+            get_queue_service(),
         )
     return _rule_service

@@ -3,6 +3,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
+from src.infrastructure.queue_service import QueueService
 
 
 class ChatInteractor:
@@ -11,16 +12,20 @@ class ChatInteractor:
         repository: ChatRepository,
         action_repo: ActionRepository,
         event_repo: EventRepository,
+        queue_service: QueueService,
     ):
         self.repository = repository
         self.action_repo = action_repo
         self.event_repo = event_repo
+        self.queue_service = queue_service
 
     async def initialize(self):
         await self.repository.connect()
+        await self.queue_service.connect()
 
     async def shutdown(self):
         await self.repository.disconnect()
+        await self.queue_service.close()
 
     async def get_recent_chats(self, limit: int = 20) -> List[Chat]:
         return await self.repository.get_chats(limit)
@@ -96,13 +101,15 @@ class ChatInteractor:
         topic_id: Optional[int] = None,
         max_id: Optional[int] = None,
     ) -> None:
-        await self.repository.mark_as_read(chat_id, topic_id, max_id=max_id)
+        # Enqueue Job
+        await self.queue_service.enqueue_mark_read(chat_id, topic_id, max_id)
 
+        # Optimistic logging
         chat = await self.repository.get_chat(chat_id)
         chat_name = chat.name if chat else f"Chat {chat_id}"
 
         link = f"/chat/{chat_id}"
-        action_name = "read_chat"
+        action_name = "read_chat_queued"
 
         if topic_id:
             t_name = await self.repository.get_topic_name(chat_id, topic_id)
@@ -110,11 +117,11 @@ class ChatInteractor:
 
             chat_name = f"{name_part} - {chat_name}"
             link = f"/chat/{chat_id}/topic/{topic_id}"
-            action_name = "read_topic"
+            action_name = "read_topic_queued"
 
         elif chat and chat.type == ChatType.FORUM:
             link = f"/forum/{chat_id}"
-            action_name = "read_forum"
+            action_name = "read_forum_queued"
 
         log = ActionLog(
             action=action_name,
@@ -127,7 +134,9 @@ class ChatInteractor:
         await self.action_repo.add_log(log)
 
     async def toggle_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
-        return await self.repository.send_reaction(chat_id, msg_id, emoji)
+        # Enqueue Job
+        await self.queue_service.enqueue_reaction(chat_id, msg_id, emoji)
+        return True
 
     async def get_action_logs(self, limit: int = 50) -> List[ActionLog]:
         return await self.action_repo.get_logs(limit)
