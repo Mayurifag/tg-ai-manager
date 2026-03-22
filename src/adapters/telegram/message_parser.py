@@ -42,7 +42,11 @@ class MessageParserMixin:
 
     def _cache_message_chat(self, msg_id: int, chat_id: int):
         if len(self._msg_id_to_chat_id) > 15000:
-            self._msg_id_to_chat_id.clear()
+            # Evict the oldest 5000 entries rather than clearing everything.
+            # A full clear would lose chat mappings for recently-seen messages,
+            # causing delete events to fall back to "Unknown" chat.
+            for key in list(self._msg_id_to_chat_id.keys())[:5000]:
+                del self._msg_id_to_chat_id[key]
         self._msg_id_to_chat_id[msg_id] = chat_id
 
     def _get_sender_color(self, sender: Any, sender_id: int) -> str:
@@ -83,13 +87,14 @@ class MessageParserMixin:
                 return html_escape(raw_text)
         return ""
 
-    def _extract_reactions(self, msg: Any) -> list[Reaction]:
+    def _extract_reactions(self, reactions: Any) -> list[Reaction]:
+        """Extract Reaction list from a Telethon MessageReactions object (msg.reactions or event.reactions)."""
         results = []
-        if not hasattr(msg, "reactions") or not msg.reactions:
+        if not reactions:
             return results
 
-        reaction_counts = getattr(msg.reactions, "results", [])
-        recent_reactions = getattr(msg.reactions, "recent_reactions", []) or []
+        reaction_counts = getattr(reactions, "results", [])
+        recent_reactions = getattr(reactions, "recent_reactions", []) or []
 
         my_reaction_emojis: Set[str] = set()
         my_reaction_docs: Set[int] = set()
@@ -244,7 +249,7 @@ class MessageParserMixin:
             elif reply_to_msg_id:
                 pass
 
-        reactions = self._extract_reactions(msg)
+        reactions = self._extract_reactions(getattr(msg, "reactions", None))
         grouped_id = getattr(msg, "grouped_id", None)
 
         return Message(

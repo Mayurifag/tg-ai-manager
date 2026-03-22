@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 class ChatOperationsMixin:
     def __init__(self):
         self.client: Any = None
+        self._topic_name_cache: Dict[tuple[int, int], str] = {}
 
     # Abstract dependencies
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
@@ -351,6 +352,10 @@ class ChatOperationsMixin:
             return []
 
     async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
+        key = (chat_id, topic_id)
+        if key in self._topic_name_cache:
+            return self._topic_name_cache[key]
+
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, ids=[topic_id])
@@ -359,7 +364,9 @@ class ChatOperationsMixin:
                 message = messages[0]
                 if message and getattr(message, "action", None):
                     if isinstance(message.action, MessageActionTopicCreate):
-                        return message.action.title
+                        name = message.action.title
+                        self._topic_name_cache[key] = name
+                        return name
         except Exception as e:
             logger.error(
                 "get_topic_name_failed",
@@ -410,18 +417,17 @@ class ChatOperationsMixin:
                 else:
                     await self.client.send_read_acknowledge(entity)
 
-            if hasattr(self, "_dispatch"):
-                event = SystemEvent(
-                    type="read",
-                    text="Marked as read",
-                    chat_name=chat_name,
-                    topic_name=topic_name,
-                    chat_id=chat_id,
-                    topic_id=topic_id,
-                    is_read=True,
-                    link=f"/chat/{chat_id}",
-                )
-                await getattr(self, "_dispatch")(event)
+            event = SystemEvent(
+                type="read",
+                text="Marked as read",
+                chat_name=chat_name,
+                topic_name=topic_name,
+                chat_id=chat_id,
+                topic_id=topic_id,
+                is_read=True,
+                link=f"/chat/{chat_id}",
+            )
+            await self._dispatch(event)
 
         except Exception as e:
             logger.error(
@@ -518,21 +524,17 @@ class ChatOperationsMixin:
                     updated_msgs = await self.client.get_messages(entity, ids=[msg_id])
                     if updated_msgs:
                         updated_msg = updated_msgs[0]
-                        if hasattr(self, "_parse_message") and hasattr(
-                            self, "_dispatch"
-                        ):
-                            parsed_msg = await getattr(self, "_parse_message")(
-                                updated_msg, chat_id=chat_id
-                            )
-
-                            event = SystemEvent(
-                                type="reaction_update",
-                                text="",
-                                chat_name="",
-                                chat_id=chat_id,
-                                message_model=parsed_msg,
-                            )
-                            await getattr(self, "_dispatch")(event)
+                        parsed_msg = await self._parse_message(
+                            updated_msg, chat_id=chat_id
+                        )
+                        event = SystemEvent(
+                            type="reaction_update",
+                            text="",
+                            chat_name="",
+                            chat_id=chat_id,
+                            message_model=parsed_msg,
+                        )
+                        await self._dispatch(event)
                 except Exception as ex:
                     logger.error(
                         "post_reaction_fetch_failed",

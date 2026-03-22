@@ -52,6 +52,7 @@ class TelethonAdapter(
         self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
         self._event_handler_registered = False
         self._msg_id_to_chat_id: Dict[int, int] = {}
+        self._topic_name_cache: Dict[tuple[int, int], str] = {}
         self._is_connected_flag = False
 
         # QR Login State

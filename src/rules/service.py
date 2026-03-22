@@ -113,14 +113,21 @@ class RuleService:
             reason = "autoread_rule"
 
         if not should_read:
-            # We assume unread_count is 1 for a new message event for simplicity in global rules
-            # In reality, interactor fetches real state, but here we estimate.
+            # Pass unread_count=1 as a conservative estimate for live events.
+            # check_global_autoread_rules gates on unread_count <= 1 intentionally:
+            # global rules (service msgs, polls, bots, regex) only fire when the
+            # incoming message is the sole unread one. If there are already unread
+            # messages in this chat, those might be important and the user may not
+            # want them marked read automatically. Per-chat autoread rules (above)
+            # cover the "read everything regardless" case.
             reason = await self.check_global_autoread_rules(msg, unread_count=1)
             if reason:
                 should_read = True
 
             if should_read and "global" in reason:
-                # Double check with real state
+                # Verify with real unread count: if the chat already had unread
+                # messages before this one arrived, skip autoread. This lets the
+                # user catch up on the backlog themselves.
                 chat = await self.chat_repo.get_chat(event.chat_id)
                 if chat and chat.unread_count > 1:
                     should_read = False
@@ -200,10 +207,7 @@ class RuleService:
                 # We don't log actions for reactions to avoid spamming the log
 
     async def run_startup_scan(self):
-        if (
-            not hasattr(self.chat_repo, "is_connected")
-            or not self.chat_repo.is_connected()
-        ):
+        if not self.chat_repo.is_connected():
             return
 
         try:
@@ -253,10 +257,15 @@ class RuleService:
                                 )
                             )
                     await asyncio.sleep(0.1)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    logger.warning(
+                        "startup_scan_chat_failed",
+                        chat_id=chat.id,
+                        chat_name=chat.name,
+                        error=repr(e),
+                    )
+        except Exception as e:
+            logger.warning("startup_scan_failed", error=repr(e))
 
     async def toggle_autoread(
         self, chat_id: int, topic_id: Optional[int], enabled: bool

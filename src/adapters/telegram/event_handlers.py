@@ -34,7 +34,7 @@ class EventHandlersMixin:
     ) -> Message:
         raise NotImplementedError
 
-    def _extract_reactions(self, msg: Any) -> list[Reaction]:
+    def _extract_reactions(self, reactions: Any) -> list[Reaction]:
         raise NotImplementedError
 
     def _extract_topic_id(self, message: Any) -> Optional[int]:
@@ -76,10 +76,7 @@ class EventHandlersMixin:
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                if hasattr(self, "get_topic_name"):
-                    topic_name = await getattr(self, "get_topic_name")(
-                        event.chat_id, topic_id
-                    )
+                topic_name = await self.get_topic_name(event.chat_id, topic_id)
 
             display_chat_name = chat_name
             preview = domain_msg.get_preview_text()
@@ -120,10 +117,7 @@ class EventHandlersMixin:
             topic_id = self._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                if hasattr(self, "get_topic_name"):
-                    topic_name = await getattr(self, "get_topic_name")(
-                        event.chat_id, topic_id
-                    )
+                topic_name = await self.get_topic_name(event.chat_id, topic_id)
 
             sys_event = SystemEvent(
                 type="edited",
@@ -266,17 +260,7 @@ class EventHandlersMixin:
         except Exception:
             pass
 
-        # We need a dummy message model for the chat view to process the reaction update
-        class MockMsg:
-            def __init__(self, r):
-                self.reactions = r
-
-        mock_msg = MockMsg(event.reactions)
-
-        if hasattr(self, "_extract_reactions"):
-            reactions_list = getattr(self, "_extract_reactions")(mock_msg)
-        else:
-            reactions_list = []
+        reactions_list = self._extract_reactions(event.reactions)
 
         msg_model = Message(
             id=event.msg_id,
