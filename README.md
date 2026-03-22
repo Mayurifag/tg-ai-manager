@@ -52,24 +52,23 @@ services:
 
 ## TODO
 
-- **Multi-tenancy Support:** Currently, the application supports a single active user session in the database. Future refactoring should introduce a `ClientManager` to handle multiple `TelethonAdapter` instances for different users simultaneously.
-- Restyle user indication in sidebar. Switch between users easily
-- AI integration to skip ads
-- AI integration to help with advice
-- AI integration to notify on liked and/or useful posts. Make a feed?
-- AI integration to help find answer in chats
+- AI integration to skip ads - we will have prompt which will ask LLM if message is ad or not and auto-read if it is
+- AI integration to make a summary on person and save it to db based on all messages (should save latest message which it parsed and may be continued to save context notes)
+- AI integration to help with advice - ask LLM to give some advice on recent messages what to answer next with context. For example being a lawyer or teacher or else based on prompt
+- AI integration to notify on liked and/or useful posts in channel. Every n hours read messages of previous 3 days and find useful ones (might be based also on likes context) and rephrase them and put into feed channel with link to original
+- AI integration to help find answer in chats - ask LLM on some prompt which will use all chat to find answer to some question. Thats the tough one, but research may be done in some hours. This also might be used on several channels. This require a lot of work
 - Refactor to have Telethon queue - mark as read / react and so on have to be done on queue with telethon internal throttling
-- Support large quotes on frontend.
-- png -> webp
+- Support large quotes posts on frontend.
+- we save content in png/jpg from telegram -> but we actually may convert and use webp
 - I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted
-- Settings cards - have better UI what do they do
+- Settings cards - have better UI/UX what do they do
+- Restyle user indication in sidebar. Switch between users easily in future
+- **Multi-tenancy Support:** we have to support multiple users
 
 ## Known bugs
 
 - Animated custom emojis arent working
-- Reacts - not correctly done for posts in groupchat that are reposts from group.
-- Reacts - some messages are not correctly shown that im the author of reaction
-- forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
+- Reacts - not correctly done for posts in groupchat that are reposts from group. For example we have group and chat for group. We have auto like for both group and main user of groupchat. Group message will be liked and user's groupchat message will not be liked.
 
 ### Bugs that perhaps fixed already
 
@@ -77,3 +76,5 @@ services:
 - Autoreact - disabling - until reload wrong "dot" on card
 - performance issues after some time. seems i am throttled by telegram but not sure
 - Load pred messages fix in groups - wrong place of loads, slow, etc. On chats load actually load from the bottom even with pictures. We know their max height so its fine
+- Reacts - some messages are not correctly shown that im the author of reaction
+- forums bug that it doesnt updates and shows unread messages even though in reality there is no msgs to read
