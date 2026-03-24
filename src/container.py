@@ -1,118 +1,68 @@
-import sqlite3
+"""
+App-scoped service accessors.
+
+All services are created in src/web/__init__.py:startup (before_serving) and
+attached to the Quart app object. These functions are thin delegates to
+current_app — they work in any request context or app context.
+"""
+
+from quart import current_app
 
 from src.adapters.telegram import TelethonAdapter
-from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
 from src.application.interactors import ChatInteractor
-from src.config import get_settings
-from src.infrastructure.security import CryptoManager
+from src.infrastructure.logging import get_logger
 from src.rules.service import RuleService
-from src.rules.sqlite_repo import SqliteRuleRepository
-from src.users.sqlite_repo import SqliteUserRepository
 
-_tg_adapter: TelethonAdapter | None = None
-_action_repo: ValkeyActionRepository | None = None
-_event_repo: ValkeyEventRepository | None = None
-_user_repo: SqliteUserRepository | None = None
-_interactor: ChatInteractor | None = None
-_rule_service: RuleService | None = None
+logger = get_logger(__name__)
 
 
 def _get_tg_adapter() -> TelethonAdapter:
-    global _tg_adapter
-    if _tg_adapter is not None:
-        return _tg_adapter
-
-    settings = get_settings()
-    crypto = CryptoManager()
-    session_string = None
-
-    try:
-        with sqlite3.connect(settings.DB_PATH) as conn:
-            cur = conn.execute("SELECT session_string FROM users WHERE id = 1")
-            row = cur.fetchone()
-            if row and row[0]:
-                session_string = crypto.decrypt(row[0])
-    except Exception as e:
-        print(f"Error fetching session for adapter: {e}")
-
-    _tg_adapter = TelethonAdapter(
-        session_string=session_string,
-        api_id=settings.TG_API_ID,
-        api_hash=settings.TG_API_HASH,
-    )
-    return _tg_adapter
-
-
-def reload_tg_adapter(
-    api_id: int = None, api_hash: str = None, session_string: str = None
-):
-    global _tg_adapter
-
-    # 1. Preserve existing listeners (SSE broadcast, Rule engine) from the old adapter
-    existing_listeners = []
-    if _tg_adapter:
-        existing_listeners = _tg_adapter.listeners
-
-    settings = get_settings()
-
-    # 2. Create the new adapter
-    _tg_adapter = TelethonAdapter(
-        session_string=session_string,
-        api_id=settings.TG_API_ID,
-        api_hash=settings.TG_API_HASH,
-    )
-
-    # 3. Restore listeners so events continue to flow
-    _tg_adapter.listeners = existing_listeners
-
-    global _interactor
-    if _interactor:
-        _interactor.repository = _tg_adapter
-
-    global _rule_service
-    if _rule_service:
-        _rule_service.chat_repo = _tg_adapter
-
-
-def get_action_repo() -> ValkeyActionRepository:
-    global _action_repo
-    if _action_repo is None:
-        settings = get_settings()
-        _action_repo = ValkeyActionRepository(settings.VALKEY_URL)
-    return _action_repo
-
-
-def get_event_repo() -> ValkeyEventRepository:
-    global _event_repo
-    if _event_repo is None:
-        settings = get_settings()
-        _event_repo = ValkeyEventRepository(settings.VALKEY_URL)
-    return _event_repo
-
-
-def get_user_repo() -> SqliteUserRepository:
-    global _user_repo
-    if _user_repo is None:
-        settings = get_settings()
-        _user_repo = SqliteUserRepository(db_path=settings.DB_PATH)
-    return _user_repo
+    return current_app.tg_adapter  # type: ignore[attr-defined]
 
 
 def get_chat_interactor() -> ChatInteractor:
-    global _interactor
-    if _interactor is None:
-        _interactor = ChatInteractor(
-            _get_tg_adapter(), get_action_repo(), get_event_repo()
-        )
-    return _interactor
+    return current_app.chat_interactor  # type: ignore[attr-defined]
 
 
 def get_rule_service() -> RuleService:
-    global _rule_service
-    if _rule_service is None:
-        settings = get_settings()
-        rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
-        _rule_service = RuleService(
-            rule_repo, get_action_repo(), _get_tg_adapter(), get_user_repo()
-        )
-    return _rule_service
+    return current_app.rule_service  # type: ignore[attr-defined]
+
+
+def get_action_repo():
+    return current_app.action_repo  # type: ignore[attr-defined]
+
+
+def get_event_repo():
+    return current_app.event_repo  # type: ignore[attr-defined]
+
+
+def get_user_repo():
+    return current_app.user_repo  # type: ignore[attr-defined]
+
+
+def reload_tg_adapter(
+    api_id: int = None,  # type: ignore[assignment]
+    api_hash: str = None,  # type: ignore[assignment]
+    session_string: str = None,  # type: ignore[assignment]
+) -> None:
+    """Hot-swap the Telegram adapter (called on QR login start).
+
+    Creates a new adapter, re-wires it to the event bus, and updates all
+    app-scoped references that hold a pointer to the old adapter.
+    """
+    from src.config import get_settings
+
+    settings = get_settings()
+    new_adapter = TelethonAdapter(
+        session_string=session_string,
+        api_id=settings.TG_API_ID,
+        api_hash=settings.TG_API_HASH,
+    )
+
+    # Re-wire: event bus dispatch is the sole listener
+    new_adapter.add_event_listener(current_app.event_bus.dispatch)  # type: ignore[attr-defined]
+
+    # Update app-scoped references
+    current_app.tg_adapter = new_adapter  # type: ignore[attr-defined]
+    current_app.chat_interactor.repository = new_adapter  # type: ignore[attr-defined]
+    current_app.rule_service.chat_repo = new_adapter  # type: ignore[attr-defined]

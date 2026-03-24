@@ -15,10 +15,10 @@ from src.infrastructure.logging import get_logger
 logger = get_logger(__name__)
 
 
-class MediaMixin:
-    def __init__(self):
-        self.client: Any = None
-        self.images_dir: str = ""
+class MediaManager:
+    def __init__(self, client: Any, images_dir: str) -> None:
+        self.client = client
+        self.images_dir = images_dir
 
     def _get_avatar_path(self, chat_id: int) -> str:
         return os.path.join(self.images_dir, f"{chat_id}.jpg")
@@ -30,9 +30,6 @@ class MediaMixin:
 
         logger.info("cleaning_startup_cache")
         try:
-            # We assume avatar files are numeric {chat_id}.jpg or similar,
-            # while media files start with 'media_'.
-            # We delete everything that doesn't start with media_.
             for filename in os.listdir(self.images_dir):
                 if filename.startswith("media_") or filename.startswith("emoji_"):
                     continue
@@ -51,7 +48,6 @@ class MediaMixin:
         if not self.images_dir or not os.path.exists(self.images_dir):
             return
 
-        # Default limit changed to 1GB (1024MB)
         limit_mb = int(os.getenv("CACHE_MAX_SIZE_MB", "1024"))
         limit_bytes = limit_mb * 1024 * 1024
 
@@ -72,7 +68,6 @@ class MediaMixin:
             if total_size <= limit_bytes:
                 return
 
-            # Sort by modification time (oldest first)
             files.sort(key=lambda x: x[1])
 
             deleted_count = 0
@@ -100,10 +95,6 @@ class MediaMixin:
             logger.error("cache_maintenance_failed", error=str(e))
 
     async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
-        """
-        Refactored: Now returns the URL string if the entity has a photo,
-        without checking disk or downloading.
-        """
         if hasattr(entity, "photo") and entity.photo:
             if getattr(entity.photo, "photo_id", None) or getattr(
                 entity.photo, "photo_small", None
@@ -132,12 +123,9 @@ class MediaMixin:
             return path
 
         try:
-            # Try to resolve entity. If not found (e.g. unknown PeerUser), this raises ValueError.
             try:
                 entity = await self.client.get_entity(chat_id)
             except ValueError:
-                # Common for users not in session cache (lazy loading side effect)
-                # We log this as debug to avoid spamming errors for every unknown user.
                 logger.debug("avatar_entity_not_found", chat_id=chat_id)
                 return None
 
@@ -154,11 +142,6 @@ class MediaMixin:
     async def download_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"
     ) -> Optional[str]:
-        """
-        Downloads media.
-        size_type="preview" -> thumb='m' (default), saves as media_{id}_{msg_id}.ext
-        size_type="full" -> thumb=None (highest res), saves as media_{id}_{msg_id}_full.ext
-        """
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, ids=[message_id])
@@ -185,12 +168,10 @@ class MediaMixin:
                     elif "video/mp4" in message.media.document.mime_type:
                         ext = "mp4"
 
-            # Determine filename based on size_type
             suffix = "_full" if size_type == "full" else ""
             filename = f"media_{chat_id}_{message_id}{suffix}.{ext}"
             path = os.path.join(self.images_dir, filename)
 
-            # Return cached if exists
             if os.path.exists(path):
                 return f"/cache/{filename}"
 
@@ -209,24 +190,17 @@ class MediaMixin:
 
             result = None
 
-            # Logic for download arguments
             if is_sticker or is_audio or is_video:
-                # Stickers/Audio/Video usually don't have multiple 'thumb' sizes in the same way
-                # or require specific handling. For now, we download the main file.
                 result = await self.client.download_media(message, file=path)
             else:
-                # It is likely a Photo
                 if size_type == "full":
-                    # Download max size
                     result = await self.client.download_media(
                         message, file=path, thumb=None
                     )
                 else:
-                    # Download preview
                     result = await self.client.download_media(
                         message, file=path, thumb="m"
                     )
-                    # Fallback if 'm' thumb doesn't exist (e.g. small images)
                     if not result:
                         result = await self.client.download_media(message, file=path)
 
@@ -244,10 +218,7 @@ class MediaMixin:
         return None
 
     async def get_custom_emoji_media(self, document_id: int) -> Optional[str]:
-        """
-        Downloads a custom emoji by its document ID.
-        """
-        filename = f"emoji_{document_id}.webp"  # Use webp/webm mostly
+        filename = f"emoji_{document_id}.webp"
         path = os.path.join(self.images_dir, filename)
 
         if os.path.exists(path):
