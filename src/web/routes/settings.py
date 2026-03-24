@@ -164,3 +164,11 @@ async def api_debug_process():
 
     result = await rule_service.simulate_process_message(chat_id, msg_id)
     return jsonify(result)
+
+
+@settings_bp.route("/api/rules/<int:rule_id>", methods=["DELETE"])
+async def api_delete_rule(rule_id: int):
+    settings = get_settings()
+    rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
+    await rule_repo.delete(rule_id)
+    return jsonify({"status": "ok"})

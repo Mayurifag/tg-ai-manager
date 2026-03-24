@@ -4,9 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from src.domain.models import Chat, ChatType, Message, Reaction, SystemEvent
+from src.domain.models import Chat, ChatType, Message, Reaction
 from src.rules.models import Rule, RuleType
 from src.rules.service import RuleService
 from src.users.models import User
@@ -298,3 +296,87 @@ async def test_toggle_rule_deletes_existing_when_disabled():
     result = await svc.toggle_autoread(100, None, enabled=False)
     rule_repo.delete.assert_called_once_with(existing.id)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# run_startup_scan
+# ---------------------------------------------------------------------------
+
+
+def make_chat(
+    id: int = 1,
+    name: str = "Chat",
+    unread_count: int = 3,
+    chat_type: ChatType = ChatType.GROUP,
+) -> Chat:
+    return Chat(id=id, name=name, unread_count=unread_count, type=chat_type)
+
+
+async def test_startup_scan_skips_chat_with_no_autoread_rule():
+    """Non-forum chat with multiple unread and no rule is skipped (not read)."""
+    chat = make_chat(id=1, unread_count=5)
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = []
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    chat_repo.is_connected = MagicMock(return_value=True)
+    chat_repo.get_all_unread_chats.return_value = [chat]
+    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+
+    await svc.run_startup_scan()
+
+    chat_repo.mark_as_read.assert_not_called()
+    action_repo.add_log.assert_not_called()
+
+
+async def test_startup_scan_marks_read_chat_with_autoread_rule():
+    """Non-forum chat with an autoread rule is marked read and logged."""
+    chat = make_chat(id=42, unread_count=7)
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(chat_id=42, rule_type=RuleType.AUTOREAD)
+    ]
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    chat_repo.is_connected = MagicMock(return_value=True)
+    chat_repo.get_all_unread_chats.return_value = [chat]
+    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+
+    await svc.run_startup_scan()
+
+    chat_repo.mark_as_read.assert_called_once_with(42)
+    action_repo.add_log.assert_called_once()
+    log_call = action_repo.add_log.call_args[0][0]
+    assert log_call.action == "startup_read"
+    assert log_call.chat_id == 42
+    assert log_call.reason == "autoread_rule_startup"
+
+
+async def test_startup_scan_forum_chat_checks_topics():
+    """Forum chat iterates topics; only topics with autoread rules are read."""
+    forum_chat = make_chat(id=100, unread_count=2, chat_type=ChatType.FORUM)
+    topic_with_rule = make_chat(id=10, name="Topic 10", unread_count=1, chat_type=ChatType.TOPIC)
+    topic_no_rule = make_chat(id=20, name="Topic 20", unread_count=1, chat_type=ChatType.TOPIC)
+
+    def rule_side_effect(chat_id, topic_id):
+        if chat_id == 100 and topic_id == 10:
+            return [make_rule(chat_id=100, rule_type=RuleType.AUTOREAD, topic_id=10)]
+        return []
+
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.side_effect = rule_side_effect
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    chat_repo.is_connected = MagicMock(return_value=True)
+    chat_repo.get_all_unread_chats.return_value = [forum_chat]
+    chat_repo.get_unread_topics.return_value = [topic_with_rule, topic_no_rule]
+    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+
+    await svc.run_startup_scan()
+
+    # Only topic 10 (with rule) should be marked read
+    chat_repo.mark_as_read.assert_called_once_with(100, 10)
+    action_repo.add_log.assert_called_once()
+    log_call = action_repo.add_log.call_args[0][0]
+    assert log_call.action == "startup_read"
+    assert "Topic 10" in log_call.chat_name
