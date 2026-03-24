@@ -1,6 +1,7 @@
 import traceback
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from telethon import types, utils
 from telethon.tl.types import (
@@ -16,40 +17,33 @@ from src.adapters.telethon_mappers import get_message_action_text
 from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.logging import get_logger
 
+if TYPE_CHECKING:
+    from src.adapters.telegram.media import MediaManager
+    from src.adapters.telegram.message_parser import MessageParser
+
 logger = get_logger(__name__)
 
 
-class EventHandlersMixin:
-    def __init__(self):
-        self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
-        self._msg_id_to_chat_id: Dict[int, int] = {}
-        self.client: Any = None
-
-    # Abstract deps
-    async def _parse_message(
+class EventHandlers:
+    def __init__(
         self,
-        msg: Any,
-        replies_map: Dict[int, Any] | None = None,
-        chat_id: Optional[int] = None,
-    ) -> Message:
-        raise NotImplementedError
+        client: Any,
+        parser: "MessageParser",
+        media: "MediaManager",
+        get_topic_name_fn: Callable[[int, int], Awaitable[Optional[str]]],
+    ) -> None:
+        self.client = client
+        self._parser = parser
+        self._media = media
+        self._get_topic_name_fn = get_topic_name_fn
+        self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
 
-    def _extract_reactions(self, reactions: Any) -> list[Reaction]:
-        raise NotImplementedError
-
-    def _extract_topic_id(self, message: Any) -> Optional[int]:
-        raise NotImplementedError
-
-    def _cache_message_chat(self, msg_id: int, chat_id: int):
-        raise NotImplementedError
-
-    def clear_chat_avatar(self, chat_id: int):
-        raise NotImplementedError
-
-    def add_event_listener(self, callback: Callable[[SystemEvent], Awaitable[None]]):
+    def add_event_listener(
+        self, callback: Callable[[SystemEvent], Awaitable[None]]
+    ) -> None:
         self.listeners.append(callback)
 
-    async def _dispatch(self, event: SystemEvent):
+    async def _dispatch(self, event: SystemEvent) -> None:
         for listener in self.listeners:
             try:
                 await listener(event)
@@ -60,10 +54,24 @@ class EventHandlersMixin:
                     traceback=traceback.format_exc(),
                 )
 
-    async def _handle_new_message(self, event):
+    def register_handlers(self, client: Any) -> None:
+        """Register all Telethon event handlers on the given client."""
+        from telethon import events
+
+        client.add_event_handler(self._handle_new_message, events.NewMessage())
+        client.add_event_handler(
+            self._handle_edited_message, events.MessageEdited()
+        )
+        client.add_event_handler(
+            self._handle_deleted_message, events.MessageDeleted()
+        )
+        client.add_event_handler(self._handle_chat_action, events.ChatAction())
+        client.add_event_handler(self._handle_other_updates)
+
+    async def _handle_new_message(self, event: Any) -> None:
         try:
             if event.chat_id:
-                self._cache_message_chat(event.message.id, event.chat_id)
+                self._parser._cache_message_chat(event.message.id, event.chat_id)
 
             chat_name = "Unknown"
             try:
@@ -72,19 +80,20 @@ class EventHandlersMixin:
             except Exception:
                 pass
 
-            domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
-            topic_id = self._extract_topic_id(event.message)
+            domain_msg = await self._parser._parse_message(
+                event.message, chat_id=event.chat_id
+            )
+            topic_id = self._parser._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+                topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
 
-            display_chat_name = chat_name
             preview = domain_msg.get_preview_text()
 
             sys_event = SystemEvent(
                 type="message",
                 text=preview,
-                chat_name=display_chat_name,
+                chat_name=chat_name,
                 topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
@@ -99,10 +108,10 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_edited_message(self, event):
+    async def _handle_edited_message(self, event: Any) -> None:
         try:
             if event.chat_id:
-                self._cache_message_chat(event.message.id, event.chat_id)
+                self._parser._cache_message_chat(event.message.id, event.chat_id)
 
             chat_name = "Unknown"
             try:
@@ -111,13 +120,15 @@ class EventHandlersMixin:
             except Exception:
                 pass
 
-            domain_msg = await self._parse_message(event.message, chat_id=event.chat_id)
+            domain_msg = await self._parser._parse_message(
+                event.message, chat_id=event.chat_id
+            )
             preview = domain_msg.get_preview_text()
 
-            topic_id = self._extract_topic_id(event.message)
+            topic_id = self._parser._extract_topic_id(event.message)
             topic_name = None
             if topic_id:
-                topic_name = await self.get_topic_name(event.chat_id, topic_id)
+                topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
 
             sys_event = SystemEvent(
                 type="edited",
@@ -137,13 +148,13 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_deleted_message(self, event):
+    async def _handle_deleted_message(self, event: Any) -> None:
         try:
             chat_id = getattr(event, "chat_id", None)
             if not chat_id and event.deleted_ids:
                 for did in event.deleted_ids:
-                    if did in self._msg_id_to_chat_id:
-                        chat_id = self._msg_id_to_chat_id[did]
+                    if did in self._parser._msg_id_to_chat_id:
+                        chat_id = self._parser._msg_id_to_chat_id[did]
                         break
 
             if not chat_id and hasattr(event, "original_update"):
@@ -185,14 +196,14 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_chat_action(self, event):
+    async def _handle_chat_action(self, event: Any) -> None:
         try:
             action = getattr(event.action_message, "action", None)
             if isinstance(
                 action, (MessageActionChatEditPhoto, MessageActionChatDeletePhoto)
             ):
                 if event.chat_id:
-                    self.clear_chat_avatar(event.chat_id)
+                    self._media.clear_chat_avatar(event.chat_id)
 
             chat_name = "Unknown"
             try:
@@ -204,7 +215,7 @@ class EventHandlersMixin:
             text = "Unknown action"
             action_text = get_message_action_text(event.action_message)
             if action_text:
-                msg_model = await self._parse_message(
+                msg_model = await self._parser._parse_message(
                     event.action_message, chat_id=event.chat_id
                 )
                 text = f"{msg_model.sender_name} {action_text}"
@@ -225,7 +236,7 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _handle_other_updates(self, event):
+    async def _handle_other_updates(self, event: Any) -> None:
         """Captures other relevant updates like reactions."""
         try:
             if isinstance(event, UpdateMessageReactions):
@@ -239,7 +250,7 @@ class EventHandlersMixin:
                 traceback=traceback.format_exc(),
             )
 
-    async def _process_reaction_update(self, event):
+    async def _process_reaction_update(self, event: Any) -> None:
         chat_id = 0
         if isinstance(event.peer, PeerUser):
             chat_id = event.peer.user_id
@@ -254,13 +265,14 @@ class EventHandlersMixin:
         chat_name = "Unknown"
         link = f"/chat/{chat_id}"
         try:
-            # Resolve Chat Name for the sidebar
             chat_entity = await self.client.get_entity(chat_id)
             chat_name = utils.get_display_name(chat_entity)
         except Exception:
             pass
 
-        reactions_list = self._extract_reactions(event.reactions)
+        reactions_list: List[Reaction] = self._parser._extract_reactions(
+            event.reactions
+        )
 
         msg_model = Message(
             id=event.msg_id,

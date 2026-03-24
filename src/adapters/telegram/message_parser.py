@@ -1,6 +1,6 @@
 from datetime import datetime
 from html import escape as html_escape
-from typing import Any, Dict, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from telethon import utils
 from telethon.extensions import html
@@ -21,15 +21,16 @@ from telethon.tl.types import (
 from src.adapters.telethon_mappers import get_message_action_text
 from src.domain.models import Message, Reaction
 
+if TYPE_CHECKING:
+    from src.adapters.telegram.media import MediaManager
 
-class MessageParserMixin:
-    def __init__(self):
-        self.client: Any = None
+
+class MessageParser:
+    def __init__(self, client: Any, media: "MediaManager") -> None:
+        self.client = client
+        self._media = media
         self._msg_id_to_chat_id: Dict[int, int] = {}
-        self._self_id: Optional[int] = None  # Populated by Adapter
-
-    async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
-        raise NotImplementedError
+        self.self_id: Optional[int] = None
 
     def _extract_topic_id(self, message: Any) -> Optional[int]:
         reply_header = getattr(message, "reply_to", None)
@@ -43,8 +44,6 @@ class MessageParserMixin:
     def _cache_message_chat(self, msg_id: int, chat_id: int):
         if len(self._msg_id_to_chat_id) > 15000:
             # Evict the oldest 5000 entries rather than clearing everything.
-            # A full clear would lose chat mappings for recently-seen messages,
-            # causing delete events to fall back to "Unknown" chat.
             for key in list(self._msg_id_to_chat_id.keys())[:5000]:
                 del self._msg_id_to_chat_id[key]
         self._msg_id_to_chat_id[msg_id] = chat_id
@@ -87,8 +86,8 @@ class MessageParserMixin:
                 return html_escape(raw_text)
         return ""
 
-    def _extract_reactions(self, reactions: Any) -> list[Reaction]:
-        """Extract Reaction list from a Telethon MessageReactions object (msg.reactions or event.reactions)."""
+    def _extract_reactions(self, reactions: Any) -> List[Reaction]:
+        """Extract Reaction list from a Telethon MessageReactions object."""
         results = []
         if not reactions:
             return results
@@ -99,7 +98,7 @@ class MessageParserMixin:
         my_reaction_emojis: Set[str] = set()
         my_reaction_docs: Set[int] = set()
 
-        if self._self_id and recent_reactions:
+        if self.self_id and recent_reactions:
             for rr in recent_reactions:
                 peer_id = None
                 if isinstance(rr.peer_id, PeerUser):
@@ -109,7 +108,7 @@ class MessageParserMixin:
                 elif isinstance(rr.peer_id, PeerChat):
                     peer_id = rr.peer_id.chat_id
 
-                if peer_id == self._self_id:
+                if peer_id == self.self_id:
                     if isinstance(rr.reaction, ReactionEmoji):
                         my_reaction_emojis.add(rr.reaction.emoticon)
                     elif isinstance(rr.reaction, ReactionCustomEmoji):
@@ -153,7 +152,6 @@ class MessageParserMixin:
 
         replies_map = replies_map or {}
 
-        # --- Service Message Logic ---
         is_service = False
         text = ""
 
@@ -163,21 +161,18 @@ class MessageParserMixin:
         else:
             text = self._extract_text(msg)
 
-        # Check Media
         media = getattr(msg, "media", None)
         has_media = bool(media)
         is_video = False
         is_sticker = False
         sticker_emoji = None
 
-        # Audio
         is_audio = False
         is_voice = False
         audio_title = None
         audio_performer = None
         audio_duration = None
 
-        # Poll fields
         is_poll = False
         poll_question = None
 
@@ -224,7 +219,7 @@ class MessageParserMixin:
             sender_id = sender.id
             sender_name = utils.get_display_name(sender)
             sender_username = getattr(sender, "username", None)
-            avatar_url = await self._get_chat_image(sender, sender_id)
+            avatar_url = await self._media._get_chat_image(sender, sender_id)
 
         sender_color = self._get_sender_color(sender, sender_id)
         sender_initials = self._get_sender_initials(sender_name)
@@ -246,8 +241,6 @@ class MessageParserMixin:
                 reply_to_sender = (
                     utils.get_display_name(r_sender) if r_sender else "User"
                 )
-            elif reply_to_msg_id:
-                pass
 
         reactions = self._extract_reactions(getattr(msg, "reactions", None))
         grouped_id = getattr(msg, "grouped_id", None)
