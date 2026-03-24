@@ -212,13 +212,25 @@ class RuleService:
 
         try:
             unread_chats = await self.chat_repo.get_all_unread_chats()
+            total = len(unread_chats)
+            chats_read = 0
+
+            logger.info(
+                "startup_scan_started",
+                total_unread_chats=total,
+            )
+
             for chat in unread_chats:
                 try:
+                    if chat.unread_count == 0:
+                        continue
+
                     if chat.type == ChatType.FORUM:
                         topics = await self.chat_repo.get_unread_topics(chat.id)
                         for topic in topics:
                             if await self.is_autoread_enabled(chat.id, topic.id):
                                 await self.chat_repo.mark_as_read(chat.id, topic.id)
+                                chats_read += 1
                                 await self.action_repo.add_log(
                                     ActionLog(
                                         action="startup_read",
@@ -228,6 +240,13 @@ class RuleService:
                                         date=datetime.now(),
                                         link=f"/forum/{chat.id}",
                                     )
+                                )
+                            else:
+                                logger.info(
+                                    "startup_scan_chat_skipped",
+                                    chat_id=chat.id,
+                                    chat_name=chat.name,
+                                    topic_id=topic.id,
                                 )
                     else:
                         should_read = False
@@ -246,6 +265,7 @@ class RuleService:
                                     should_read = True
                         if should_read:
                             await self.chat_repo.mark_as_read(chat.id)
+                            chats_read += 1
                             await self.action_repo.add_log(
                                 ActionLog(
                                     action="startup_read",
@@ -256,6 +276,12 @@ class RuleService:
                                     link=f"/chat/{chat.id}",
                                 )
                             )
+                        else:
+                            logger.info(
+                                "startup_scan_chat_skipped",
+                                chat_id=chat.id,
+                                chat_name=chat.name,
+                            )
                     await asyncio.sleep(0.1)
                 except Exception as e:
                     logger.warning(
@@ -264,6 +290,12 @@ class RuleService:
                         chat_name=chat.name,
                         error=repr(e),
                     )
+
+            logger.info(
+                "startup_scan_completed",
+                chats_processed=total,
+                chats_read=chats_read,
+            )
         except Exception as e:
             logger.warning("startup_scan_failed", error=repr(e))
 

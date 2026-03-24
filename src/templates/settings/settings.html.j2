@@ -144,6 +144,9 @@
                         {% endif %}
                         {% endif %}
                     </div>
+                    {% if rule.id %}
+                    <button class="rule-delete-btn" onclick="deleteRule({{ rule.id }})" title="Delete rule">✕</button>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -182,6 +185,9 @@
                             {% endif %}
                             {% endif %}
                         </div>
+                        {% if rule.id %}
+                        <button class="rule-delete-btn" onclick="deleteRule({{ rule.id }})" title="Delete rule">✕</button>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
@@ -310,6 +316,21 @@
             }
         });
     });
+
+    // --- Delete Rule Logic ---
+    async function deleteRule(ruleId) {
+        if (!confirm("Delete this rule?")) return;
+        try {
+            const res = await fetch(`/api/rules/${ruleId}`, { method: 'DELETE' });
+            if (res.ok) {
+                window.location.reload();
+            } else {
+                alert("Failed to delete rule.");
+            }
+        } catch (e) {
+            alert("Network Error");
+        }
+    }
 
     // --- Reset Logic ---
     const resetBtn = document.getElementById('reset-btn');
