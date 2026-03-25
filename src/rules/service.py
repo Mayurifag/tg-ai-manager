@@ -241,7 +241,7 @@ class RuleService:
                                     ActionLog(
                                         action="startup_read",
                                         chat_id=chat.id,
-                                        chat_name=f"{chat.name} (Topic {topic.id})",
+                                        chat_name=f"{chat.name} (Topic {topic.name})",
                                         reason="autoread_rule_startup",
                                         date=datetime.now(),
                                         link=f"/forum/{chat.id}",

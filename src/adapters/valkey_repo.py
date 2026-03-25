@@ -5,7 +5,7 @@ from typing import List, TypeVar, Generic, Dict, Any
 from dataclasses import asdict, is_dataclass
 from redis.asyncio import Redis
 from src.domain.ports import ActionRepository, EventRepository
-from src.domain.models import ActionLog, SystemEvent, Message
+from src.domain.models import ActionLog, SystemEvent
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -107,6 +107,7 @@ class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepositor
         # We don't need to persist 'rendered_html' as it is transient/large
         event_copy = asdict(event)
         event_copy["rendered_html"] = None
+        event_copy["message_model"] = None
 
         await self._add_item(event_copy, event.date.timestamp())
 
@@ -117,13 +118,6 @@ class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepositor
             # Recursively reconstruct datatypes
             if "date" in d and isinstance(d["date"], str):
                 d["date"] = datetime.fromisoformat(d["date"])
-
-            # Reconstruct nested Message object if present
-            if d.get("message_model"):
-                msg_data = d["message_model"]
-                if "date" in msg_data and isinstance(msg_data["date"], str):
-                    msg_data["date"] = datetime.fromisoformat(msg_data["date"])
-                d["message_model"] = Message(**msg_data)
 
             results.append(SystemEvent(**d))
         return results
