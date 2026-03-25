@@ -1,16 +1,16 @@
 """Tests for TelegramWriteQueue."""
 
 import asyncio
-import time
+from unittest.mock import patch
 
-
+import src.infrastructure.telegram_queue as tq_module
 from src.infrastructure.telegram_queue import TelegramWriteQueue
 
 
 async def test_enqueued_ops_run_in_order():
     """Operations must execute in FIFO order."""
     results = []
-    queue = TelegramWriteQueue(delay=0)
+    queue = TelegramWriteQueue()
     await queue.start()
 
     for i in range(5):
@@ -28,34 +28,37 @@ async def test_enqueued_ops_run_in_order():
     assert results == [0, 1, 2, 3, 4]
 
 
-async def test_delay_between_ops():
-    """Worker sleeps ~delay seconds between consecutive operations."""
-    timestamps = []
-    delay = 0.1
-    queue = TelegramWriteQueue(delay=delay)
+async def test_flood_wait_retries_operation():
+    """FloodWaitError causes the operation to be re-queued and retried."""
+
+    class FakeFloodWait(Exception):
+        seconds = 0  # instant backoff for test speed
+
+    results = []
+    call_count = [0]
+
+    queue = TelegramWriteQueue()
     await queue.start()
 
-    for _ in range(3):
+    async def _op():
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise FakeFloodWait()
+        results.append("ok")
 
-        async def _op():
-            timestamps.append(time.monotonic())
-
+    with patch.object(tq_module, "FloodWaitError", FakeFloodWait):
         await queue.enqueue(_op)
+        await asyncio.sleep(0.3)
 
-    await asyncio.sleep(delay * 5)
     await queue.stop()
-
-    assert len(timestamps) == 3
-    # Each gap should be at least (delay * 0.8) to tolerate scheduling jitter
-    for i in range(1, len(timestamps)):
-        gap = timestamps[i] - timestamps[i - 1]
-        assert gap >= delay * 0.8, f"Gap {gap:.3f}s is less than {delay * 0.8:.3f}s"
+    assert call_count[0] == 2
+    assert results == ["ok"]
 
 
 async def test_failing_op_does_not_crash_worker():
     """A failing operation logs the error but the worker continues processing."""
     results = []
-    queue = TelegramWriteQueue(delay=0)
+    queue = TelegramWriteQueue()
     await queue.start()
 
     async def _bad():
@@ -76,7 +79,7 @@ async def test_failing_op_does_not_crash_worker():
 
 async def test_queue_size_reflects_pending_ops():
     """queue_size() reports the number of unprocessed items."""
-    queue = TelegramWriteQueue(delay=10)  # large delay — worker won't drain fast
+    queue = TelegramWriteQueue()
     await queue.start()
 
     done = asyncio.Event()
@@ -105,7 +108,7 @@ async def test_queue_size_reflects_pending_ops():
 
 async def test_stop_is_idempotent():
     """Calling stop() on an already-stopped queue does not raise."""
-    queue = TelegramWriteQueue(delay=0)
+    queue = TelegramWriteQueue()
     await queue.start()
     await queue.stop()
     await queue.stop()  # second stop should be a no-op
@@ -114,7 +117,7 @@ async def test_stop_is_idempotent():
 async def test_enqueue_before_start_drains_after_start():
     """Items enqueued before start() are processed after the worker launches."""
     results = []
-    queue = TelegramWriteQueue(delay=0)
+    queue = TelegramWriteQueue()
 
     async def _op():
         results.append(1)

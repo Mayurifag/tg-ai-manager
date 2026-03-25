@@ -14,7 +14,6 @@ from src.adapters.telegram.write_ops import WriteOps
 from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
 from src.adapters.telegram.types import ITelethonClient
-from src.config import get_settings
 from src.domain.models import SystemEvent
 from src.domain.ports import ChatRepository
 from src.infrastructure.logging import get_logger
@@ -54,7 +53,7 @@ class TelethonAdapter(ChatRepository):
         )
 
         # Write queue
-        self._write_queue = TelegramWriteQueue(delay=get_settings().WRITE_QUEUE_DELAY)
+        self._write_queue = TelegramWriteQueue()
 
         os.makedirs(self.images_dir, exist_ok=True)
 

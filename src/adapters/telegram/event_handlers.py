@@ -208,6 +208,8 @@ class EventHandlers:
             except Exception:
                 pass
 
+            msg_model = None
+            topic_id = None
             text = "Unknown action"
             action_text = get_message_action_text(event.action_message)
             if action_text:
@@ -215,6 +217,7 @@ class EventHandlers:
                     event.action_message, chat_id=event.chat_id
                 )
                 text = f"{msg_model.sender_name} {action_text}"
+                topic_id = self._parser._extract_topic_id(event.action_message)
 
             sys_event = SystemEvent(
                 type="action",
@@ -222,7 +225,9 @@ class EventHandlers:
                 chat_name=chat_name,
                 topic_name=None,
                 chat_id=event.chat_id,
+                topic_id=topic_id,
                 link=f"/chat/{event.chat_id}",
+                message_model=msg_model,
             )
             await self._dispatch(sys_event)
         except Exception as e:

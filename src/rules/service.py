@@ -98,7 +98,7 @@ class RuleService:
         if not event.chat_id:
             return
 
-        if event.type != "message" or not event.message_model:
+        if event.type not in ("message", "action") or not event.message_model:
             return
 
         msg = event.message_model
@@ -155,7 +155,7 @@ class RuleService:
     async def apply_autoreact(
         self, chat_id: int, topic_id: Optional[int], message: Message
     ):
-        if message.is_outgoing:
+        if message.is_outgoing or message.is_service:
             return
 
         # Album Deduplication Logic
