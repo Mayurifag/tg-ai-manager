@@ -17,7 +17,7 @@ services:
         condition: service_healthy
 
   valkey:
-    image: valkey/valkey:8
+    image: valkey/valkey:8.1
     container_name: tg_ai_manager_valkey
     restart: "unless-stopped"
     command: valkey-server --save 60 1 --loglevel warning

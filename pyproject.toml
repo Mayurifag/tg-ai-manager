@@ -5,20 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "pydantic-settings",
-    "python-dotenv>=1.2.1",
-    "quart",
+    "pydantic-settings>=2.13.1",
+    "python-dotenv>=1.2.2",
+    "quart>=0.20.0",
     "telethon>=1.42.0",
-    "structlog>=24.1.0",
-    "redis>=5.0.1",
-    "hypercorn>=0.16.1",
-    "alembic>=1.13.0",
-    "cryptography>=44.0.0",
-    "httpx>=0.27.0",
+    "structlog>=25.5.0",
+    "redis>=7.4.0",
+    "hypercorn>=0.18.0",
+    "alembic>=1.18.4",
+    "cryptography>=46.0.5",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
-dev = ["watchfiles>=0.21.0", "ruff>=0.9.0", "pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = ["watchfiles>=1.1.1", "ruff>=0.15.7", "pytest>=9.0.2", "pytest-asyncio>=1.3.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
