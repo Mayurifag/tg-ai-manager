@@ -19,8 +19,3 @@ class Rule:
     config: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-
-
-@dataclass
-class AutoReadRule(Rule):
-    pass

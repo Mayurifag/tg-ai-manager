@@ -19,6 +19,18 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
         except json.JSONDecodeError:
             return {}
 
+    def _row_to_rule(self, row) -> Rule:
+        return Rule(
+            id=row[0],
+            user_id=row[1],
+            rule_type=RuleType(row[2]),
+            chat_id=row[3],
+            topic_id=row[4],
+            config=self._parse_config(row[5]),
+            created_at=datetime.fromisoformat(row[6]),
+            updated_at=datetime.fromisoformat(row[7]),
+        )
+
     async def get_by_chat_and_topic(
         self, chat_id: int, topic_id: Optional[int] = None
     ) -> List[Rule]:
@@ -35,17 +47,7 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 )
                 results = []
                 for row in cursor:
-                    rule = Rule(
-                        id=row[0],
-                        user_id=row[1],
-                        rule_type=RuleType(row[2]),
-                        chat_id=row[3],
-                        topic_id=row[4],
-                        config=self._parse_config(row[5]),
-                        created_at=datetime.fromisoformat(row[6]),
-                        updated_at=datetime.fromisoformat(row[7]),
-                    )
-                    results.append(rule)
+                    results.append(self._row_to_rule(row))
                 return results
 
         return await self._execute(_fetch)
@@ -62,17 +64,7 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 )
                 results = []
                 for row in cursor:
-                    rule = Rule(
-                        id=row[0],
-                        user_id=row[1],
-                        rule_type=RuleType(row[2]),
-                        chat_id=row[3],
-                        topic_id=row[4],
-                        config=self._parse_config(row[5]),
-                        created_at=datetime.fromisoformat(row[6]),
-                        updated_at=datetime.fromisoformat(row[7]),
-                    )
-                    results.append(rule)
+                    results.append(self._row_to_rule(row))
                 return results
 
         return await self._execute(_fetch)
@@ -89,17 +81,7 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 )
                 results = []
                 for row in cursor:
-                    rule = Rule(
-                        id=row[0],
-                        user_id=row[1],
-                        rule_type=RuleType(row[2]),
-                        chat_id=row[3],
-                        topic_id=row[4],
-                        config=self._parse_config(row[5]),
-                        created_at=datetime.fromisoformat(row[6]),
-                        updated_at=datetime.fromisoformat(row[7]),
-                    )
-                    results.append(rule)
+                    results.append(self._row_to_rule(row))
                 return results
 
         return await self._execute(_fetch)

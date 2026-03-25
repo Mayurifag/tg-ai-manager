@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     TG_API_ID: int
     TG_API_HASH: str
 
-    WRITE_QUEUE_DELAY: float = 0.5
+    WRITE_QUEUE_DELAY: float = 0.1
 
     # When set, sync rules from production export URL on startup
     RULES_SYNC_URL: Optional[str] = None

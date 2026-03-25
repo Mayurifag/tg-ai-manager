@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import sqlite3
 import sys
 
 # Alembic Imports
@@ -15,12 +14,12 @@ from src.application.interactors import ChatInteractor
 from src.config import get_settings
 from src.infrastructure.event_bus import EventBus
 from src.infrastructure.logging import configure_logging, get_logger
-from src.infrastructure.security import CryptoManager
 from src.jinja_filters import file_mtime_filter
 from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
 from src.rules.sync import sync_rules_from_remote
 from src.users.sqlite_repo import SqliteUserRepository
+from src.infrastructure.maintenance import job_background_maintenance
 from src.web.routes import register_routes
 from src.web.serializers import json_serializer
 from src.web.sse import broadcast_event, connected_queues, shutdown_event
@@ -45,16 +44,13 @@ def run_migrations(root_path: str):
         sys.exit(1)
 
 
-def _build_tg_adapter(settings) -> TelethonAdapter:
+async def _build_tg_adapter(settings, user_repo) -> TelethonAdapter:
     """Create a TelethonAdapter, loading the session string from the DB if present."""
-    crypto = CryptoManager()
     session_string = None
     try:
-        with sqlite3.connect(settings.DB_PATH) as conn:
-            cur = conn.execute("SELECT session_string FROM users WHERE id = 1")
-            row = cur.fetchone()
-            if row and row[0]:
-                session_string = crypto.decrypt(row[0])
+        user = await user_repo.get_user(1)
+        if user:
+            session_string = user.session_string
     except Exception as e:
         logger.warning("session_load_failed", error=str(e))
 
@@ -112,7 +108,7 @@ def create_app() -> Quart:
             logger.info("rules_sync_skipped", reason="RULES_SYNC_URL not set")
 
         # 4. Create Telegram adapter
-        tg_adapter = _build_tg_adapter(settings)
+        tg_adapter = await _build_tg_adapter(settings, user_repo)
 
         # 5. Create services
         rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
@@ -148,7 +144,15 @@ def create_app() -> Quart:
 
         # 9. Background tasks
         asyncio.create_task(rule_service.run_startup_scan())
-        asyncio.create_task(job_background_maintenance())
+        asyncio.create_task(
+            job_background_maintenance(
+                action_repo=action_repo,
+                event_repo=event_repo,
+                interactor=interactor,
+                user_repo=user_repo,
+                shutdown_event=shutdown_event,
+            )
+        )
 
     @app.after_serving
     async def shutdown():
@@ -184,39 +188,3 @@ def create_app() -> Quart:
         return {"recent_events": events, "current_user": user}
 
     return app
-
-
-async def job_background_maintenance():
-    """Background task to clean old logs, enforce cache limits, and refresh premium status."""
-    from quart import current_app
-
-    action_repo = current_app.action_repo  # type: ignore[attr-defined]
-    event_repo = current_app.event_repo  # type: ignore[attr-defined]
-    interactor = current_app.chat_interactor  # type: ignore[attr-defined]
-    user_repo = current_app.user_repo  # type: ignore[attr-defined]
-
-    logger.info("maintenance_job_started")
-    while not shutdown_event.is_set():
-        try:
-            await action_repo.cleanup_expired()
-            await event_repo.cleanup_expired()
-
-            user = await user_repo.get_user(1)
-            if user and user.is_authenticated():
-                await interactor.run_storage_maintenance()
-
-                is_premium = await interactor.get_self_premium_status()
-                if user.is_premium != is_premium:
-                    user.is_premium = is_premium
-                    await user_repo.save_user(user)
-                    logger.info("premium_status_updated", status=is_premium)
-            else:
-                logger.info("maintenance_skipped_no_authenticated_user")
-
-        except Exception as e:
-            logger.error("maintenance_job_error", error=str(e))
-
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=3600)
-        except asyncio.TimeoutError:
-            pass
