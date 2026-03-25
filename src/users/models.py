@@ -22,5 +22,11 @@ class User:
     autoread_bots: str = "@lolsBotCatcherBot"
     autoread_regex: str = ""
 
+    # AI configuration
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    ai_api_key: Optional[str] = None
+    ai_prompt: Optional[str] = None
+
     def is_authenticated(self) -> bool:
         return bool(self.session_string and self.api_id and self.api_hash)

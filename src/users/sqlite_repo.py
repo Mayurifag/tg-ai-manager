@@ -21,7 +21,8 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         """
                         SELECT id, username, session_string,
                                autoread_service_messages, autoread_polls, autoread_self,
-                               autoread_bots, autoread_regex, is_premium, debug_mode
+                               autoread_bots, autoread_regex, is_premium, debug_mode,
+                               ai_provider, ai_model, ai_api_key, ai_prompt
                         FROM users WHERE id = ?
                     """,
                         (user_id,),
@@ -42,6 +43,10 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             autoread_regex=row[7] or "",
                             is_premium=bool(row[8]),
                             debug_mode=bool(row[9]),
+                            ai_provider=row[10],
+                            ai_model=row[11],
+                            ai_api_key=self.crypto.decrypt(row[12]),
+                            ai_prompt=row[13],
                         )
                 except Exception:
                     pass
@@ -63,7 +68,8 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         UPDATE users
                         SET username = ?, session_string = ?,
                             autoread_service_messages = ?, autoread_polls = ?, autoread_self = ?,
-                            autoread_bots = ?, autoread_regex = ?, is_premium = ?, debug_mode = ?
+                            autoread_bots = ?, autoread_regex = ?, is_premium = ?, debug_mode = ?,
+                            ai_provider = ?, ai_model = ?, ai_api_key = ?, ai_prompt = ?
                         WHERE id = ?
                         """,
                         (
@@ -76,6 +82,10 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             user.autoread_regex,
                             int(user.is_premium),
                             int(user.debug_mode),
+                            user.ai_provider,
+                            user.ai_model,
+                            self.crypto.encrypt(user.ai_api_key),
+                            user.ai_prompt,
                             user.id,
                         ),
                     )
@@ -85,8 +95,9 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         INSERT INTO users (
                             id, username, session_string,
                             autoread_service_messages, autoread_polls, autoread_self,
-                            autoread_bots, autoread_regex, is_premium, debug_mode
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            autoread_bots, autoread_regex, is_premium, debug_mode,
+                            ai_provider, ai_model, ai_api_key, ai_prompt
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             user.id,
@@ -99,6 +110,10 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             user.autoread_regex,
                             int(user.is_premium),
                             int(user.debug_mode),
+                            user.ai_provider,
+                            user.ai_model,
+                            self.crypto.encrypt(user.ai_api_key),
+                            user.ai_prompt,
                         ),
                     )
                 conn.commit()

@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 class RuleType(str, Enum):
     AUTOREAD = "autoread"
     AUTOREACT = "autoreact"
+    AI_AUTOREAD = "ai_autoread"
 
 
 @dataclass

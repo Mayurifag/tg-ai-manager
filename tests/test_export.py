@@ -97,6 +97,10 @@ async def test_export_returns_rules_and_user_settings(app, client):
         "autoread_bots",
         "autoread_regex",
         "debug_mode",
+        "ai_provider",
+        "ai_model",
+        "ai_api_key",
+        "ai_prompt",
     }
     assert set(us.keys()) == expected_user_keys
     # Sensitive fields must NOT leak

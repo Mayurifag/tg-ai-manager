@@ -47,6 +47,11 @@ async def save_settings():
         autoread_regex=get_val("autoread_regex", current_user.autoread_regex),
         # Debug Mode
         debug_mode=bool(get_val("debug_mode", current_user.debug_mode)),
+        # AI configuration
+        ai_provider=get_val("ai_provider", current_user.ai_provider),
+        ai_model=get_val("ai_model", current_user.ai_model),
+        ai_api_key=get_val("ai_api_key", current_user.ai_api_key),
+        ai_prompt=get_val("ai_prompt", current_user.ai_prompt),
     )
 
     await repo.save_user(updated_user)
@@ -80,6 +85,21 @@ async def api_toggle_autoread():
         return jsonify({"error": "chat_id required"}), 400
 
     await rule_service.toggle_autoread(chat_id, topic_id, enabled)
+    return jsonify({"status": "ok"})
+
+
+@settings_bp.route("/api/rules/ai_autoread/toggle", methods=["POST"])
+async def api_toggle_ai_autoread():
+    rule_service = get_rule_service()
+    data = await request.get_json()
+    chat_id = data.get("chat_id")
+    topic_id = data.get("topic_id")
+    enabled = data.get("enabled", True)
+
+    if not chat_id:
+        return jsonify({"error": "chat_id required"}), 400
+
+    await rule_service.toggle_ai_autoread(chat_id, topic_id, enabled)
     return jsonify({"status": "ok"})
 
 
@@ -179,6 +199,10 @@ async def api_export_rules():
         "autoread_bots": user.autoread_bots,
         "autoread_regex": user.autoread_regex,
         "debug_mode": user.debug_mode,
+        "ai_provider": user.ai_provider,
+        "ai_model": user.ai_model,
+        "ai_api_key": user.ai_api_key,
+        "ai_prompt": user.ai_prompt,
     }
 
     return jsonify({"rules": rules_list, "user_settings": user_settings})
