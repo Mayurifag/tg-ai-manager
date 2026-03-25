@@ -53,8 +53,12 @@ Forum Topics
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({})
             });
-            // Reload page to reflect changes
-            window.location.reload();
+            // Clear all unread badges in-place — no reload needed
+            document.querySelectorAll('.unread-badge, .unread-count, [class*="unread"]').forEach(el => {
+                el.textContent = '';
+                el.style.display = 'none';
+            });
+            btn.textContent = '✅ All Read';
         } catch (e) {
             console.error(e);
         } finally {
