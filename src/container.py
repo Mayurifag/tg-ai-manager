@@ -10,6 +10,7 @@ from quart import current_app
 
 from src.adapters.telegram import TelethonAdapter
 from src.application.interactors import ChatInteractor
+from src.config import get_settings
 from src.infrastructure.logging import get_logger
 from src.rules.service import RuleService
 
@@ -41,8 +42,6 @@ def get_user_repo():
 
 
 def reload_tg_adapter(
-    api_id: int = None,  # type: ignore[assignment]
-    api_hash: str = None,  # type: ignore[assignment]
     session_string: str = None,  # type: ignore[assignment]
 ) -> None:
     """Hot-swap the Telegram adapter (called on QR login start).
@@ -50,8 +49,6 @@ def reload_tg_adapter(
     Creates a new adapter, re-wires it to the event bus, and updates all
     app-scoped references that hold a pointer to the old adapter.
     """
-    from src.config import get_settings
-
     settings = get_settings()
     new_adapter = TelethonAdapter(
         session_string=session_string,

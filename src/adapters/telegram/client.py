@@ -47,7 +47,9 @@ class TelethonAdapter(ChatRepository):
         # QR Login State
         self._qr_login: Any = None
         self._qr_task: Optional[asyncio.Task] = None
-        self._qr_status = "none"  # none, waiting, authorized, needs_password, expired, error
+        self._qr_status = (
+            "none"  # none, waiting, authorized, needs_password, expired, error
+        )
 
         # Write queue
         self._write_queue = TelegramWriteQueue(delay=get_settings().WRITE_QUEUE_DELAY)

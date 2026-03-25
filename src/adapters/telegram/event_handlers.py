@@ -59,12 +59,8 @@ class EventHandlers:
         from telethon import events
 
         client.add_event_handler(self._handle_new_message, events.NewMessage())
-        client.add_event_handler(
-            self._handle_edited_message, events.MessageEdited()
-        )
-        client.add_event_handler(
-            self._handle_deleted_message, events.MessageDeleted()
-        )
+        client.add_event_handler(self._handle_edited_message, events.MessageEdited())
+        client.add_event_handler(self._handle_deleted_message, events.MessageDeleted())
         client.add_event_handler(self._handle_chat_action, events.ChatAction())
         client.add_event_handler(self._handle_other_updates)
 

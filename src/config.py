@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings
 
 
@@ -11,5 +13,6 @@ class Settings(BaseSettings):
     WRITE_QUEUE_DELAY: float = 0.5
 
 
-def get_settings():
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
     return Settings()  # type: ignore

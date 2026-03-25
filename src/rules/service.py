@@ -1,4 +1,3 @@
-import asyncio
 import re
 import time
 from datetime import datetime
@@ -162,10 +161,17 @@ class RuleService:
         # Album Deduplication Logic
         if message.grouped_id:
             now = time.time()
-            # Clean up old cache entries (older than 60s)
+            # Prune stale entries (older than 60s) and cap size to avoid unbounded growth
             self._album_reaction_cache = {
                 k: v for k, v in self._album_reaction_cache.items() if now - v < 60
             }
+            if len(self._album_reaction_cache) > 500:
+                # Keep the 250 most recent entries
+                self._album_reaction_cache = dict(
+                    sorted(self._album_reaction_cache.items(), key=lambda x: x[1])[
+                        -250:
+                    ]
+                )
 
             key = (chat_id, message.grouped_id)
             if key in self._album_reaction_cache:
@@ -282,7 +288,6 @@ class RuleService:
                                 chat_id=chat.id,
                                 chat_name=chat.name,
                             )
-                    await asyncio.sleep(0.1)
                 except Exception as e:
                     logger.warning(
                         "startup_scan_chat_failed",
