@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from telethon.errors import FloodWaitError
+
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -9,13 +11,13 @@ logger = get_logger(__name__)
 class TelegramWriteQueue:
     """Serial write queue for Telegram API operations.
 
-    Enqueued coroutines are executed one at a time by a single worker,
-    with a configurable delay between operations to avoid Telegram rate limits.
+    Enqueued coroutines are executed one at a time by a single worker.
+    On FloodWait (429) errors the same operation is re-queued after waiting
+    the required number of seconds.
     Dropping pending operations on shutdown is acceptable (in-memory only).
     """
 
-    def __init__(self, delay: float = 0.5) -> None:
-        self._delay = delay
+    def __init__(self) -> None:
         self._queue: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()
         self._worker_task: asyncio.Task[None] | None = None
         self._running = False
@@ -32,7 +34,7 @@ class TelegramWriteQueue:
         """Start the background worker. Call after the Telegram client connects."""
         self._running = True
         self._worker_task = asyncio.create_task(self._worker())
-        logger.info("write_queue_started", delay=self._delay)
+        logger.info("write_queue_started")
 
     async def stop(self) -> None:
         """Stop the background worker. Pending operations are dropped."""
@@ -53,12 +55,17 @@ class TelegramWriteQueue:
             except asyncio.TimeoutError:
                 continue
 
+            requeue = False
             try:
                 await coro_fn()
+            except FloodWaitError as e:
+                logger.warning("flood_wait_backoff", seconds=e.seconds)
+                await asyncio.sleep(e.seconds)
+                requeue = True
             except Exception as e:
                 logger.error("write_queue_operation_failed", error=repr(e))
             finally:
                 self._queue.task_done()
 
-            if self._delay > 0:
-                await asyncio.sleep(self._delay)
+            if requeue:
+                await self._queue.put(coro_fn)

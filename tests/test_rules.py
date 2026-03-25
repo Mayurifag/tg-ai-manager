@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
-from src.domain.models import Chat, ChatType, Message, Reaction
+from src.domain.models import Chat, ChatType, Message, Reaction, SystemEvent
 from src.rules.models import Rule, RuleType
 from src.rules.service import RuleService
 from src.users.models import User
@@ -390,3 +390,47 @@ async def test_startup_scan_forum_chat_checks_topics():
     log_call = action_repo.add_log.call_args[0][0]
     assert log_call.action == "startup_read"
     assert "Topic 10" in log_call.chat_name
+
+
+# ---------------------------------------------------------------------------
+# handle_new_message_event — action type (e.g. pin service messages)
+# ---------------------------------------------------------------------------
+
+
+async def test_handle_new_message_event_autoread_on_action():
+    """Autoread rule fires for type='action' events (e.g. admin pinned a message)."""
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(chat_id=100, rule_type=RuleType.AUTOREAD)
+    ]
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    svc = make_service(
+        rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo
+    )
+
+    msg = make_message(id=42, is_service=True)
+    event = SystemEvent(
+        type="action",
+        text="Admin pinned a message",
+        chat_name="TestChat",
+        chat_id=100,
+        message_model=msg,
+    )
+    await svc.handle_new_message_event(event)
+
+    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
+    assert event.is_read is True
+
+
+async def test_apply_autoreact_skips_service_message():
+    """Service messages are never reacted to even with a blanket autoreact rule."""
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(100, RuleType.AUTOREACT, config={"emoji": "👍", "target_users": []})
+    ]
+    chat_repo = AsyncMock()
+    svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
+    msg = make_message(is_service=True)
+    await svc.apply_autoreact(100, None, msg)
+    chat_repo.send_reaction.assert_not_called()
