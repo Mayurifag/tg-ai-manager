@@ -7,8 +7,10 @@ from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import GetPasswordRequest
 
-from src.adapters.telegram.chat_operations import ChatOps
+from src.adapters.telegram.chat_query_ops import ChatQueryOps
 from src.adapters.telegram.event_handlers import EventHandlers
+from src.adapters.telegram.forum_ops import ForumOps
+from src.adapters.telegram.write_ops import WriteOps
 from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
 from src.adapters.telegram.types import ITelethonClient
@@ -59,21 +61,25 @@ class TelethonAdapter(ChatRepository):
         # Build collaborators
         self._media = MediaManager(self.client, self.images_dir)
         self._parser = MessageParser(self.client, self._media)
-        self._chat_ops = ChatOps(
+        self._chat_query_ops = ChatQueryOps(
+            client=self.client, parser=self._parser, media=self._media
+        )
+        self._forum_ops = ForumOps(client=self.client)
+        self._write_ops = WriteOps(
             client=self.client,
             parser=self._parser,
-            media=self._media,
             write_queue=self._write_queue,
-            dispatch_fn=None,  # patched below after EventHandlers is built
+            dispatch_fn=None,
+            get_topic_name_fn=self._forum_ops.get_topic_name,
         )
         self._event_handlers = EventHandlers(
             client=self.client,
             parser=self._parser,
             media=self._media,
-            get_topic_name_fn=self._chat_ops.get_topic_name,
+            get_topic_name_fn=self._forum_ops.get_topic_name,
         )
-        # Resolve circular dep: ChatOps.dispatch_fn → EventHandlers._dispatch
-        self._chat_ops._dispatch_fn = self._event_handlers._dispatch
+        # Resolve circular dep: WriteOps.dispatch_fn → EventHandlers._dispatch
+        self._write_ops._dispatch_fn = self._event_handlers._dispatch
 
         self._media.cleanup_startup_cache()
 
@@ -216,13 +222,13 @@ class TelethonAdapter(ChatRepository):
     # --- ChatRepository delegation ---
 
     async def get_chats(self, limit: int):
-        return await self._chat_ops.get_chats(limit)
+        return await self._chat_query_ops.get_chats(limit)
 
     async def get_all_unread_chats(self):
-        return await self._chat_ops.get_all_unread_chats()
+        return await self._chat_query_ops.get_all_unread_chats()
 
     async def get_chat(self, chat_id: int):
-        return await self._chat_ops.get_chat(chat_id)
+        return await self._chat_query_ops.get_chat(chat_id)
 
     async def get_messages(
         self,
@@ -232,21 +238,21 @@ class TelethonAdapter(ChatRepository):
         offset_id: int = 0,
         ids: Optional[List[int]] = None,
     ):
-        return await self._chat_ops.get_messages(
+        return await self._chat_query_ops.get_messages(
             chat_id, limit=limit, topic_id=topic_id, offset_id=offset_id, ids=ids
         )
 
     async def get_recent_authors(self, chat_id: int, limit: int = 100):
-        return await self._chat_ops.get_recent_authors(chat_id, limit)
+        return await self._chat_query_ops.get_recent_authors(chat_id, limit)
 
     async def get_forum_topics(self, chat_id: int, limit: int = 20):
-        return await self._chat_ops.get_forum_topics(chat_id, limit)
+        return await self._forum_ops.get_forum_topics(chat_id, limit)
 
     async def get_unread_topics(self, chat_id: int):
-        return await self._chat_ops.get_unread_topics(chat_id)
+        return await self._forum_ops.get_unread_topics(chat_id)
 
     async def get_topic_name(self, chat_id: int, topic_id: int):
-        return await self._chat_ops.get_topic_name(chat_id, topic_id)
+        return await self._forum_ops.get_topic_name(chat_id, topic_id)
 
     async def mark_as_read(
         self,
@@ -254,13 +260,13 @@ class TelethonAdapter(ChatRepository):
         topic_id: Optional[int] = None,
         max_id: Optional[int] = None,
     ) -> None:
-        return await self._chat_ops.mark_as_read(chat_id, topic_id, max_id)
+        return await self._write_ops.mark_as_read(chat_id, topic_id, max_id)
 
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
-        return await self._chat_ops.send_reaction(chat_id, msg_id, emoji)
+        return await self._write_ops.send_reaction(chat_id, msg_id, emoji)
 
     async def get_self_premium_status(self) -> bool:
-        return await self._chat_ops.get_self_premium_status()
+        return await self._chat_query_ops.get_self_premium_status()
 
     async def download_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"

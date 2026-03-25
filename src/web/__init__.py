@@ -6,7 +6,7 @@ import sys
 # Alembic Imports
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from quart import Quart
+from src.web.types import TypedQuart
 
 from src.adapters.telegram import TelethonAdapter
 from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
@@ -61,14 +61,14 @@ async def _build_tg_adapter(settings, user_repo) -> TelethonAdapter:
     )
 
 
-def create_app() -> Quart:
+def create_app() -> TypedQuart:
     # Configure structured logging
     configure_logging()
 
     # Set the project root explicitly
     root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 
-    app = Quart(__name__, root_path=root_path, template_folder="src/templates")
+    app = TypedQuart(__name__, root_path=root_path, template_folder="src/templates")
 
     # Register filters
     file_mtime_filter(app)
@@ -116,12 +116,12 @@ def create_app() -> Quart:
         interactor = ChatInteractor(tg_adapter, action_repo, event_repo)
 
         # 6. Attach services to app for app-scoped access
-        app.tg_adapter = tg_adapter  # type: ignore[attr-defined]
-        app.action_repo = action_repo  # type: ignore[attr-defined]
-        app.event_repo = event_repo  # type: ignore[attr-defined]
-        app.user_repo = user_repo  # type: ignore[attr-defined]
-        app.rule_service = rule_service  # type: ignore[attr-defined]
-        app.chat_interactor = interactor  # type: ignore[attr-defined]
+        app.tg_adapter = tg_adapter
+        app.action_repo = action_repo
+        app.event_repo = event_repo
+        app.user_repo = user_repo
+        app.rule_service = rule_service
+        app.chat_interactor = interactor
 
         # 7. Create event bus and register subscribers in order:
         #    - event_repo first (persistence)
@@ -136,7 +136,7 @@ def create_app() -> Quart:
                 await broadcast_event(event)
 
         bus.subscribe(_sse_broadcast)
-        app.event_bus = bus  # type: ignore[attr-defined]
+        app.event_bus = bus
 
         # 8. Connect adapter and wire event bus as its sole listener
         await interactor.initialize()
@@ -162,7 +162,7 @@ def create_app() -> Quart:
         # Allow SSE generators to exit gracefully
         await asyncio.sleep(0.1)
 
-        interactor = app.chat_interactor  # type: ignore[attr-defined]
+        interactor = app.chat_interactor
         try:
             await asyncio.wait_for(interactor.shutdown(), timeout=3.0)
         except asyncio.TimeoutError:
@@ -177,10 +177,12 @@ def create_app() -> Quart:
         """
         Injects recent events and current user into the template context.
         """
+        from typing import cast
         from quart import current_app
 
-        interactor = current_app.chat_interactor  # type: ignore[attr-defined]
-        user_repo = current_app.user_repo  # type: ignore[attr-defined]
+        typed_app = cast(TypedQuart, current_app._get_current_object())  # noqa: SLF001
+        interactor = typed_app.chat_interactor
+        user_repo = typed_app.user_repo
 
         events = await interactor.get_recent_events()
         user = await user_repo.get_user(1)

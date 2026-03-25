@@ -1,13 +1,14 @@
 from quart import Blueprint, jsonify
-from quart import current_app
+
+from src.container import _get_tg_adapter, get_event_bus
 
 health_bp = Blueprint("health", __name__)
 
 
 @health_bp.route("/health")
 async def health():
-    adapter = current_app.tg_adapter  # type: ignore[attr-defined]
-    bus = current_app.event_bus  # type: ignore[attr-defined]
+    adapter = _get_tg_adapter()
+    bus = get_event_bus()
 
     connected = adapter.is_connected()
     queue_size = adapter._write_queue.queue_size()
