@@ -438,3 +438,31 @@
 }
 
 .btn-save:hover { background: #388e3c; }
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.rule-item .rule-detail {
+    flex: 1;
+}
+
+.rule-delete-btn {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: color 0.15s, background 0.15s;
+}
+
+.rule-delete-btn:hover {
+    color: #f44336;
+    background: rgba(244, 67, 54, 0.1);
+}

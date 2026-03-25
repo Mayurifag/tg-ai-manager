@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
@@ -139,15 +139,6 @@ class ChatInteractor:
 
     async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
         return await self.repository.get_chat_avatar(chat_id)
-
-    async def subscribe_to_events(
-        self, callback: Callable[[SystemEvent], Awaitable[None]]
-    ):
-        async def wrapped_callback(event: SystemEvent):
-            await self.event_repo.add_event(event)
-            await callback(event)
-
-        self.repository.add_event_listener(wrapped_callback)
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
         return await self.event_repo.get_recent_events(limit)

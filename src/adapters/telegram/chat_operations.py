@@ -1,6 +1,7 @@
 import asyncio
 import traceback
-from typing import Any, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from telethon import errors, functions, types, utils
 from telethon.tl.functions.messages import GetPeerDialogsRequest
@@ -13,30 +14,28 @@ from src.adapters.telethon_mappers import (
 from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.infrastructure.logging import get_logger
 
+if TYPE_CHECKING:
+    from src.adapters.telegram.media import MediaManager
+    from src.adapters.telegram.message_parser import MessageParser
+
 logger = get_logger(__name__)
 
 
-class ChatOperationsMixin:
-    def __init__(self):
-        self.client: Any = None
-
-    # Abstract dependencies
-    async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
-        raise NotImplementedError
-
-    def _cache_message_chat(self, msg_id: int, chat_id: int):
-        raise NotImplementedError
-
-    async def _parse_message(
+class ChatOps:
+    def __init__(
         self,
-        msg: Any,
-        replies_map: Dict[int, Any] | None = None,
-        chat_id: Optional[int] = None,
-    ) -> Message:
-        raise NotImplementedError
-
-    def _extract_text(self, msg: Any) -> str:
-        raise NotImplementedError
+        client: Any,
+        parser: "MessageParser",
+        media: "MediaManager",
+        write_queue: Any,
+        dispatch_fn: Optional[Callable[[SystemEvent], Awaitable[None]]],
+    ) -> None:
+        self.client = client
+        self._parser = parser
+        self._media = media
+        self._write_queue = write_queue
+        self._dispatch_fn = dispatch_fn  # patched after EventHandlers is built
+        self._topic_name_cache: Dict[tuple[int, int], str] = {}
 
     async def _fetch_forum_topics_response(
         self, peer: Any, limit: int
@@ -79,11 +78,11 @@ class ChatOperationsMixin:
             unread_count = d.unread_count
             unread_topics_count = None
 
-            image_url = await self._get_chat_image(d.entity, d.id)
+            image_url = await self._media._get_chat_image(d.entity, d.id)
 
             msg = getattr(d, "message", None)
             if msg:
-                self._cache_message_chat(msg.id, d.id)
+                self._parser._cache_message_chat(msg.id, d.id)
 
             preview = format_message_preview(msg, chat_type, {})
 
@@ -147,7 +146,7 @@ class ChatOperationsMixin:
                 else:
                     c_type = ChatType.GROUP
 
-            image_url = await self._get_chat_image(entity, chat_id)
+            image_url = await self._media._get_chat_image(entity, chat_id)
 
             unread_count = 0
             unread_topics_count = None
@@ -172,7 +171,7 @@ class ChatOperationsMixin:
                 messages = await self.client.get_messages(entity, limit=1)
                 if messages:
                     latest_msg = messages[0]
-                    self._cache_message_chat(latest_msg.id, chat_id)
+                    self._parser._cache_message_chat(latest_msg.id, chat_id)
                     last_message_preview = format_message_preview(
                         latest_msg, c_type, {}
                     )
@@ -214,7 +213,7 @@ class ChatOperationsMixin:
             for msg in messages:
                 if not msg:
                     continue
-                self._cache_message_chat(msg.id, chat_id)
+                self._parser._cache_message_chat(msg.id, chat_id)
                 reply_header = getattr(msg, "reply_to", None)
                 if reply_header:
                     rid = getattr(reply_header, "reply_to_msg_id", None)
@@ -235,7 +234,7 @@ class ChatOperationsMixin:
             result_messages = []
             for msg in messages:
                 if msg:
-                    parsed = await self._parse_message(
+                    parsed = await self._parser._parse_message(
                         msg, replies_map, chat_id=chat_id
                     )
                     result_messages.append(parsed)
@@ -249,7 +248,6 @@ class ChatOperationsMixin:
     ) -> List[Dict[str, Any]]:
         try:
             entity = await self.client.get_entity(chat_id)
-            # Fetch messages
             messages = await self.client.get_messages(entity, limit=limit)
 
             seen_ids = set()
@@ -266,8 +264,7 @@ class ChatOperationsMixin:
                     name = utils.get_display_name(sender)
                     username = getattr(sender, "username", None)
 
-                    # Avatar url (cache check)
-                    avatar_url = await self._get_chat_image(sender, sid)
+                    avatar_url = await self._media._get_chat_image(sender, sid)
 
                     authors.append(
                         {
@@ -351,6 +348,10 @@ class ChatOperationsMixin:
             return []
 
     async def get_topic_name(self, chat_id: int, topic_id: int) -> Optional[str]:
+        key = (chat_id, topic_id)
+        if key in self._topic_name_cache:
+            return self._topic_name_cache[key]
+
         try:
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, ids=[topic_id])
@@ -359,7 +360,9 @@ class ChatOperationsMixin:
                 message = messages[0]
                 if message and getattr(message, "action", None):
                     if isinstance(message.action, MessageActionTopicCreate):
-                        return message.action.title
+                        name = message.action.title
+                        self._topic_name_cache[key] = name
+                        return name
         except Exception as e:
             logger.error(
                 "get_topic_name_failed",
@@ -375,42 +378,42 @@ class ChatOperationsMixin:
         topic_id: Optional[int] = None,
         max_id: Optional[int] = None,
     ) -> None:
-        try:
-            entity = await self.client.get_entity(chat_id)
-            chat_name = utils.get_display_name(entity)
-            topic_name = None
+        async def _do() -> None:
+            try:
+                entity = await self.client.get_entity(chat_id)
+                chat_name = utils.get_display_name(entity)
+                topic_name = None
 
-            if topic_id:
-                try:
-                    read_max_id = max_id
-                    if not read_max_id:
-                        msgs = await self.client.get_messages(
-                            entity, limit=1, reply_to=topic_id
-                        )
-                        read_max_id = msgs[0].id if msgs else topic_id
+                if topic_id:
+                    try:
+                        read_max_id = max_id
+                        if not read_max_id:
+                            msgs = await self.client.get_messages(
+                                entity, limit=1, reply_to=topic_id
+                            )
+                            read_max_id = msgs[0].id if msgs else topic_id
 
-                    await self.client(
-                        functions.messages.ReadDiscussionRequest(
-                            peer=entity, msg_id=topic_id, read_max_id=read_max_id
+                        await self.client(
+                            functions.messages.ReadDiscussionRequest(
+                                peer=entity, msg_id=topic_id, read_max_id=read_max_id
+                            )
                         )
-                    )
-                    topic_name = await self.get_topic_name(chat_id, topic_id)
-                except Exception as e:
-                    if "TOPIC_ID_INVALID" in str(e):
-                        logger.warning(
-                            "mark_read_topic_invalid",
-                            chat_id=chat_id,
-                            topic_id=topic_id,
-                        )
-                    else:
-                        raise e
-            else:
-                if max_id:
-                    await self.client.send_read_acknowledge(entity, max_id=max_id)
+                        topic_name = await self.get_topic_name(chat_id, topic_id)
+                    except Exception as e:
+                        if "TOPIC_ID_INVALID" in str(e):
+                            logger.warning(
+                                "mark_read_topic_invalid",
+                                chat_id=chat_id,
+                                topic_id=topic_id,
+                            )
+                        else:
+                            raise e
                 else:
-                    await self.client.send_read_acknowledge(entity)
+                    if max_id:
+                        await self.client.send_read_acknowledge(entity, max_id=max_id)
+                    else:
+                        await self.client.send_read_acknowledge(entity)
 
-            if hasattr(self, "_dispatch"):
                 event = SystemEvent(
                     type="read",
                     text="Marked as read",
@@ -421,110 +424,109 @@ class ChatOperationsMixin:
                     is_read=True,
                     link=f"/chat/{chat_id}",
                 )
-                await getattr(self, "_dispatch")(event)
+                if self._dispatch_fn:
+                    await self._dispatch_fn(event)
 
-        except Exception as e:
-            logger.error(
-                "mark_as_read_failed",
-                chat_id=chat_id,
-                topic_id=topic_id,
-                error=repr(e),
-                traceback=traceback.format_exc(),
-            )
+            except Exception as e:
+                logger.error(
+                    "mark_as_read_failed",
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    error=repr(e),
+                    traceback=traceback.format_exc(),
+                )
+
+        await self._write_queue.enqueue(_do)
 
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
-        try:
-            entity = await self.client.get_entity(chat_id)
-
-            target_reaction = None
-            if emoji.isdigit():
-                target_reaction = types.ReactionCustomEmoji(document_id=int(emoji))
-            else:
-                target_reaction = types.ReactionEmoji(emoticon=emoji)
-
-            msgs = await self.client.get_messages(entity, ids=[msg_id])
-            if not msgs:
-                return False
-            msg = msgs[0]
-
-            current_my_reactions = []
-            if hasattr(msg, "reactions") and msg.reactions:
-                for rc in msg.reactions.results:
-                    if getattr(rc, "chosen", False):
-                        current_my_reactions.append(rc.reaction)
-
-            new_reactions_list = []
-            found = False
-
-            for r in current_my_reactions:
-                is_same = False
-                if isinstance(r, types.ReactionEmoji) and isinstance(
-                    target_reaction, types.ReactionEmoji
-                ):
-                    if r.emoticon == target_reaction.emoticon:
-                        is_same = True
-                elif isinstance(r, types.ReactionCustomEmoji) and isinstance(
-                    target_reaction, types.ReactionCustomEmoji
-                ):
-                    if r.document_id == target_reaction.document_id:
-                        is_same = True
-
-                if is_same:
-                    found = True
-                else:
-                    new_reactions_list.append(r)
-
-            if not found:
-                new_reactions_list.append(target_reaction)
-
-            success = False
+        async def _do() -> None:
             try:
-                # Type ignore: telethon
-                await self.client(
-                    functions.messages.SendReactionRequest(
-                        peer=entity,
-                        msg_id=msg_id,
-                        reaction=new_reactions_list,  # type: ignore
-                        add_to_recent=True,
-                    )
-                )
-                success = True
-            except errors.ReactionInvalidError:
-                logger.info(
-                    "reaction_stack_failed_fallback_replace",
-                    chat_id=chat_id,
-                    msg_id=msg_id,
-                )
-                fallback_list = []
+                entity = await self.client.get_entity(chat_id)
+
+                target_reaction = None
+                if emoji.isdigit():
+                    target_reaction = types.ReactionCustomEmoji(document_id=int(emoji))
+                else:
+                    target_reaction = types.ReactionEmoji(emoticon=emoji)
+
+                msgs = await self.client.get_messages(entity, ids=[msg_id])
+                if not msgs:
+                    return
+                msg = msgs[0]
+
+                current_my_reactions = []
+                if hasattr(msg, "reactions") and msg.reactions:
+                    for rc in msg.reactions.results:
+                        if getattr(rc, "chosen", False):
+                            current_my_reactions.append(rc.reaction)
+
+                new_reactions_list = []
+                found = False
+
+                for r in current_my_reactions:
+                    is_same = False
+                    if isinstance(r, types.ReactionEmoji) and isinstance(
+                        target_reaction, types.ReactionEmoji
+                    ):
+                        if r.emoticon == target_reaction.emoticon:
+                            is_same = True
+                    elif isinstance(r, types.ReactionCustomEmoji) and isinstance(
+                        target_reaction, types.ReactionCustomEmoji
+                    ):
+                        if r.document_id == target_reaction.document_id:
+                            is_same = True
+
+                    if is_same:
+                        found = True
+                    else:
+                        new_reactions_list.append(r)
+
                 if not found:
-                    fallback_list = [target_reaction]
+                    new_reactions_list.append(target_reaction)
 
-                await self.client(
-                    functions.messages.SendReactionRequest(
-                        peer=entity,
-                        msg_id=msg_id,
-                        reaction=fallback_list,  # type: ignore
-                        add_to_recent=True,
-                    )
-                )
-                success = True
-            except Exception as e:
-                # If disallowed, just log as per instructions
-                logger.error("send_reaction_exception", error=str(e))
-                return False
-
-            if success:
+                success = False
                 try:
-                    updated_msgs = await self.client.get_messages(entity, ids=[msg_id])
-                    if updated_msgs:
-                        updated_msg = updated_msgs[0]
-                        if hasattr(self, "_parse_message") and hasattr(
-                            self, "_dispatch"
-                        ):
-                            parsed_msg = await getattr(self, "_parse_message")(
+                    await self.client(
+                        functions.messages.SendReactionRequest(
+                            peer=entity,
+                            msg_id=msg_id,
+                            reaction=new_reactions_list,  # type: ignore
+                            add_to_recent=True,
+                        )
+                    )
+                    success = True
+                except errors.ReactionInvalidError:
+                    logger.info(
+                        "reaction_stack_failed_fallback_replace",
+                        chat_id=chat_id,
+                        msg_id=msg_id,
+                    )
+                    fallback_list = []
+                    if not found:
+                        fallback_list = [target_reaction]
+
+                    await self.client(
+                        functions.messages.SendReactionRequest(
+                            peer=entity,
+                            msg_id=msg_id,
+                            reaction=fallback_list,  # type: ignore
+                            add_to_recent=True,
+                        )
+                    )
+                    success = True
+                except Exception as e:
+                    logger.error("send_reaction_exception", error=str(e))
+
+                if success:
+                    try:
+                        updated_msgs = await self.client.get_messages(
+                            entity, ids=[msg_id]
+                        )
+                        if updated_msgs:
+                            updated_msg = updated_msgs[0]
+                            parsed_msg = await self._parser._parse_message(
                                 updated_msg, chat_id=chat_id
                             )
-
                             event = SystemEvent(
                                 type="reaction_update",
                                 text="",
@@ -532,21 +534,25 @@ class ChatOperationsMixin:
                                 chat_id=chat_id,
                                 message_model=parsed_msg,
                             )
-                            await getattr(self, "_dispatch")(event)
-                except Exception as ex:
-                    logger.error(
-                        "post_reaction_fetch_failed",
-                        error=repr(ex),
-                        traceback=traceback.format_exc(),
-                    )
+                            if self._dispatch_fn:
+                                await self._dispatch_fn(event)
+                    except Exception as ex:
+                        logger.error(
+                            "post_reaction_fetch_failed",
+                            error=repr(ex),
+                            traceback=traceback.format_exc(),
+                        )
 
-            return success
+            except Exception as e:
+                logger.error(
+                    "send_reaction_failed",
+                    error=str(e),
+                    chat_id=chat_id,
+                    msg_id=msg_id,
+                )
 
-        except Exception as e:
-            logger.error(
-                "send_reaction_failed", error=str(e), chat_id=chat_id, msg_id=msg_id
-            )
-            return False
+        await self._write_queue.enqueue(_do)
+        return True
 
     async def get_self_premium_status(self) -> bool:
         try:
