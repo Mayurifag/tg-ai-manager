@@ -1,5 +1,5 @@
 # --- Stage 1: Get Valkey Binaries ---
-FROM valkey/valkey:8 AS valkey_source
+FROM valkey/valkey:8.1 AS valkey_source
 
 # --- Stage 2: Builder & Runtime ---
 FROM ghcr.io/astral-sh/uv:trixie-slim
