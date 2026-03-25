@@ -1,54 +1,55 @@
-"""
-App-scoped service accessors.
+"""App-scoped service accessors."""
 
-All services are created in src/web/__init__.py:startup (before_serving) and
-attached to the Quart app object. These functions are thin delegates to
-current_app — they work in any request context or app context.
-"""
+from typing import Optional, cast
 
 from quart import current_app
 
 from src.adapters.telegram import TelethonAdapter
 from src.application.interactors import ChatInteractor
 from src.config import get_settings
+from src.domain.ports import ActionRepository, EventRepository
+from src.infrastructure.event_bus import EventBus
 from src.infrastructure.logging import get_logger
 from src.rules.service import RuleService
+from src.users.ports import UserRepository
+from src.web.types import TypedQuart
 
 logger = get_logger(__name__)
 
 
+def _app() -> TypedQuart:
+    return cast(TypedQuart, current_app._get_current_object())  # noqa: SLF001
+
+
 def _get_tg_adapter() -> TelethonAdapter:
-    return current_app.tg_adapter  # type: ignore[attr-defined]
+    return _app().tg_adapter
 
 
 def get_chat_interactor() -> ChatInteractor:
-    return current_app.chat_interactor  # type: ignore[attr-defined]
+    return _app().chat_interactor
 
 
 def get_rule_service() -> RuleService:
-    return current_app.rule_service  # type: ignore[attr-defined]
+    return _app().rule_service
 
 
-def get_action_repo():
-    return current_app.action_repo  # type: ignore[attr-defined]
+def get_action_repo() -> ActionRepository:
+    return _app().action_repo
 
 
-def get_event_repo():
-    return current_app.event_repo  # type: ignore[attr-defined]
+def get_event_repo() -> EventRepository:
+    return _app().event_repo
 
 
-def get_user_repo():
-    return current_app.user_repo  # type: ignore[attr-defined]
+def get_user_repo() -> UserRepository:
+    return _app().user_repo
 
 
-def reload_tg_adapter(
-    session_string: str = None,  # type: ignore[assignment]
-) -> None:
-    """Hot-swap the Telegram adapter (called on QR login start).
+def get_event_bus() -> EventBus:
+    return _app().event_bus
 
-    Creates a new adapter, re-wires it to the event bus, and updates all
-    app-scoped references that hold a pointer to the old adapter.
-    """
+
+def reload_tg_adapter(session_string: Optional[str] = None) -> None:
     settings = get_settings()
     new_adapter = TelethonAdapter(
         session_string=session_string,
@@ -56,10 +57,9 @@ def reload_tg_adapter(
         api_hash=settings.TG_API_HASH,
     )
 
-    # Re-wire: event bus dispatch is the sole listener
-    new_adapter.add_event_listener(current_app.event_bus.dispatch)  # type: ignore[attr-defined]
+    app = _app()
+    new_adapter.add_event_listener(app.event_bus.dispatch)
 
-    # Update app-scoped references
-    current_app.tg_adapter = new_adapter  # type: ignore[attr-defined]
-    current_app.chat_interactor.repository = new_adapter  # type: ignore[attr-defined]
-    current_app.rule_service.chat_repo = new_adapter  # type: ignore[attr-defined]
+    app.tg_adapter = new_adapter
+    app.chat_interactor.repository = new_adapter
+    app.rule_service.chat_repo = new_adapter
