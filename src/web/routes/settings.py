@@ -151,6 +151,39 @@ async def api_delete_rule(rule_id: int):
     return jsonify({"status": "ok"})
 
 
+@settings_bp.route("/api/rules/export", methods=["GET"])
+async def api_export_rules():
+    settings = get_settings()
+    rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
+    all_rules = await rule_repo.get_all()
+
+    user_repo = get_user_repo()
+    user = await user_repo.get_user(1)
+    if not user:
+        user = User()
+
+    rules_list = [
+        {
+            "rule_type": rule.rule_type.value,
+            "chat_id": rule.chat_id,
+            "topic_id": rule.topic_id,
+            "config": rule.config,
+        }
+        for rule in all_rules
+    ]
+
+    user_settings = {
+        "autoread_service_messages": user.autoread_service_messages,
+        "autoread_polls": user.autoread_polls,
+        "autoread_self": user.autoread_self,
+        "autoread_bots": user.autoread_bots,
+        "autoread_regex": user.autoread_regex,
+        "debug_mode": user.debug_mode,
+    }
+
+    return jsonify({"rules": rules_list, "user_settings": user_settings})
+
+
 @settings_bp.route("/api/rules", methods=["GET"])
 async def api_get_all_rules():
     settings = get_settings()

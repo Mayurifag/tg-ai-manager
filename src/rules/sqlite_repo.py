@@ -150,3 +150,11 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 conn.commit()
 
         await self._execute(_delete)
+
+    async def delete_all(self) -> None:
+        def _delete_all():
+            with self._connect() as conn:
+                conn.execute("DELETE FROM rules")
+                conn.commit()
+
+        await self._execute(_delete_all)

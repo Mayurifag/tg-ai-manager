@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 
@@ -11,6 +12,9 @@ class Settings(BaseSettings):
     TG_API_HASH: str
 
     WRITE_QUEUE_DELAY: float = 0.5
+
+    # When set, sync rules from production export URL on startup
+    RULES_SYNC_URL: Optional[str] = None
 
 
 @lru_cache(maxsize=1)
