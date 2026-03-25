@@ -162,20 +162,24 @@ async def api_get_all_rules():
         if cid not in grouped:
             grouped[cid] = {"chat_rules": [], "topics": {}}
         if rule.topic_id is None:
-            grouped[cid]["chat_rules"].append({
-                "id": rule.id,
-                "rule_type": rule.rule_type.value,
-                "config": rule.config,
-                "topic_id": None,
-            })
+            grouped[cid]["chat_rules"].append(
+                {
+                    "id": rule.id,
+                    "rule_type": rule.rule_type.value,
+                    "config": rule.config,
+                    "topic_id": None,
+                }
+            )
         else:
             tid = rule.topic_id
             if tid not in grouped[cid]["topics"]:
                 grouped[cid]["topics"][tid] = []
-            grouped[cid]["topics"][tid].append({
-                "id": rule.id,
-                "rule_type": rule.rule_type.value,
-                "config": rule.config,
-                "topic_id": tid,
-            })
+            grouped[cid]["topics"][tid].append(
+                {
+                    "id": rule.id,
+                    "rule_type": rule.rule_type.value,
+                    "config": rule.config,
+                    "topic_id": tid,
+                }
+            )
     return jsonify(grouped)

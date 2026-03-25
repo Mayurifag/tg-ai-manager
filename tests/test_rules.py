@@ -321,7 +321,9 @@ async def test_startup_scan_skips_chat_with_no_autoread_rule():
     chat_repo = AsyncMock()
     chat_repo.is_connected = MagicMock(return_value=True)
     chat_repo.get_all_unread_chats.return_value = [chat]
-    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+    svc = make_service(
+        rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo
+    )
 
     await svc.run_startup_scan()
 
@@ -340,7 +342,9 @@ async def test_startup_scan_marks_read_chat_with_autoread_rule():
     chat_repo = AsyncMock()
     chat_repo.is_connected = MagicMock(return_value=True)
     chat_repo.get_all_unread_chats.return_value = [chat]
-    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+    svc = make_service(
+        rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo
+    )
 
     await svc.run_startup_scan()
 
@@ -355,8 +359,12 @@ async def test_startup_scan_marks_read_chat_with_autoread_rule():
 async def test_startup_scan_forum_chat_checks_topics():
     """Forum chat iterates topics; only topics with autoread rules are read."""
     forum_chat = make_chat(id=100, unread_count=2, chat_type=ChatType.FORUM)
-    topic_with_rule = make_chat(id=10, name="Topic 10", unread_count=1, chat_type=ChatType.TOPIC)
-    topic_no_rule = make_chat(id=20, name="Topic 20", unread_count=1, chat_type=ChatType.TOPIC)
+    topic_with_rule = make_chat(
+        id=10, name="Topic 10", unread_count=1, chat_type=ChatType.TOPIC
+    )
+    topic_no_rule = make_chat(
+        id=20, name="Topic 20", unread_count=1, chat_type=ChatType.TOPIC
+    )
 
     def rule_side_effect(chat_id, topic_id):
         if chat_id == 100 and topic_id == 10:
@@ -370,7 +378,9 @@ async def test_startup_scan_forum_chat_checks_topics():
     chat_repo.is_connected = MagicMock(return_value=True)
     chat_repo.get_all_unread_chats.return_value = [forum_chat]
     chat_repo.get_unread_topics.return_value = [topic_with_rule, topic_no_rule]
-    svc = make_service(rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo)
+    svc = make_service(
+        rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo
+    )
 
     await svc.run_startup_scan()
 

@@ -33,14 +33,7 @@ async def login_page():
 @auth_bp.route("/api/auth/qr/start", methods=["POST"])
 async def qr_start():
     try:
-        settings = get_settings()
-
-        # Explicitly pass None type properly if needed, although Container handles default=None
-        reload_tg_adapter(
-            api_id=settings.TG_API_ID,
-            api_hash=settings.TG_API_HASH,
-            session_string=None,  # type: ignore
-        )
+        reload_tg_adapter(session_string=None)  # type: ignore
         adapter = _get_tg_adapter()
 
         url = await adapter.start_qr_login()

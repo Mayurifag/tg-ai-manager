@@ -3,7 +3,6 @@
 import asyncio
 import time
 
-import pytest
 
 from src.infrastructure.telegram_queue import TelegramWriteQueue
 
