@@ -1,4 +1,3 @@
-import asyncio
 import re
 import time
 from datetime import datetime
@@ -113,14 +112,21 @@ class RuleService:
             reason = "autoread_rule"
 
         if not should_read:
-            # We assume unread_count is 1 for a new message event for simplicity in global rules
-            # In reality, interactor fetches real state, but here we estimate.
+            # Pass unread_count=1 as a conservative estimate for live events.
+            # check_global_autoread_rules gates on unread_count <= 1 intentionally:
+            # global rules (service msgs, polls, bots, regex) only fire when the
+            # incoming message is the sole unread one. If there are already unread
+            # messages in this chat, those might be important and the user may not
+            # want them marked read automatically. Per-chat autoread rules (above)
+            # cover the "read everything regardless" case.
             reason = await self.check_global_autoread_rules(msg, unread_count=1)
             if reason:
                 should_read = True
 
             if should_read and "global" in reason:
-                # Double check with real state
+                # Verify with real unread count: if the chat already had unread
+                # messages before this one arrived, skip autoread. This lets the
+                # user catch up on the backlog themselves.
                 chat = await self.chat_repo.get_chat(event.chat_id)
                 if chat and chat.unread_count > 1:
                     should_read = False
@@ -155,10 +161,17 @@ class RuleService:
         # Album Deduplication Logic
         if message.grouped_id:
             now = time.time()
-            # Clean up old cache entries (older than 60s)
+            # Prune stale entries (older than 60s) and cap size to avoid unbounded growth
             self._album_reaction_cache = {
                 k: v for k, v in self._album_reaction_cache.items() if now - v < 60
             }
+            if len(self._album_reaction_cache) > 500:
+                # Keep the 250 most recent entries
+                self._album_reaction_cache = dict(
+                    sorted(self._album_reaction_cache.items(), key=lambda x: x[1])[
+                        -250:
+                    ]
+                )
 
             key = (chat_id, message.grouped_id)
             if key in self._album_reaction_cache:
@@ -200,21 +213,30 @@ class RuleService:
                 # We don't log actions for reactions to avoid spamming the log
 
     async def run_startup_scan(self):
-        if (
-            not hasattr(self.chat_repo, "is_connected")
-            or not self.chat_repo.is_connected()
-        ):
+        if not self.chat_repo.is_connected():
             return
 
         try:
             unread_chats = await self.chat_repo.get_all_unread_chats()
+            total = len(unread_chats)
+            chats_read = 0
+
+            logger.info(
+                "startup_scan_started",
+                total_unread_chats=total,
+            )
+
             for chat in unread_chats:
                 try:
+                    if chat.unread_count == 0:
+                        continue
+
                     if chat.type == ChatType.FORUM:
                         topics = await self.chat_repo.get_unread_topics(chat.id)
                         for topic in topics:
                             if await self.is_autoread_enabled(chat.id, topic.id):
                                 await self.chat_repo.mark_as_read(chat.id, topic.id)
+                                chats_read += 1
                                 await self.action_repo.add_log(
                                     ActionLog(
                                         action="startup_read",
@@ -224,6 +246,13 @@ class RuleService:
                                         date=datetime.now(),
                                         link=f"/forum/{chat.id}",
                                     )
+                                )
+                            else:
+                                logger.info(
+                                    "startup_scan_chat_skipped",
+                                    chat_id=chat.id,
+                                    chat_name=chat.name,
+                                    topic_id=topic.id,
                                 )
                     else:
                         should_read = False
@@ -242,6 +271,7 @@ class RuleService:
                                     should_read = True
                         if should_read:
                             await self.chat_repo.mark_as_read(chat.id)
+                            chats_read += 1
                             await self.action_repo.add_log(
                                 ActionLog(
                                     action="startup_read",
@@ -252,11 +282,27 @@ class RuleService:
                                     link=f"/chat/{chat.id}",
                                 )
                             )
-                    await asyncio.sleep(0.1)
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                        else:
+                            logger.info(
+                                "startup_scan_chat_skipped",
+                                chat_id=chat.id,
+                                chat_name=chat.name,
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "startup_scan_chat_failed",
+                        chat_id=chat.id,
+                        chat_name=chat.name,
+                        error=repr(e),
+                    )
+
+            logger.info(
+                "startup_scan_completed",
+                chats_processed=total,
+                chats_read=chats_read,
+            )
+        except Exception as e:
+            logger.warning("startup_scan_failed", error=repr(e))
 
     async def toggle_autoread(
         self, chat_id: int, topic_id: Optional[int], enabled: bool
