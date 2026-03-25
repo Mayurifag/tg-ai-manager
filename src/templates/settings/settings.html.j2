@@ -102,105 +102,9 @@
         </div>
     </div>
 
-    <!-- 2. Active Rules Summary (No Header, Full Width) -->
-    <div class="section-card">
-        {% if grouped_rules %}
-        {% for chat_id, data in grouped_rules.items() %}
-        <div class="rule-group-card" data-chat-id="{{ chat_id }}">
-            <a href="/chat/{{ chat_id }}" class="rg-header" title="Open Chat">
-                <div class="rg-avatar">?</div>
-                <div class="rg-info">
-                    <div class="rg-name">Chat ID: {{ chat_id }}</div>
-                    <div class="rg-type rg-loading">Loading info...</div>
-                </div>
-                <div style="font-size: 0.8rem; color: #555;">ID: {{ chat_id }}</div>
-            </a>
-
-            {% if data.chat_rules %}
-            <div class="rule-list">
-                {% for rule in data.chat_rules %}
-                <div class="rule-item">
-                    <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
-                    <div class="rule-detail">
-                        {% if rule.rule_type.value == 'autoreact' %}
-                        <div class="ar-display">
-                            <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
-                            <div class="ar-targets">
-                                {% if rule.config.target_users %}
-                                {% for uid in rule.config.target_users %}
-                                <div class="user-chip-lazy" data-user-id="{{ uid }}">
-                                    <div class="u-avatar">?</div>
-                                    <span class="u-name">{{ uid }}</span>
-                                </div>
-                                {% endfor %}
-                                {% else %}
-                                <span class="ar-default">Default (Channel/Main)</span>
-                                {% endif %}
-                            </div>
-                        </div>
-                        {% else %}
-                        {% if rule.config %}
-                        <span class="rule-config">{{ rule.config }}</span>
-                        {% endif %}
-                        {% endif %}
-                    </div>
-                    {% if rule.id %}
-                    <button class="rule-delete-btn" onclick="deleteRule({{ rule.id }})" title="Delete rule">✕</button>
-                    {% endif %}
-                </div>
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            {% if data.topics %}
-            <div class="rule-list" style="padding-top: 0;">
-                {% for topic_id, t_rules in data.topics.items() %}
-                <div class="topic-group">
-                    <div class="topic-header">
-                        <span style="margin-right: 5px;">#</span> Topic ID: {{ topic_id }}
-                    </div>
-                    {% for rule in t_rules %}
-                    <div class="rule-item">
-                        <span class="rule-type-badge badge-{{ rule.rule_type.value }}">{{ rule.rule_type.value }}</span>
-                        <div class="rule-detail">
-                            {% if rule.rule_type.value == 'autoreact' %}
-                            <div class="ar-display">
-                                <div class="ar-emoji">{{ rule.config.emoji or '💩' }}</div>
-                                <div class="ar-targets">
-                                    {% if rule.config.target_users %}
-                                    {% for uid in rule.config.target_users %}
-                                    <div class="user-chip-lazy" data-user-id="{{ uid }}">
-                                        <div class="u-avatar">?</div>
-                                        <span class="u-name">{{ uid }}</span>
-                                    </div>
-                                    {% endfor %}
-                                    {% else %}
-                                    <span class="ar-default">Default (Channel/Main)</span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                            {% else %}
-                            {% if rule.config %}
-                            <span class="rule-config">{{ rule.config }}</span>
-                            {% endif %}
-                            {% endif %}
-                        </div>
-                        {% if rule.id %}
-                        <button class="rule-delete-btn" onclick="deleteRule({{ rule.id }})" title="Delete rule">✕</button>
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </div>
-        {% endfor %}
-        {% else %}
-        <div style="text-align: center; color: #777; padding: 30px;">
-            No specific rules configured.
-        </div>
-        {% endif %}
+    <!-- 2. Active Rules Summary (fetched and rendered by JS) -->
+    <div class="section-card" id="rules-container">
+        <div style="text-align:center;color:#777;padding:30px;">Loading rules...</div>
     </div>
 
     <!-- Danger Zone Footer (Only in Debug Mode) -->
@@ -254,7 +158,17 @@
 </div>
 
 <script>
-    // --- API Helper ---
+    // --- Settings state (server-rendered initial values) ---
+    const initialSettings = {
+        autoread_service_messages: {{ 'true' if settings.autoread_service_messages else 'false' }},
+        autoread_polls: {{ 'true' if settings.autoread_polls else 'false' }},
+        autoread_self: {{ 'true' if settings.autoread_self else 'false' }},
+        debug_mode: {{ 'true' if settings.debug_mode else 'false' }},
+        autoread_bots: {{ settings.autoread_bots | tojson }},
+        autoread_regex: {{ settings.autoread_regex | tojson }},
+    };
+
+    // --- API Helper --- patches setting, updates DOM in-place ---
     async function patchSetting(payload) {
         try {
             const res = await fetch('/api/settings', {
@@ -262,68 +176,193 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (res.ok) {
-                window.location.reload();
-            } else {
-                alert("Failed to save setting");
-            }
+            if (!res.ok) { alert("Failed to save setting"); }
         } catch (e) {
             console.error(e);
             alert("Network Error");
         }
     }
 
-    // --- Toggle Logic ---
+    // --- Toggle Logic (no reload — just patch) ---
     function toggleSetting(key) {
-        // Handle mapped keys for IDs
-        let idMap = {
+        const idMap = {
             'autoread_service_messages': 't-service',
             'autoread_polls': 't-polls',
             'autoread_self': 't-self',
             'debug_mode': 't-debug'
         };
-        let elId = idMap[key] || key;
-        const checkbox = document.getElementById(elId);
-
+        const checkbox = document.getElementById(idMap[key] || key);
         setTimeout(() => {
-            const val = checkbox.checked;
             const payload = {};
-            payload[key] = val;
+            payload[key] = checkbox.checked;
             patchSetting(payload);
         }, 50);
     }
 
     // --- Modal Logic ---
-    function openModal(id) {
-        document.getElementById(id).classList.add('show');
-    }
+    function openModal(id) { document.getElementById(id).classList.add('show'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
-    function closeModal(id) {
-        document.getElementById(id).classList.remove('show');
-    }
-
-    function saveField(key, inputId) {
+    async function saveField(key, inputId) {
         const val = document.getElementById(inputId).value;
         const payload = {};
         payload[key] = val;
-        patchSetting(payload);
+        await patchSetting(payload);
+        closeModal(inputId === 'input-bots' ? 'modal-bots' : 'modal-regex');
+        // Update display in-place
+        if (key === 'autoread_bots') renderBotTags(val);
+        if (key === 'autoread_regex') renderRegexDisplay(val);
+    }
+
+    function renderBotTags(bots) {
+        const display = document.querySelector('.gs-display-card[data-tooltip*="usernames"] .gs-display-content');
+        if (!display) return;
+        if (!bots || !bots.trim()) {
+            display.innerHTML = '<span class="gs-none">None configured</span>';
+            display.closest('.gs-display-card').classList.remove('has-content');
+            return;
+        }
+        const tags = bots.split(',').filter(b => b.trim()).map(b =>
+            `<span class="bot-tag">${b.trim()}</span>`
+        ).join('');
+        display.innerHTML = `<div class="bot-tags">${tags}</div>`;
+        display.closest('.gs-display-card').classList.add('has-content');
+    }
+
+    function renderRegexDisplay(regex) {
+        const display = document.querySelector('.gs-display-card[data-tooltip*="RegEx"] .gs-display-content');
+        if (!display) return;
+        if (!regex || !regex.trim()) {
+            display.innerHTML = '<span class="gs-none">None configured</span>';
+            display.closest('.gs-display-card').classList.remove('has-content');
+            return;
+        }
+        display.innerHTML = `<code class="regex-block">${regex}</code>`;
+        display.closest('.gs-display-card').classList.add('has-content');
     }
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                overlay.classList.remove('show');
-            }
+            if (e.target === overlay) overlay.classList.remove('show');
         });
     });
 
-    // --- Delete Rule Logic ---
+    // --- Rules rendering ---
+    const rulesContainer = document.getElementById('rules-container');
+
+    function buildRuleItemHTML(rule) {
+        let detail = '';
+        if (rule.rule_type === 'autoreact') {
+            const emoji = rule.config.emoji || '💩';
+            const targets = rule.config.target_users || [];
+            const targetsHTML = targets.length
+                ? targets.map(uid => `<div class="user-chip-lazy" data-user-id="${uid}"><div class="u-avatar">?</div><span class="u-name">${uid}</span></div>`).join('')
+                : '<span class="ar-default">Default (Channel/Main)</span>';
+            detail = `<div class="ar-display"><div class="ar-emoji">${emoji}</div><div class="ar-targets">${targetsHTML}</div></div>`;
+        } else if (rule.config && Object.keys(rule.config).length) {
+            detail = `<span class="rule-config">${JSON.stringify(rule.config)}</span>`;
+        }
+        const deleteBtn = rule.id
+            ? `<button class="rule-delete-btn" onclick="deleteRule(${rule.id})" title="Delete rule">✕</button>`
+            : '';
+        return `
+            <div class="rule-item" data-rule-id="${rule.id}">
+                <span class="rule-type-badge badge-${rule.rule_type}">${rule.rule_type}</span>
+                <div class="rule-detail">${detail}</div>
+                ${deleteBtn}
+            </div>`;
+    }
+
+    function buildGroupHTML(chatId, data) {
+        const chatRulesHTML = data.chat_rules.map(buildRuleItemHTML).join('');
+        const topicsHTML = Object.entries(data.topics).map(([topicId, rules]) => `
+            <div class="topic-group">
+                <div class="topic-header"><span style="margin-right:5px;">#</span> Topic ID: ${topicId}</div>
+                ${rules.map(buildRuleItemHTML).join('')}
+            </div>`).join('');
+
+        return `
+            <div class="rule-group-card" data-chat-id="${chatId}">
+                <a href="/chat/${chatId}" class="rg-header" title="Open Chat">
+                    <div class="rg-avatar">?</div>
+                    <div class="rg-info">
+                        <div class="rg-name">Chat ID: ${chatId}</div>
+                        <div class="rg-type rg-loading">Loading info...</div>
+                    </div>
+                    <div style="font-size:0.8rem;color:#555;">ID: ${chatId}</div>
+                </a>
+                ${chatRulesHTML ? `<div class="rule-list">${chatRulesHTML}</div>` : ''}
+                ${topicsHTML ? `<div class="rule-list" style="padding-top:0;">${topicsHTML}</div>` : ''}
+            </div>`;
+    }
+
+    async function loadRules() {
+        try {
+            const res = await fetch('/api/rules');
+            if (!res.ok) return;
+            const grouped = await res.json();
+            const keys = Object.keys(grouped);
+            if (!keys.length) {
+                rulesContainer.innerHTML = '<div style="text-align:center;color:#777;padding:30px;">No specific rules configured.</div>';
+                return;
+            }
+            rulesContainer.innerHTML = keys.map(cid => buildGroupHTML(cid, grouped[cid])).join('');
+            enrichRuleCards();
+        } catch (e) {
+            console.error('Failed to load rules', e);
+        }
+    }
+
+    async function enrichRuleCards() {
+        // Enrich chat info
+        document.querySelectorAll('.rule-group-card').forEach(async (card) => {
+            const chatId = card.getAttribute('data-chat-id');
+            if (!chatId) return;
+            try {
+                const res = await fetch(`/api/chat/${chatId}/info`);
+                if (!res.ok) return;
+                const data = await res.json();
+                card.querySelector('.rg-name').textContent = data.name;
+                const typeEl = card.querySelector('.rg-type');
+                typeEl.textContent = data.type;
+                typeEl.classList.remove('rg-loading');
+                const avatarEl = card.querySelector('.rg-avatar');
+                avatarEl.innerHTML = data.avatar_url
+                    ? `<img src="${data.avatar_url}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
+                    : data.name.charAt(0).toUpperCase();
+            } catch (e) { }
+        });
+
+        // Enrich user chips
+        document.querySelectorAll('.user-chip-lazy').forEach(async (chip) => {
+            const uid = chip.getAttribute('data-user-id');
+            if (!uid) return;
+            try {
+                const res = await fetch(`/api/chat/${uid}/info`);
+                if (!res.ok) return;
+                const data = await res.json();
+                chip.querySelector('.u-name').textContent = data.name;
+                chip.querySelector('.u-avatar').innerHTML = data.avatar_url
+                    ? `<img src="${data.avatar_url}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
+                    : data.name.charAt(0).toUpperCase();
+                chip.title = `@${data.username || 'unknown'}`;
+            } catch (e) { }
+        });
+    }
+
+    // --- Delete Rule (no reload) ---
     async function deleteRule(ruleId) {
         if (!confirm("Delete this rule?")) return;
         try {
             const res = await fetch(`/api/rules/${ruleId}`, { method: 'DELETE' });
             if (res.ok) {
-                window.location.reload();
+                // Remove card from DOM immediately, then refresh list
+                const item = document.querySelector(`[data-rule-id="${ruleId}"]`);
+                if (item) {
+                    item.style.opacity = '0.4';
+                    item.style.pointerEvents = 'none';
+                }
+                await loadRules();
             } else {
                 alert("Failed to delete rule.");
             }
@@ -336,12 +375,9 @@
     const resetBtn = document.getElementById('reset-btn');
     if (resetBtn) {
         resetBtn.addEventListener('click', async () => {
-            if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) {
-                return;
-            }
+            if (!confirm("Are you sure? This will delete your account and all associated rules from this manager.")) return;
             resetBtn.textContent = "Resetting...";
             resetBtn.disabled = true;
-
             try {
                 const res = await fetch('/api/settings/reset', { method: 'POST' });
                 if (res.ok) {
@@ -359,58 +395,9 @@
         });
     }
 
-    // --- Active Rules List Lazy Loading ---
-    document.addEventListener('DOMContentLoaded', async () => {
-        const cards = document.querySelectorAll('.rule-group-card');
-        cards.forEach(async (card) => {
-            const chatId = card.getAttribute('data-chat-id');
-            if (!chatId) return;
-
-            try {
-                const res = await fetch(`/api/chat/${chatId}/info`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const nameEl = card.querySelector('.rg-name');
-                    const typeEl = card.querySelector('.rg-type');
-                    const avatarEl = card.querySelector('.rg-avatar');
-
-                    nameEl.textContent = data.name;
-                    typeEl.textContent = data.type;
-                    typeEl.classList.remove('rg-loading');
-
-                    if (data.avatar_url) {
-                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
-                    } else {
-                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
-                    }
-                } else {
-                    card.querySelector('.rg-type').textContent = "Info unavailable";
-                }
-            } catch (e) {
-                console.error("Failed to load info for chat", chatId, e);
-            }
-        });
-
-        const userChips = document.querySelectorAll('.user-chip-lazy');
-        userChips.forEach(async (chip) => {
-            const uid = chip.getAttribute('data-user-id');
-            if (!uid) return;
-            try {
-                const res = await fetch(`/api/chat/${uid}/info`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const avatarEl = chip.querySelector('.u-avatar');
-                    const nameEl = chip.querySelector('.u-name');
-                    nameEl.textContent = data.name;
-                    if (data.avatar_url) {
-                        avatarEl.innerHTML = `<img src="${data.avatar_url}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
-                    } else {
-                        avatarEl.textContent = data.name.charAt(0).toUpperCase();
-                    }
-                    chip.title = `@${data.username || 'unknown'}`;
-                }
-            } catch (e) { }
-        });
+    // --- Init ---
+    document.addEventListener('DOMContentLoaded', () => {
+        loadRules();
     });
 </script>
 {% endblock %}

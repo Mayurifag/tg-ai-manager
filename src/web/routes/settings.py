@@ -11,34 +11,11 @@ settings_bp = Blueprint("settings", __name__)
 
 @settings_bp.route("/settings", methods=["GET"])
 async def settings_view():
-    settings = get_settings()
     user_repo = get_user_repo()
-    rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
-
-    # 1. Fetch Global User Settings
     user = await user_repo.get_user(1)
     if not user:
         user = User()
-
-    # 2. Fetch Active Rules for Summary
-    all_rules = await rule_repo.get_all()
-    grouped_rules = {}
-
-    for rule in all_rules:
-        cid = rule.chat_id
-        if cid not in grouped_rules:
-            grouped_rules[cid] = {"chat_rules": [], "topics": {}}
-
-        if rule.topic_id is None:
-            grouped_rules[cid]["chat_rules"].append(rule)
-        else:
-            if rule.topic_id not in grouped_rules[cid]["topics"]:
-                grouped_rules[cid]["topics"][rule.topic_id] = []
-            grouped_rules[cid]["topics"][rule.topic_id].append(rule)
-
-    return await render_template(
-        "settings/settings.html.j2", settings=user, grouped_rules=grouped_rules
-    )
+    return await render_template("settings/settings.html.j2", settings=user)
 
 
 @settings_bp.route("/api/settings", methods=["PATCH", "POST"])
@@ -172,3 +149,33 @@ async def api_delete_rule(rule_id: int):
     rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
     await rule_repo.delete(rule_id)
     return jsonify({"status": "ok"})
+
+
+@settings_bp.route("/api/rules", methods=["GET"])
+async def api_get_all_rules():
+    settings = get_settings()
+    rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
+    all_rules = await rule_repo.get_all()
+    grouped: dict = {}
+    for rule in all_rules:
+        cid = rule.chat_id
+        if cid not in grouped:
+            grouped[cid] = {"chat_rules": [], "topics": {}}
+        if rule.topic_id is None:
+            grouped[cid]["chat_rules"].append({
+                "id": rule.id,
+                "rule_type": rule.rule_type.value,
+                "config": rule.config,
+                "topic_id": None,
+            })
+        else:
+            tid = rule.topic_id
+            if tid not in grouped[cid]["topics"]:
+                grouped[cid]["topics"][tid] = []
+            grouped[cid]["topics"][tid].append({
+                "id": rule.id,
+                "rule_type": rule.rule_type.value,
+                "config": rule.config,
+                "topic_id": tid,
+            })
+    return jsonify(grouped)
