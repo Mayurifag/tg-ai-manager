@@ -55,6 +55,13 @@ Messages
             <div class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator"></div>
         </div>
 
+        <!-- AI Autoread Toggle -->
+        <div class="action-item" id="btn-toggle-ai-autoread" title="Toggle AI Autoread">
+            <span class="icon">🤖</span>
+            <span class="label">AI Read</span>
+            <div class="status-indicator {{ 'on' if ai_autoread_enabled else 'off' }}"></div>
+        </div>
+
         <!-- Mark Read Button -->
         <div class="action-item" id="btn-read-chat" title="Mark All Read">
             <span class="icon">✅</span>
@@ -190,6 +197,33 @@ Messages
                 indicator.classList.toggle('on', wasEnabled);
                 indicator.classList.toggle('off', !wasEnabled);
                 showToast("Failed to toggle Autoread");
+            }
+        });
+    }
+
+    // --- AI Autoread Logic ---
+    const aiAutoreadBtn = document.getElementById('btn-toggle-ai-autoread');
+    if (aiAutoreadBtn) {
+        aiAutoreadBtn.addEventListener('click', async () => {
+            const indicator = aiAutoreadBtn.querySelector('.status-indicator');
+            const wasEnabled = indicator.classList.contains('on');
+            const newState = !wasEnabled;
+
+            indicator.classList.toggle('on', newState);
+            indicator.classList.toggle('off', !newState);
+
+            try {
+                await fetch('/api/rules/ai_autoread/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, topic_id: topicId, enabled: newState })
+                });
+                showToast(newState ? "AI Autoread Enabled" : "AI Autoread Disabled");
+            } catch (e) {
+                console.error(e);
+                indicator.classList.toggle('on', wasEnabled);
+                indicator.classList.toggle('off', !wasEnabled);
+                showToast("Failed to toggle AI Autoread");
             }
         });
     }

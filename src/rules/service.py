@@ -3,6 +3,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
+from src.ai.gemini import GeminiClassifier
 from src.domain.models import ActionLog, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository
 from src.infrastructure.logging import get_logger
@@ -130,6 +131,27 @@ class RuleService:
                 chat = await self.chat_repo.get_chat(event.chat_id)
                 if chat and chat.unread_count > 1:
                     should_read = False
+
+        # --- AI AutoRead Logic ---
+        if not should_read and await self.is_ai_autoread_enabled(
+            event.chat_id, event.topic_id
+        ):
+            user = await self.user_repo.get_user(1)
+            if user and user.ai_api_key and user.ai_model and msg.text:
+                try:
+                    classifier = GeminiClassifier(
+                        api_key=user.ai_api_key, model=user.ai_model
+                    )
+                    is_ad = await classifier.classify_is_ad(msg.text)
+                    if is_ad:
+                        should_read = True
+                        reason = "ai_ad_detected"
+                except Exception as e:
+                    logger.warning(
+                        "ai_classification_failed",
+                        chat_id=event.chat_id,
+                        error=repr(e),
+                    )
 
         if should_read:
             max_id = msg.id
@@ -303,6 +325,17 @@ class RuleService:
             )
         except Exception as e:
             logger.warning("startup_scan_failed", error=repr(e))
+
+    async def toggle_ai_autoread(
+        self, chat_id: int, topic_id: Optional[int], enabled: bool
+    ) -> Optional[Rule]:
+        return await self._toggle_rule(chat_id, topic_id, RuleType.AI_AUTOREAD, enabled)
+
+    async def is_ai_autoread_enabled(
+        self, chat_id: int, topic_id: Optional[int] = None
+    ) -> bool:
+        rule = await self.get_rule(chat_id, topic_id, RuleType.AI_AUTOREAD)
+        return bool(rule)
 
     async def toggle_autoread(
         self, chat_id: int, topic_id: Optional[int], enabled: bool

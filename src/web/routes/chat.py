@@ -36,6 +36,7 @@ async def chat_view(chat_id: int):
     messages = await interactor.get_chat_messages(chat_id, topic_id=None)
 
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
+    ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id)
 
     # Determine Autoreact Status
     react_rule = await rule_service.get_rule(chat_id, None, RuleType.AUTOREACT)
@@ -53,6 +54,7 @@ async def chat_view(chat_id: int):
         chat_id=chat_id,
         topic_id=None,
         autoread_enabled=autoread_enabled,
+        ai_autoread_enabled=ai_autoread_enabled,
         autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
@@ -67,6 +69,7 @@ async def topic_view(chat_id: int, topic_id: int):
     chat = await interactor.get_chat(chat_id)
     messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id, topic_id)
+    ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id, topic_id)
 
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
@@ -87,6 +90,7 @@ async def topic_view(chat_id: int, topic_id: int):
         chat_id=chat_id,
         topic_id=topic_id,
         autoread_enabled=autoread_enabled,
+        ai_autoread_enabled=ai_autoread_enabled,
         autoreact_status=autoreact_status,
         is_premium=is_premium,
     )

@@ -102,7 +102,72 @@
         </div>
     </div>
 
-    <!-- 2. Active Rules Summary (fetched and rendered by JS) -->
+    <!-- 2. AI Configuration -->
+    <div class="section-card">
+        <div style="font-size:1rem;font-weight:600;color:#ccc;margin-bottom:12px;">🤖 AI Configuration</div>
+        <div class="gs-expanded-row">
+            <!-- AI Provider -->
+            <div class="gs-display-card">
+                <div class="gs-display-header">
+                    <span>AI Provider</span>
+                </div>
+                <div class="gs-display-content">
+                    <select id="select-ai-provider"
+                        style="background:#2a2a2c;border:1px solid #444;color:#fff;border-radius:4px;padding:6px 10px;width:100%;"
+                        onchange="patchSetting({ai_provider: this.value})">
+                        <option value="gemini" {% if not settings.ai_provider or settings.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- AI Model -->
+            <div class="gs-display-card {{ 'has-content' if settings.ai_model else '' }}" id="card-ai-model">
+                <div class="gs-display-header">
+                    <span>AI Model</span>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-model')">✏️ Edit</button>
+                </div>
+                <div class="gs-display-content">
+                    {% if settings.ai_model %}
+                    <code class="regex-block">{{ settings.ai_model }}</code>
+                    {% else %}
+                    <span class="gs-none">Not configured</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- AI API Key -->
+            <div class="gs-display-card {{ 'has-content' if settings.ai_api_key else '' }}" id="card-ai-key">
+                <div class="gs-display-header">
+                    <span>AI API Key</span>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-key')">✏️ Edit</button>
+                </div>
+                <div class="gs-display-content">
+                    {% if settings.ai_api_key %}
+                    <span>••••••••</span>
+                    {% else %}
+                    <span class="gs-none">Not configured</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- AI Prompt -->
+            <div class="gs-display-card {{ 'has-content' if settings.ai_prompt else '' }}" id="card-ai-prompt">
+                <div class="gs-display-header">
+                    <span>AI Prompt</span>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-prompt')">✏️ Edit</button>
+                </div>
+                <div class="gs-display-content">
+                    {% if settings.ai_prompt %}
+                    <span>{{ settings.ai_prompt[:100] }}{% if settings.ai_prompt | length > 100 %}…{% endif %}</span>
+                    {% else %}
+                    <span class="gs-none">Not configured</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Active Rules Summary (fetched and rendered by JS) -->
     <div class="section-card" id="rules-container">
         <div style="text-align:center;color:#777;padding:30px;">Loading rules...</div>
     </div>
@@ -153,6 +218,65 @@
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-regex')">Cancel</button>
             <button class="btn-save" onclick="saveField('autoread_regex', 'input-regex')">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- 3. AI Model Modal -->
+<div id="modal-ai-model" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit AI Model</h3>
+            <span class="modal-close" onclick="closeModal('modal-ai-model')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="input-ai-model"
+                style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
+                value="{{ settings.ai_model }}" placeholder="gemini-2.0-flash-lite-preview">
+            <div class="help-text">The model identifier for the selected AI provider.</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeModal('modal-ai-model')">Cancel</button>
+            <button class="btn-save" onclick="saveAiModel()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- 4. AI Key Modal -->
+<div id="modal-ai-key" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit AI API Key</h3>
+            <span class="modal-close" onclick="closeModal('modal-ai-key')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <input type="password" id="input-ai-key"
+                style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
+                placeholder="Enter your Gemini API key">
+            <div class="help-text">Your API key is stored securely and never displayed again.</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeModal('modal-ai-key')">Cancel</button>
+            <button class="btn-save" onclick="saveAiKey()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- 5. AI Prompt Modal -->
+<div id="modal-ai-prompt" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Edit AI Prompt</h3>
+            <span class="modal-close" onclick="closeModal('modal-ai-prompt')">&times;</span>
+        </div>
+        <div class="modal-body">
+            <textarea id="input-ai-prompt"
+                style="width:100%; height:120px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;">{{ settings.ai_prompt }}</textarea>
+            <div class="help-text">System prompt sent to the AI model for context.</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-cancel" onclick="closeModal('modal-ai-prompt')">Cancel</button>
+            <button class="btn-save" onclick="saveAiPrompt()">Save</button>
         </div>
     </div>
 </div>
@@ -239,6 +363,60 @@
         }
         display.innerHTML = `<code class="regex-block">${regex}</code>`;
         display.closest('.gs-display-card').classList.add('has-content');
+    }
+
+    // --- AI Field Save Handlers ---
+    async function saveAiModel() {
+        const val = document.getElementById('input-ai-model').value;
+        await patchSetting({ ai_model: val });
+        closeModal('modal-ai-model');
+        renderAiModelDisplay(val);
+    }
+
+    async function saveAiKey() {
+        const val = document.getElementById('input-ai-key').value;
+        if (!val) { closeModal('modal-ai-key'); return; }
+        await patchSetting({ ai_api_key: val });
+        document.getElementById('input-ai-key').value = '';
+        closeModal('modal-ai-key');
+        const card = document.getElementById('card-ai-key');
+        const display = card.querySelector('.gs-display-content');
+        display.innerHTML = '<span>••••••••</span>';
+        card.classList.add('has-content');
+    }
+
+    async function saveAiPrompt() {
+        const val = document.getElementById('input-ai-prompt').value;
+        await patchSetting({ ai_prompt: val });
+        closeModal('modal-ai-prompt');
+        renderAiPromptDisplay(val);
+    }
+
+    function renderAiModelDisplay(val) {
+        const card = document.getElementById('card-ai-model');
+        if (!card) return;
+        const display = card.querySelector('.gs-display-content');
+        if (!val || !val.trim()) {
+            display.innerHTML = '<span class="gs-none">Not configured</span>';
+            card.classList.remove('has-content');
+        } else {
+            display.innerHTML = `<code class="regex-block">${val}</code>`;
+            card.classList.add('has-content');
+        }
+    }
+
+    function renderAiPromptDisplay(val) {
+        const card = document.getElementById('card-ai-prompt');
+        if (!card) return;
+        const display = card.querySelector('.gs-display-content');
+        if (!val || !val.trim()) {
+            display.innerHTML = '<span class="gs-none">Not configured</span>';
+            card.classList.remove('has-content');
+        } else {
+            const preview = val.length > 100 ? val.slice(0, 100) + '…' : val;
+            display.innerHTML = `<span>${preview}</span>`;
+            card.classList.add('has-content');
+        }
     }
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {

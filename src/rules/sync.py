@@ -20,6 +20,10 @@ _USER_SETTINGS_FIELDS = frozenset(
         "autoread_bots",
         "autoread_regex",
         "debug_mode",
+        "ai_provider",
+        "ai_model",
+        "ai_api_key",
+        "ai_prompt",
     }
 )
 

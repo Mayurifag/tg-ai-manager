@@ -47,6 +47,10 @@ _EXPORT_USER_SETTINGS = {
     "autoread_bots": "@mybot",
     "autoread_regex": "hello",
     "debug_mode": True,
+    "ai_provider": "openai",
+    "ai_model": "gpt-4o",
+    "ai_api_key": "sk-test-key",
+    "ai_prompt": "custom prompt",
 }
 
 _EXPORT_PAYLOAD = {
@@ -408,3 +412,53 @@ async def test_user_settings_only_updates_allowlisted_fields():
     # Allowlisted fields ARE updated
     assert saved_user.autoread_service_messages is True
     assert saved_user.debug_mode is True
+
+
+# ---------------------------------------------------------------------------
+# Test 9 — AI fields synced from export
+# ---------------------------------------------------------------------------
+
+
+async def test_ai_fields_synced_from_export():
+    """R032: ai_provider, ai_model, ai_api_key, ai_prompt are in
+    _USER_SETTINGS_FIELDS and are overlaid on the local user during sync."""
+    payload = {
+        "rules": [],
+        "user_settings": {
+            "autoread_service_messages": False,
+            "autoread_polls": False,
+            "autoread_self": False,
+            "autoread_bots": "@bot",
+            "autoread_regex": "",
+            "debug_mode": False,
+            "ai_provider": "openai",
+            "ai_model": "gpt-4o",
+            "ai_api_key": "sk-synced-key",
+            "ai_prompt": "synced prompt",
+        },
+    }
+    user = User(
+        ai_provider=None,
+        ai_model=None,
+        ai_api_key=None,
+        ai_prompt=None,
+    )
+    rule_repo, user_repo = _make_repos(user=user)
+    mock_response = _make_mock_response(payload)
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.get = AsyncMock(return_value=mock_response)
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.rules.sync.httpx.AsyncClient", return_value=mock_client_instance):
+        await sync_rules_from_remote(_URL, rule_repo, user_repo)
+
+    user_repo.save_user.assert_called_once()
+    saved_user = user_repo.save_user.call_args[0][0]
+
+    # AI fields must be overlaid from the remote export
+    assert saved_user.ai_provider == "openai"
+    assert saved_user.ai_model == "gpt-4o"
+    assert saved_user.ai_api_key == "sk-synced-key"
+    assert saved_user.ai_prompt == "synced prompt"
