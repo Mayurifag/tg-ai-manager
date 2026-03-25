@@ -19,6 +19,7 @@ from src.infrastructure.security import CryptoManager
 from src.jinja_filters import file_mtime_filter
 from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
+from src.rules.sync import sync_rules_from_remote
 from src.users.sqlite_repo import SqliteUserRepository
 from src.web.routes import register_routes
 from src.web.serializers import json_serializer
@@ -98,6 +99,17 @@ def create_app() -> Quart:
         action_repo = ValkeyActionRepository(settings.VALKEY_URL)
         event_repo = ValkeyEventRepository(settings.VALKEY_URL)
         user_repo = SqliteUserRepository(db_path=settings.DB_PATH)
+
+        # 3a. Sync rules from remote production instance (if configured)
+        rule_repo_for_sync = SqliteRuleRepository(db_path=settings.DB_PATH)
+        if settings.RULES_SYNC_URL:
+            await sync_rules_from_remote(
+                url=settings.RULES_SYNC_URL,
+                rule_repo=rule_repo_for_sync,
+                user_repo=user_repo,
+            )
+        else:
+            logger.info("rules_sync_skipped", reason="RULES_SYNC_URL not set")
 
         # 4. Create Telegram adapter
         tg_adapter = _build_tg_adapter(settings)

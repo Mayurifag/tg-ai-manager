@@ -27,6 +27,7 @@ def register_routes(app: Quart):
             or request.path.startswith("/api/auth")
             or request.path == "/login"
             or request.path == "/health"
+            or request.path == "/api/rules/export"
         ):
             return
 

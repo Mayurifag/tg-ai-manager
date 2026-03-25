@@ -31,3 +31,8 @@ class RuleRepository(ABC):
     @abstractmethod
     async def delete(self, rule_id: int) -> None:
         pass
+
+    @abstractmethod
+    async def delete_all(self) -> None:
+        """Delete all rules from the database."""
+        pass
