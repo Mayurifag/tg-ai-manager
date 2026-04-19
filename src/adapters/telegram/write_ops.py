@@ -83,6 +83,8 @@ class WriteOps:
                 if self._dispatch_fn:
                     await self._dispatch_fn(event)
 
+            except errors.FloodWaitError:
+                raise
             except Exception as e:
                 logger.error(
                     "mark_as_read_failed",
@@ -199,6 +201,8 @@ class WriteOps:
                             traceback=traceback.format_exc(),
                         )
 
+            except errors.FloodWaitError:
+                raise
             except Exception as e:
                 logger.error(
                     "send_reaction_failed",
