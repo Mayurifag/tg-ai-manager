@@ -2,7 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches: ["**"]  # Run on every branch
+    branches: [ "**" ] # Run on every branch
 
 env:
   REGISTRY: ghcr.io
@@ -47,8 +47,8 @@ jobs:
         run: uv run --no-sync pytest tests/ -v --tb=short
 
   build-and-push:
-    needs: [lint, test]
-    if: github.ref == 'refs/heads/main'  # Deploy ONLY on main
+    needs: [ lint, test ]
+    if: github.ref == 'refs/heads/main' # Deploy ONLY on main
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -89,7 +89,7 @@ jobs:
           WATCHTOWER_URL: ${{ secrets.WATCHTOWER_URL }}
         run: |
           if [ -n "$WATCHTOWER_URL" ]; then
-            curl -H "Authorization: Bearer $WATCHTOWER_TOKEN" $WATCHTOWER_URL
+            curl -X POST -H "Authorization: Bearer $WATCHTOWER_TOKEN" $WATCHTOWER_URL
           else
             echo "WATCHTOWER_URL not set, skipping trigger."
           fi
