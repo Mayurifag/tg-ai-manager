@@ -36,22 +36,17 @@ class WriteOps:
     ) -> None:
         async def _do() -> None:
             try:
-                entity = await self.client.get_entity(chat_id)
-                chat_name = utils.get_display_name(entity)
+                input_peer = await self.client.get_input_entity(chat_id)
                 topic_name = None
 
                 if topic_id:
                     try:
-                        read_max_id = max_id
-                        if not read_max_id:
-                            msgs = await self.client.get_messages(
-                                entity, limit=1, reply_to=topic_id
-                            )
-                            read_max_id = msgs[0].id if msgs else topic_id
-
+                        read_max_id = max_id or topic_id
                         await self.client(
                             functions.messages.ReadDiscussionRequest(
-                                peer=entity, msg_id=topic_id, read_max_id=read_max_id
+                                peer=input_peer,
+                                msg_id=topic_id,
+                                read_max_id=read_max_id,
                             )
                         )
                         topic_name = await self._get_topic_name_fn(chat_id, topic_id)
@@ -63,12 +58,21 @@ class WriteOps:
                                 topic_id=topic_id,
                             )
                         else:
-                            raise e
+                            raise
                 else:
                     if max_id:
-                        await self.client.send_read_acknowledge(entity, max_id=max_id)
+                        await self.client.send_read_acknowledge(
+                            input_peer, max_id=max_id
+                        )
                     else:
-                        await self.client.send_read_acknowledge(entity)
+                        await self.client.send_read_acknowledge(input_peer)
+
+                chat_name = f"Chat {chat_id}"
+                try:
+                    entity = await self.client.get_entity(input_peer)
+                    chat_name = utils.get_display_name(entity)
+                except Exception:
+                    pass
 
                 event = SystemEvent(
                     type="read",

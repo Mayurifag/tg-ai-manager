@@ -113,24 +113,9 @@ class RuleService:
             reason = "autoread_rule"
 
         if not should_read:
-            # Pass unread_count=1 as a conservative estimate for live events.
-            # check_global_autoread_rules gates on unread_count <= 1 intentionally:
-            # global rules (service msgs, polls, bots, regex) only fire when the
-            # incoming message is the sole unread one. If there are already unread
-            # messages in this chat, those might be important and the user may not
-            # want them marked read automatically. Per-chat autoread rules (above)
-            # cover the "read everything regardless" case.
             reason = await self.check_global_autoread_rules(msg, unread_count=1)
             if reason:
                 should_read = True
-
-            if should_read and "global" in reason:
-                # Verify with real unread count: if the chat already had unread
-                # messages before this one arrived, skip autoread. This lets the
-                # user catch up on the backlog themselves.
-                chat = await self.chat_repo.get_chat(event.chat_id)
-                if chat and chat.unread_count > 1:
-                    should_read = False
 
         # --- AI AutoRead Logic ---
         if not should_read and await self.is_ai_autoread_enabled(
