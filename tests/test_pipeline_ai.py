@@ -106,7 +106,7 @@ async def test_ai_classifies_ad_marks_read():
     with patch("src.rules.service.GeminiClassifier", return_value=mock_instance):
         await svc.handle_new_message_event(make_event())
 
-    chat_repo.mark_as_read.assert_called_once()
+    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=1)
     action_repo.add_log.assert_called_once()
     log_call = action_repo.add_log.call_args[0][0]
     assert log_call.reason == "ai_ad_detected"

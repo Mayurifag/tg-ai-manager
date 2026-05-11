@@ -398,7 +398,6 @@ async def test_startup_scan_forum_chat_checks_topics():
 
 
 async def test_handle_new_message_event_autoread_on_action():
-    """Autoread rule fires for type='action' events (e.g. admin pinned a message)."""
     rule_repo = AsyncMock()
     rule_repo.get_by_chat_and_topic.return_value = [
         make_rule(chat_id=100, rule_type=RuleType.AUTOREAD)
@@ -419,7 +418,24 @@ async def test_handle_new_message_event_autoread_on_action():
     )
     await svc.handle_new_message_event(event)
 
-    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
+    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=None)
+    assert event.is_read is True
+
+
+async def test_handle_new_message_event_global_rule_marks_only_current_message():
+    svc = make_service(user=User(autoread_service_messages=True))
+
+    msg = make_message(id=42, is_service=True)
+    event = SystemEvent(
+        type="action",
+        text="Admin pinned a message",
+        chat_name="TestChat",
+        chat_id=100,
+        message_model=msg,
+    )
+    await svc.handle_new_message_event(event)
+
+    svc.chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
     assert event.is_read is True
 
 
