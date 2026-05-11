@@ -139,7 +139,7 @@ class RuleService:
                     )
 
         if should_read:
-            max_id = msg.id
+            max_id = None if reason == "autoread_rule" else msg.id
             await self.chat_repo.mark_as_read(
                 event.chat_id, event.topic_id, max_id=max_id
             )

@@ -2,8 +2,9 @@ import traceback
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Optional
 
-from telethon import errors, functions, types, utils
+from telethon import errors, functions, types
 
+from src.adapters.telegram.read_ops import ReadOps
 from src.domain.models import SystemEvent
 from src.infrastructure.logging import get_logger
 
@@ -26,7 +27,18 @@ class WriteOps:
         self._parser = parser
         self._write_queue = write_queue
         self._dispatch_fn = dispatch_fn  # patched after EventHandlers is built
-        self._get_topic_name_fn = get_topic_name_fn
+        self._read_ops = ReadOps(
+            client=client,
+            write_queue=write_queue,
+            dispatch_fn=dispatch_fn,
+            get_topic_name_fn=get_topic_name_fn,
+        )
+
+    def set_dispatch_fn(
+        self, dispatch_fn: Optional[Callable[[SystemEvent], Awaitable[None]]]
+    ) -> None:
+        self._dispatch_fn = dispatch_fn
+        self._read_ops.set_dispatch_fn(dispatch_fn)
 
     async def mark_as_read(
         self,
@@ -34,71 +46,7 @@ class WriteOps:
         topic_id: Optional[int] = None,
         max_id: Optional[int] = None,
     ) -> None:
-        async def _do() -> None:
-            try:
-                input_peer = await self.client.get_input_entity(chat_id)
-                topic_name = None
-
-                if topic_id:
-                    try:
-                        read_max_id = max_id or topic_id
-                        await self.client(
-                            functions.messages.ReadDiscussionRequest(
-                                peer=input_peer,
-                                msg_id=topic_id,
-                                read_max_id=read_max_id,
-                            )
-                        )
-                        topic_name = await self._get_topic_name_fn(chat_id, topic_id)
-                    except Exception as e:
-                        if "TOPIC_ID_INVALID" in str(e):
-                            logger.warning(
-                                "mark_read_topic_invalid",
-                                chat_id=chat_id,
-                                topic_id=topic_id,
-                            )
-                        else:
-                            raise
-                else:
-                    if max_id:
-                        await self.client.send_read_acknowledge(
-                            input_peer, max_id=max_id
-                        )
-                    else:
-                        await self.client.send_read_acknowledge(input_peer)
-
-                chat_name = f"Chat {chat_id}"
-                try:
-                    entity = await self.client.get_entity(input_peer)
-                    chat_name = utils.get_display_name(entity)
-                except Exception:
-                    pass
-
-                event = SystemEvent(
-                    type="read",
-                    text="Marked as read",
-                    chat_name=chat_name,
-                    topic_name=topic_name,
-                    chat_id=chat_id,
-                    topic_id=topic_id,
-                    is_read=True,
-                    link=f"/chat/{chat_id}",
-                )
-                if self._dispatch_fn:
-                    await self._dispatch_fn(event)
-
-            except errors.FloodWaitError:
-                raise
-            except Exception as e:
-                logger.error(
-                    "mark_as_read_failed",
-                    chat_id=chat_id,
-                    topic_id=topic_id,
-                    error=repr(e),
-                    traceback=traceback.format_exc(),
-                )
-
-        await self._write_queue.enqueue(_do)
+        await self._read_ops.mark_as_read(chat_id, topic_id, max_id)
 
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
         async def _do() -> None:

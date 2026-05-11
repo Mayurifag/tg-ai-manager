@@ -77,8 +77,7 @@ class TelethonAdapter(ChatRepository):
             media=self._media,
             get_topic_name_fn=self._forum_ops.get_topic_name,
         )
-        # Resolve circular dep: WriteOps.dispatch_fn → EventHandlers._dispatch
-        self._write_ops._dispatch_fn = self._event_handlers._dispatch
+        self._write_ops.set_dispatch_fn(self._event_handlers._dispatch)
 
         self._media.cleanup_startup_cache()
 
