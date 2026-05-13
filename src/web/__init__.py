@@ -14,6 +14,7 @@ from src.application.interactors import ChatInteractor
 from src.config import get_settings
 from src.infrastructure.event_bus import EventBus
 from src.infrastructure.logging import configure_logging, get_logger
+from src.infrastructure.tasks import BackgroundTasks
 from src.jinja_filters import file_mtime_filter
 from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
@@ -122,6 +123,7 @@ def create_app() -> TypedQuart:
         app.user_repo = user_repo
         app.rule_service = rule_service
         app.chat_interactor = interactor
+        app.background_tasks = BackgroundTasks(logger)
 
         # 7. Create event bus and register subscribers in order:
         #    - event_repo first (persistence)
@@ -143,21 +145,23 @@ def create_app() -> TypedQuart:
         tg_adapter.add_event_listener(bus.dispatch)
 
         # 9. Background tasks
-        asyncio.create_task(rule_service.run_startup_scan())
-        asyncio.create_task(
+        app.background_tasks.create(rule_service.run_startup_scan(), "startup_scan")
+        app.background_tasks.create(
             job_background_maintenance(
                 action_repo=action_repo,
                 event_repo=event_repo,
                 interactor=interactor,
                 user_repo=user_repo,
                 shutdown_event=shutdown_event,
-            )
+            ),
+            "maintenance",
         )
 
     @app.after_serving
     async def shutdown():
         logger.info("application_shutdown")
         shutdown_event.set()
+        await app.background_tasks.shutdown(timeout=3.0)
 
         # Allow SSE generators to exit gracefully
         await asyncio.sleep(0.1)
@@ -171,6 +175,10 @@ def create_app() -> TypedQuart:
             logger.error("shutdown_error", error=str(e))
 
         connected_queues.clear()
+        for repo in (app.action_repo, app.event_repo):
+            close = getattr(repo, "close", None)
+            if close:
+                await close()
 
     @app.context_processor
     async def inject_globals():

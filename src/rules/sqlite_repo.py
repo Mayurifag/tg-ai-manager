@@ -21,14 +21,14 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
 
     def _row_to_rule(self, row) -> Rule:
         return Rule(
-            id=row[0],
-            user_id=row[1],
-            rule_type=RuleType(row[2]),
-            chat_id=row[3],
-            topic_id=row[4],
-            config=self._parse_config(row[5]),
-            created_at=datetime.fromisoformat(row[6]),
-            updated_at=datetime.fromisoformat(row[7]),
+            id=row["id"],
+            user_id=row["user_id"],
+            rule_type=RuleType(row["rule_type"]),
+            chat_id=row["chat_id"],
+            topic_id=row["topic_id"],
+            config=self._parse_config(row["config"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
     async def get_by_chat_and_topic(

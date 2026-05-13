@@ -5,8 +5,20 @@ from src.container import _get_tg_adapter, get_rule_service, get_user_repo
 from src.rules.models import RuleType
 from src.rules.sqlite_repo import SqliteRuleRepository
 from src.users.models import User
+from src.web.requests import (
+    ApplyAllTopicsRequest,
+    AutoreactConfigRequest,
+    BadRequest,
+    DebugProcessRequest,
+    SettingsPatch,
+    ToggleRuleRequest,
+)
 
 settings_bp = Blueprint("settings", __name__)
+
+
+def bad_request(error: BadRequest):
+    return jsonify({"error": str(error)}), 400
 
 
 @settings_bp.route("/settings", methods=["GET"])
@@ -21,15 +33,14 @@ async def settings_view():
 @settings_bp.route("/api/settings", methods=["PATCH", "POST"])
 async def save_settings():
     repo = get_user_repo()
-    data = await request.get_json()
+    try:
+        patch = SettingsPatch.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
     current_user = await repo.get_user(1)
     if not current_user:
         return jsonify({"error": "User not found"}), 404
-
-    # Helper to get value from data or fallback to current
-    def get_val(key, default):
-        return data[key] if key in data else default
 
     updated_user = User(
         id=current_user.id,
@@ -37,21 +48,20 @@ async def save_settings():
         api_hash=current_user.api_hash,
         username=current_user.username,
         session_string=current_user.session_string,
-        # Preserves existing value if key not sent in JSON
         autoread_service_messages=bool(
-            get_val("autoread_service_messages", current_user.autoread_service_messages)
+            patch.get(
+                "autoread_service_messages", current_user.autoread_service_messages
+            )
         ),
-        autoread_polls=bool(get_val("autoread_polls", current_user.autoread_polls)),
-        autoread_self=bool(get_val("autoread_self", current_user.autoread_self)),
-        autoread_bots=get_val("autoread_bots", current_user.autoread_bots),
-        autoread_regex=get_val("autoread_regex", current_user.autoread_regex),
-        # Debug Mode
-        debug_mode=bool(get_val("debug_mode", current_user.debug_mode)),
-        # AI configuration
-        ai_provider=get_val("ai_provider", current_user.ai_provider),
-        ai_model=get_val("ai_model", current_user.ai_model),
-        ai_api_key=get_val("ai_api_key", current_user.ai_api_key),
-        ai_prompt=get_val("ai_prompt", current_user.ai_prompt),
+        autoread_polls=bool(patch.get("autoread_polls", current_user.autoread_polls)),
+        autoread_self=bool(patch.get("autoread_self", current_user.autoread_self)),
+        autoread_bots=patch.get("autoread_bots", current_user.autoread_bots),
+        autoread_regex=patch.get("autoread_regex", current_user.autoread_regex),
+        debug_mode=bool(patch.get("debug_mode", current_user.debug_mode)),
+        ai_provider=patch.get("ai_provider", current_user.ai_provider),
+        ai_model=patch.get("ai_model", current_user.ai_model),
+        ai_api_key=patch.get("ai_api_key", current_user.ai_api_key),
+        ai_prompt=patch.get("ai_prompt", current_user.ai_prompt),
     )
 
     await repo.save_user(updated_user)
@@ -76,60 +86,50 @@ async def reset_account():
 @settings_bp.route("/api/rules/autoread/toggle", methods=["POST"])
 async def api_toggle_autoread():
     rule_service = get_rule_service()
-    data = await request.get_json()
-    chat_id = data.get("chat_id")
-    topic_id = data.get("topic_id")
-    enabled = data.get("enabled", True)
+    try:
+        body = ToggleRuleRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not chat_id:
-        return jsonify({"error": "chat_id required"}), 400
-
-    await rule_service.toggle_autoread(chat_id, topic_id, enabled)
+    await rule_service.toggle_autoread(body.chat_id, body.topic_id, body.enabled)
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/rules/ai_autoread/toggle", methods=["POST"])
 async def api_toggle_ai_autoread():
     rule_service = get_rule_service()
-    data = await request.get_json()
-    chat_id = data.get("chat_id")
-    topic_id = data.get("topic_id")
-    enabled = data.get("enabled", True)
+    try:
+        body = ToggleRuleRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not chat_id:
-        return jsonify({"error": "chat_id required"}), 400
-
-    await rule_service.toggle_ai_autoread(chat_id, topic_id, enabled)
+    await rule_service.toggle_ai_autoread(body.chat_id, body.topic_id, body.enabled)
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/rules/autoread/apply_all", methods=["POST"])
 async def api_apply_autoread_all_topics():
     rule_service = get_rule_service()
-    data = await request.get_json()
-    forum_id = data.get("forum_id")
-    enabled = data.get("enabled", True)
+    try:
+        body = ApplyAllTopicsRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not forum_id:
-        return jsonify({"error": "forum_id required"}), 400
-
-    await rule_service.apply_autoread_to_all_topics(forum_id, enabled)
+    await rule_service.apply_autoread_to_all_topics(body.forum_id, body.enabled)
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/rules/autoreact/config", methods=["POST"])
 async def api_set_autoreact():
     rule_service = get_rule_service()
-    data = await request.get_json()
-    chat_id = data.get("chat_id")
-    topic_id = data.get("topic_id")
-    enabled = data.get("enabled", False)
-    config = data.get("config", {})  # {emoji: "💩", target_users: []}
+    try:
+        body = AutoreactConfigRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not chat_id:
-        return jsonify({"error": "chat_id required"}), 400
-
-    await rule_service.set_autoreact(chat_id, topic_id, enabled, config)
+    await rule_service.set_autoreact(
+        body.chat_id, body.topic_id, body.enabled, body.config
+    )
     return jsonify({"status": "ok"})
 
 
@@ -152,14 +152,12 @@ async def api_get_autoreact():
 @settings_bp.route("/api/debug/process", methods=["POST"])
 async def api_debug_process():
     rule_service = get_rule_service()
-    data = await request.get_json()
-    chat_id = data.get("chat_id")
-    msg_id = data.get("msg_id")
+    try:
+        body = DebugProcessRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not chat_id or not msg_id:
-        return jsonify({"error": "chat_id and msg_id required"}), 400
-
-    result = await rule_service.simulate_process_message(chat_id, msg_id)
+    result = await rule_service.simulate_process_message(body.chat_id, body.msg_id)
     return jsonify(result)
 
 

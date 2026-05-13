@@ -40,7 +40,8 @@ def _mock_client(response_text: str) -> MagicMock:
 
 def test_gemini_classifier_is_ai_classifier():
     """GeminiClassifier must be a concrete implementation of AIClassifier."""
-    classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
+    with patch("src.ai.gemini.google.genai.Client", return_value=_mock_client("true")):
+        classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
     assert isinstance(classifier, AIClassifier)
 
 
@@ -64,28 +65,27 @@ def test_gemini_classifier_is_ai_classifier():
     ],
 )
 async def test_classify_is_ad_parses_response(response_text: str, expected: bool):
-    classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
     with patch(
         "src.ai.gemini.google.genai.Client", return_value=_mock_client(response_text)
     ):
+        classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
         result = await classifier.classify_is_ad("Buy cheap stuff now!")
     assert result is expected
 
 
 # ---------------------------------------------------------------------------
-# Client is created per call (stateless)
+# Client reuse
 # ---------------------------------------------------------------------------
 
 
-async def test_classify_creates_client_per_call():
-    """A new google.genai.Client is instantiated on every classify_is_ad call."""
-    classifier = GeminiClassifier(api_key="my-key", model="gemini-2.0-flash")
+async def test_classify_reuses_client():
     with patch(
         "src.ai.gemini.google.genai.Client", return_value=_mock_client("true")
     ) as mock_cls:
+        classifier = GeminiClassifier(api_key="my-key", model="gemini-2.0-flash")
         await classifier.classify_is_ad("some text")
         await classifier.classify_is_ad("some text")
-    assert mock_cls.call_count == 2
+    assert mock_cls.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -97,9 +97,6 @@ async def test_api_error_propagates():
     """google.genai.errors.APIError must bubble up unchanged (no suppression)."""
     import google.genai.errors as genai_errors
 
-    classifier = GeminiClassifier(api_key="bad-key", model="gemini-2.0-flash")
-
-    # Build a minimal mock client whose generate_content raises APIError.
     mock_aio_models = MagicMock()
     mock_aio_models.generate_content = AsyncMock(
         side_effect=genai_errors.APIError(500, "quota exceeded")
@@ -110,5 +107,6 @@ async def test_api_error_propagates():
     mock_client.aio = mock_aio
 
     with patch("src.ai.gemini.google.genai.Client", return_value=mock_client):
+        classifier = GeminiClassifier(api_key="bad-key", model="gemini-2.0-flash")
         with pytest.raises(genai_errors.APIError):
             await classifier.classify_is_ad("some ad text")

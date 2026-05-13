@@ -17,6 +17,7 @@ class BaseSqliteRepository:
     def _connect(self) -> sqlite3.Connection:
         """Create a new synchronous connection to the database with WAL enabled."""
         conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
         # Enable Write-Ahead Logging for better concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")

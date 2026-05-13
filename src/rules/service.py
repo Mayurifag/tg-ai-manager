@@ -1,17 +1,23 @@
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
 from src.ai.gemini import GeminiClassifier
+from src.ai.ports import AIClassifier
 from src.domain.models import ActionLog, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository
 from src.infrastructure.logging import get_logger
+from src.rules.decisions import ReactDecision, ReadDecision
 from src.rules.models import Rule, RuleType
 from src.rules.ports import RuleRepository
+from src.users.models import User
 from src.users.ports import UserRepository
 
 logger = get_logger(__name__)
+
+AIClassifierFactory = Callable[[User], AIClassifier]
 
 
 class RuleService:
@@ -21,14 +27,31 @@ class RuleService:
         action_repo: ActionRepository,
         chat_repo: ChatRepository,
         user_repo: UserRepository,
+        ai_classifier_factory: Optional[AIClassifierFactory] = None,
     ):
         self.rule_repo = rule_repo
         self.action_repo = action_repo
         self.chat_repo = chat_repo
         self.user_repo = user_repo
+        self._ai_classifier_factory = (
+            ai_classifier_factory or self._create_ai_classifier
+        )
+        self._ai_classifier: Optional[AIClassifier] = None
+        self._ai_classifier_key: Optional[Tuple[str, str, Optional[str]]] = None
 
         # Cache for deduplicating album reactions: (chat_id, grouped_id) -> timestamp
         self._album_reaction_cache: Dict[Tuple[int, int], float] = {}
+
+    def _create_ai_classifier(self, user: User) -> AIClassifier:
+        key = (user.ai_api_key or "", user.ai_model or "", user.ai_prompt)
+        if self._ai_classifier_key != key or self._ai_classifier is None:
+            self._ai_classifier = GeminiClassifier(
+                api_key=key[0],
+                model=key[1],
+                prompt=key[2],
+            )
+            self._ai_classifier_key = key
+        return self._ai_classifier
 
     async def get_rule(
         self, chat_id: int, topic_id: Optional[int], rule_type: RuleType
@@ -103,45 +126,11 @@ class RuleService:
             return
 
         msg = event.message_model
+        decision = await self.get_read_decision(event, msg)
 
-        # --- AutoRead Logic ---
-        should_read = False
-        reason = ""
-
-        if await self.is_autoread_enabled(event.chat_id, event.topic_id):
-            should_read = True
-            reason = "autoread_rule"
-
-        if not should_read:
-            reason = await self.check_global_autoread_rules(msg, unread_count=1)
-            if reason:
-                should_read = True
-
-        # --- AI AutoRead Logic ---
-        if not should_read and await self.is_ai_autoread_enabled(
-            event.chat_id, event.topic_id
-        ):
-            user = await self.user_repo.get_user(1)
-            if user and user.ai_api_key and user.ai_model and msg.text:
-                try:
-                    classifier = GeminiClassifier(
-                        api_key=user.ai_api_key, model=user.ai_model
-                    )
-                    is_ad = await classifier.classify_is_ad(msg.text)
-                    if is_ad:
-                        should_read = True
-                        reason = "ai_ad_detected"
-                except Exception as e:
-                    logger.warning(
-                        "ai_classification_failed",
-                        chat_id=event.chat_id,
-                        error=repr(e),
-                    )
-
-        if should_read:
-            max_id = None if reason == "autoread_rule" else msg.id
+        if decision.should_read:
             await self.chat_repo.mark_as_read(
-                event.chat_id, event.topic_id, max_id=max_id
+                event.chat_id, event.topic_id, max_id=decision.max_id
             )
             event.is_read = True
 
@@ -150,7 +139,7 @@ class RuleService:
                     action="autoread",
                     chat_id=event.chat_id,
                     chat_name=event.chat_name,
-                    reason=reason,
+                    reason=decision.reason,
                     date=datetime.now(),
                     link=event.link,
                 )
@@ -158,6 +147,40 @@ class RuleService:
 
         # --- AutoReact Logic ---
         await self.apply_autoreact(event.chat_id, event.topic_id, msg)
+
+    async def get_read_decision(self, event: SystemEvent, msg: Message) -> ReadDecision:
+        if await self.is_autoread_enabled(event.chat_id, event.topic_id):
+            return ReadDecision(True, "autoread_rule", max_id=msg.id)
+
+        reason = await self.check_global_autoread_rules(msg, unread_count=1)
+        if reason:
+            return ReadDecision(True, reason, max_id=msg.id)
+
+        reason = await self._get_ai_read_reason(event, msg)
+        if reason:
+            return ReadDecision(True, reason, max_id=msg.id)
+
+        return ReadDecision(False)
+
+    async def _get_ai_read_reason(self, event: SystemEvent, msg: Message) -> str:
+        if not await self.is_ai_autoread_enabled(event.chat_id, event.topic_id):
+            return ""
+
+        user = await self.user_repo.get_user(1)
+        if not user or not user.ai_api_key or not user.ai_model or not msg.text:
+            return ""
+
+        try:
+            classifier = self._ai_classifier_factory(user)
+            if await classifier.classify_is_ad(msg.text):
+                return "ai_ad_detected"
+        except Exception as e:
+            logger.warning(
+                "ai_classification_failed",
+                chat_id=event.chat_id,
+                error=repr(e),
+            )
+        return ""
 
     async def apply_autoreact(
         self, chat_id: int, topic_id: Optional[int], message: Message
@@ -188,36 +211,31 @@ class RuleService:
             # Mark this album as processed
             self._album_reaction_cache[key] = now
 
+        decision = await self.get_react_decision(chat_id, topic_id, message)
+        if decision.should_react:
+            await self.chat_repo.send_reaction(chat_id, message.id, decision.emoji)
+
+    async def get_react_decision(
+        self, chat_id: int, topic_id: Optional[int], message: Message
+    ) -> ReactDecision:
         rule = await self.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
         if not rule:
-            return
+            return ReactDecision(False)
 
         emoji = rule.config.get("emoji", "💩")
         target_users = rule.config.get("target_users", [])
 
-        should_react = False
+        if target_users and message.sender_id not in target_users:
+            return ReactDecision(False)
 
-        if not target_users:
-            # Empty list = React to EVERYTHING (except self, checked above)
-            should_react = True
-        else:
-            if message.sender_id in target_users:
-                should_react = True
+        for reaction in message.reactions:
+            if reaction.is_chosen and (
+                reaction.emoji == emoji
+                or (reaction.custom_emoji_id and str(reaction.custom_emoji_id) == emoji)
+            ):
+                return ReactDecision(False)
 
-        if should_react:
-            # Check if already reacted by me
-            already_reacted = False
-            for r in message.reactions:
-                if r.is_chosen:
-                    if r.emoji == emoji or (
-                        r.custom_emoji_id and str(r.custom_emoji_id) == emoji
-                    ):
-                        already_reacted = True
-                        break
-
-            if not already_reacted:
-                await self.chat_repo.send_reaction(chat_id, message.id, emoji)
-                # We don't log actions for reactions to avoid spamming the log
+        return ReactDecision(True, emoji)
 
     async def run_startup_scan(self):
         if not self.chat_repo.is_connected():

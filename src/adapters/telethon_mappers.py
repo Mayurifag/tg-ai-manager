@@ -21,6 +21,7 @@ from telethon.tl.types import (
 from telethon import utils
 from html import unescape as html_unescape
 from src.domain.models import ChatType
+from src.infrastructure.html import sanitize_html
 
 
 def map_telethon_dialog_to_chat_type(d: Any) -> ChatType:
@@ -169,4 +170,4 @@ def format_message_preview(
             name = utils.get_display_name(sender)
             prefix = f"{name}: "
 
-    return f"{prefix}{text}"
+    return sanitize_html(f"{prefix}{text}")

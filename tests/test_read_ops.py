@@ -117,6 +117,21 @@ async def test_mark_chat_read_debounces_pending_max_ids():
     assert len(events) == 1
 
 
+async def test_mark_chat_read_enqueues_immediately_by_default():
+    queue = ManualQueue()
+    client = FakeClient()
+    ops = ReadOps(
+        client=client,
+        write_queue=queue,
+        dispatch_fn=None,
+        get_topic_name_fn=get_topic_name,
+    )
+
+    await ops.mark_as_read(100, max_id=10)
+
+    assert len(queue.items) == 1
+
+
 async def test_mark_topic_read_coalesces_pending_max_ids():
     queue = ManualQueue()
     client = FakeClient()
