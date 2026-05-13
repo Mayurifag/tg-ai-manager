@@ -36,6 +36,9 @@ class BaseValkeyLogRepository(Generic[T]):
             return self._serialize(asdict(obj))
         return obj
 
+    async def close(self) -> None:
+        await self.redis.aclose()
+
     async def _add_item(self, item_dict: Dict[str, Any], score: float) -> None:
         try:
             # 1. Serialize

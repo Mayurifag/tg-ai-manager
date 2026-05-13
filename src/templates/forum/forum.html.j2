@@ -40,35 +40,6 @@ Forum Topics
 <div class="setting-option" id="btn-read-forum" style="color: #2e7d32; font-weight: 500;">
     ✅ Read All Topics
 </div>
-<script>
-    document.getElementById('btn-read-forum').addEventListener('click', async () => {
-        const btn = document.getElementById('btn-read-forum');
-        btn.style.opacity = '0.5';
-        btn.style.pointerEvents = 'none';
-
-        try {
-            const url = `/api/chat/{{ chat.id }}/read`;
-            await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-            });
-            // Clear all unread badges in-place — no reload needed
-            document.querySelectorAll('.unread-badge, .unread-count, [class*="unread"]').forEach(el => {
-                el.textContent = '';
-                el.style.display = 'none';
-            });
-            btn.textContent = '✅ All Read';
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setTimeout(() => {
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            }, 500);
-        }
-    });
-</script>
 {% endblock %}
 
 {% block content %}
@@ -88,44 +59,11 @@ Forum Topics
     {% endfor %}
 </div>
 
+{% endblock %}
+
+{% block scripts %}
 <script>
-    // Handle Mark as Read clicks for topics
-    document.getElementById('topic-list-container').addEventListener('click', async (e) => {
-        if (e.target.classList.contains('mark-read-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const btn = e.target;
-            const chatId = btn.getAttribute('data-chat-id');
-            const topicId = btn.getAttribute('data-topic-id');
-
-            if (!chatId || !topicId) return;
-
-            btn.style.opacity = '0.5';
-            btn.style.pointerEvents = 'none';
-
-            try {
-                const response = await fetch(`/api/chat/${chatId}/read`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic_id: parseInt(topicId) })
-                });
-
-                if (response.ok) {
-                    // Visually update the card: remove unread badge and button
-                    const card = btn.closest('.chat-card');
-                    if (card) {
-                        const unread = card.querySelector('.unread');
-                        if (unread) unread.remove();
-                        btn.remove();
-                    }
-                }
-            } catch (err) {
-                console.error("Error marking topic as read:", err);
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            }
-        }
-    });
+    window.TG_FORUM = { chatId: {{ chat.id if chat else parent_id }} };
 </script>
+<script src="/static/js/forum.js?t={{ 'static/js/forum.js' | file_mtime }}"></script>
 {% endblock %}

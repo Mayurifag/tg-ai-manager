@@ -4,6 +4,7 @@ from src.adapters.telegram.client import TelethonAdapter
 from src.application.interactors import ChatInteractor
 from src.domain.ports import ActionRepository, EventRepository
 from src.infrastructure.event_bus import EventBus
+from src.infrastructure.tasks import BackgroundTasks
 from src.rules.service import RuleService
 from src.users.ports import UserRepository
 
@@ -16,3 +17,4 @@ class TypedQuart(Quart):
     rule_service: RuleService
     chat_interactor: ChatInteractor
     event_bus: EventBus
+    background_tasks: BackgroundTasks

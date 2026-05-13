@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from src.application.message_views import group_messages_into_albums
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
 
@@ -50,45 +51,7 @@ class ChatInteractor:
         raw_messages = await self.repository.get_messages(
             chat_id, topic_id=topic_id, offset_id=offset_id
         )
-        return self._group_messages_into_albums(raw_messages)
-
-    def _group_messages_into_albums(self, messages: List[Message]) -> List[Message]:
-        if not messages:
-            return []
-
-        grouped_messages = []
-        i = 0
-        while i < len(messages):
-            current_msg = messages[i]
-
-            if current_msg.grouped_id:
-                album_parts = [current_msg]
-                j = i + 1
-                while j < len(messages):
-                    next_msg = messages[j]
-                    if next_msg.grouped_id == current_msg.grouped_id:
-                        album_parts.append(next_msg)
-                        j += 1
-                    else:
-                        break
-
-                final_caption = current_msg.text
-                if not final_caption:
-                    for part in album_parts:
-                        if part.text:
-                            final_caption = part.text
-                            break
-
-                current_msg.text = final_caption
-                current_msg.album_parts = sorted(album_parts, key=lambda m: m.id)
-
-                grouped_messages.append(current_msg)
-                i = j
-            else:
-                grouped_messages.append(current_msg)
-                i += 1
-
-        return grouped_messages
+        return group_messages_into_albums(raw_messages)
 
     async def mark_chat_as_read(
         self,

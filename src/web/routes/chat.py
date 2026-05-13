@@ -2,8 +2,13 @@ from quart import Blueprint, abort, jsonify, render_template, request
 
 from src.container import get_chat_interactor, get_rule_service, get_user_repo
 from src.rules.models import RuleType
+from src.web.requests import BadRequest, MarkReadRequest, ReactionRequest
 
 chat_bp = Blueprint("chat", __name__)
+
+
+def bad_request(error: BadRequest):
+    return jsonify({"error": str(error)}), 400
 
 
 @chat_bp.route("/")
@@ -115,12 +120,12 @@ async def api_chat_history(chat_id: int):
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/read", methods=["POST"])
 async def mark_read(chat_id: int):
     interactor = get_chat_interactor()
-    data = await request.get_json()
-    topic_id = None
-    if data:
-        topic_id = data.get("topic_id")
+    try:
+        body = MarkReadRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    await interactor.mark_chat_as_read(chat_id, topic_id=topic_id)
+    await interactor.mark_chat_as_read(chat_id, topic_id=body.topic_id)
     return jsonify({"status": "ok"})
 
 
@@ -164,13 +169,12 @@ async def api_get_chat_info(chat_id: int):
 )
 async def toggle_reaction(chat_id: int, msg_id: int):
     interactor = get_chat_interactor()
-    data = await request.get_json()
-    emoji = data.get("reaction")
+    try:
+        body = ReactionRequest.from_json(await request.get_json())
+    except BadRequest as e:
+        return bad_request(e)
 
-    if not emoji:
-        return jsonify({"error": "No reaction provided"}), 400
-
-    success = await interactor.toggle_reaction(chat_id, msg_id, emoji)
+    success = await interactor.toggle_reaction(chat_id, msg_id, body.reaction)
     if success:
         return jsonify({"status": "ok"})
     return jsonify({"error": "Failed to set reaction"}), 500
