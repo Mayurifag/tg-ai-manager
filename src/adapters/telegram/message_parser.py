@@ -20,6 +20,7 @@ from telethon.tl.types import (
 
 from src.adapters.telethon_mappers import get_message_action_text
 from src.domain.models import Message, Reaction
+from src.infrastructure.html import sanitize_html
 
 if TYPE_CHECKING:
     from src.adapters.telegram.media import MediaManager
@@ -81,9 +82,9 @@ class MessageParser:
         entities = getattr(msg, "entities", [])
         if raw_text:
             try:
-                return html.unparse(raw_text, entities or [])
+                return sanitize_html(html.unparse(raw_text, entities or []))
             except Exception:
-                return html_escape(raw_text)
+                return sanitize_html(html_escape(raw_text))
         return ""
 
     def _extract_reactions(self, reactions: Any) -> List[Reaction]:
@@ -157,7 +158,7 @@ class MessageParser:
 
         if isinstance(msg, types.MessageService):
             is_service = True
-            text = get_message_action_text(msg) or "Service message"
+            text = sanitize_html(get_message_action_text(msg) or "Service message")
         else:
             text = self._extract_text(msg)
 

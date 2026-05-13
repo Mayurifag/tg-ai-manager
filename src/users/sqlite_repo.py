@@ -16,40 +16,39 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
     async def get_user(self, user_id: int = 1) -> Optional[User]:
         def _fetch():
             with self._connect() as conn:
-                try:
-                    cursor = conn.execute(
-                        """
-                        SELECT id, username, session_string,
-                               autoread_service_messages, autoread_polls, autoread_self,
-                               autoread_bots, autoread_regex, is_premium, debug_mode,
-                               ai_provider, ai_model, ai_api_key, ai_prompt
-                        FROM users WHERE id = ?
-                    """,
-                        (user_id,),
-                    )
-                    row = cursor.fetchone()
+                cursor = conn.execute(
+                    """
+                    SELECT id, username, session_string,
+                           autoread_service_messages, autoread_polls, autoread_self,
+                           autoread_bots, autoread_regex, is_premium, debug_mode,
+                           ai_provider, ai_model, ai_api_key, ai_prompt
+                    FROM users WHERE id = ?
+                """,
+                    (user_id,),
+                )
+                row = cursor.fetchone()
 
-                    if row:
-                        return User(
-                            id=row[0],
-                            api_id=self.settings.TG_API_ID,
-                            api_hash=self.settings.TG_API_HASH,
-                            username=row[1],
-                            session_string=self.crypto.decrypt(row[2]),
-                            autoread_service_messages=bool(row[3]),
-                            autoread_polls=bool(row[4]),
-                            autoread_self=bool(row[5]),
-                            autoread_bots=row[6] or "",
-                            autoread_regex=row[7] or "",
-                            is_premium=bool(row[8]),
-                            debug_mode=bool(row[9]),
-                            ai_provider=row[10],
-                            ai_model=row[11],
-                            ai_api_key=self.crypto.decrypt(row[12]),
-                            ai_prompt=row[13],
-                        )
-                except Exception:
-                    pass
+                if row:
+                    return User(
+                        id=row["id"],
+                        api_id=self.settings.TG_API_ID,
+                        api_hash=self.settings.TG_API_HASH,
+                        username=row["username"],
+                        session_string=self.crypto.decrypt(row["session_string"]),
+                        autoread_service_messages=bool(
+                            row["autoread_service_messages"]
+                        ),
+                        autoread_polls=bool(row["autoread_polls"]),
+                        autoread_self=bool(row["autoread_self"]),
+                        autoread_bots=row["autoread_bots"] or "",
+                        autoread_regex=row["autoread_regex"] or "",
+                        is_premium=bool(row["is_premium"]),
+                        debug_mode=bool(row["debug_mode"]),
+                        ai_provider=row["ai_provider"],
+                        ai_model=row["ai_model"],
+                        ai_api_key=self.crypto.decrypt(row["ai_api_key"]),
+                        ai_prompt=row["ai_prompt"],
+                    )
                 return None
 
         return await self._execute(_fetch)

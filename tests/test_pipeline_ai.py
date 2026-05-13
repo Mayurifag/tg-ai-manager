@@ -171,6 +171,37 @@ async def test_ai_failure_logs_warning_skips():
     action_repo.add_log.assert_not_called()
 
 
+async def test_ai_classifier_reused_for_same_settings():
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(chat_id=100, rule_type=RuleType.AI_AUTOREAD),
+    ]
+    user_repo = AsyncMock()
+    user_repo.get_user.return_value = User(
+        ai_api_key="test-key", ai_model="gemini-2.0-flash"
+    )
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    svc = make_service(
+        rule_repo=rule_repo,
+        user_repo=user_repo,
+        action_repo=action_repo,
+        chat_repo=chat_repo,
+    )
+
+    mock_instance = MagicMock()
+    mock_instance.classify_is_ad = AsyncMock(return_value=False)
+
+    with patch(
+        "src.rules.service.GeminiClassifier", return_value=mock_instance
+    ) as mock_cls:
+        await svc.handle_new_message_event(make_event())
+        await svc.handle_new_message_event(make_event())
+
+    assert mock_cls.call_count == 1
+    assert mock_instance.classify_is_ad.call_count == 2
+
+
 async def test_startup_scan_no_ai():
     """run_startup_scan never calls handle_new_message_event, so AI is never invoked."""
     from src.domain.models import Chat, ChatType

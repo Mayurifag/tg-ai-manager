@@ -28,7 +28,7 @@ class ReadOps:
         write_queue: Any,
         dispatch_fn: Optional[DispatchFn],
         get_topic_name_fn: Callable[[int, int], Awaitable[Optional[str]]],
-        coalesce_delay: float = 0.2,
+        coalesce_delay: float = 0,
     ) -> None:
         self.client = client
         self._write_queue = write_queue
@@ -55,7 +55,10 @@ class ReadOps:
             return
 
         self._active_keys.add(key)
-        self._schedule_enqueue(key)
+        if self._coalesce_delay > 0:
+            self._schedule_enqueue(key)
+        else:
+            await self._enqueue_key(key)
 
     def _merge_pending(
         self, existing: Optional[PendingRead], max_id: Optional[int]
@@ -81,13 +84,8 @@ class ReadOps:
 
     async def _enqueue_after_delay(self, key: ReadKey) -> None:
         try:
-            if self._coalesce_delay > 0:
-                await asyncio.sleep(self._coalesce_delay)
-
-            async def _do() -> None:
-                await self._drain(key)
-
-            await self._write_queue.enqueue(_do)
+            await asyncio.sleep(self._coalesce_delay)
+            await self._enqueue_key(key)
         except Exception as e:
             self._active_keys.discard(key)
             logger.error(
@@ -97,6 +95,12 @@ class ReadOps:
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )
+
+    async def _enqueue_key(self, key: ReadKey) -> None:
+        async def _do() -> None:
+            await self._drain(key)
+
+        await self._write_queue.enqueue(_do)
 
     async def _drain(self, key: ReadKey) -> None:
         pending = self._pending.get(key)

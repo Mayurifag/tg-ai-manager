@@ -16,6 +16,7 @@ from telethon.tl.types import (
 from src.adapters.telethon_mappers import get_message_action_text
 from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.logging import get_logger
+from src.infrastructure.html import sanitize_html
 
 if TYPE_CHECKING:
     from src.adapters.telegram.media import MediaManager
@@ -54,6 +55,11 @@ class EventHandlers:
                     traceback=traceback.format_exc(),
                 )
 
+    def _extract_forum_topic_id(self, chat: Any, message: Any) -> Optional[int]:
+        if not getattr(chat, "forum", False):
+            return None
+        return self._parser._extract_topic_id(message)
+
     def register_handlers(self, client: Any) -> None:
         """Register all Telethon event handlers on the given client."""
         from telethon import events
@@ -69,6 +75,7 @@ class EventHandlers:
             if event.chat_id:
                 self._parser._cache_message_chat(event.message.id, event.chat_id)
 
+            chat = None
             chat_name = "Unknown"
             try:
                 chat = await event.get_chat()
@@ -79,7 +86,7 @@ class EventHandlers:
             domain_msg = await self._parser._parse_message(
                 event.message, chat_id=event.chat_id
             )
-            topic_id = self._parser._extract_topic_id(event.message)
+            topic_id = self._extract_forum_topic_id(chat, event.message)
             topic_name = None
             if topic_id:
                 topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
@@ -109,6 +116,7 @@ class EventHandlers:
             if event.chat_id:
                 self._parser._cache_message_chat(event.message.id, event.chat_id)
 
+            chat = None
             chat_name = "Unknown"
             try:
                 chat = await event.get_chat()
@@ -121,7 +129,7 @@ class EventHandlers:
             )
             preview = domain_msg.get_preview_text()
 
-            topic_id = self._parser._extract_topic_id(event.message)
+            topic_id = self._extract_forum_topic_id(chat, event.message)
             topic_name = None
             if topic_id:
                 topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
@@ -201,6 +209,7 @@ class EventHandlers:
                 if event.chat_id:
                     self._media.clear_chat_avatar(event.chat_id)
 
+            chat = None
             chat_name = "Unknown"
             try:
                 chat = await event.get_chat()
@@ -216,8 +225,8 @@ class EventHandlers:
                 msg_model = await self._parser._parse_message(
                     event.action_message, chat_id=event.chat_id
                 )
-                text = f"{msg_model.sender_name} {action_text}"
-                topic_id = self._parser._extract_topic_id(event.action_message)
+                text = sanitize_html(f"{msg_model.sender_name} {action_text}")
+                topic_id = self._extract_forum_topic_id(chat, event.action_message)
 
             sys_event = SystemEvent(
                 type="action",

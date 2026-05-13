@@ -1,7 +1,6 @@
-import asyncio
 import traceback
 
-from quart import Blueprint, jsonify, redirect, render_template, request
+from quart import Blueprint, current_app, jsonify, redirect, render_template, request
 from telethon import utils
 
 from src.config import get_settings
@@ -13,6 +12,7 @@ from src.container import (
 )
 from src.infrastructure.logging import get_logger
 from src.users.models import User
+from src.web.requests import BadRequest, PasswordRequest
 
 logger = get_logger(__name__)
 auth_bp = Blueprint("auth", __name__)
@@ -70,13 +70,14 @@ async def get_password_hint():
 @auth_bp.route("/api/auth/2fa", methods=["POST"])
 async def login_2fa():
     try:
-        data = await request.get_json()
-        password = data.get("password")
+        body = PasswordRequest.from_json(await request.get_json())
         adapter = _get_tg_adapter()
 
-        await adapter.sign_in_with_password(password)
+        await adapter.sign_in_with_password(body.password)
         await _finalize_login(adapter)
         return jsonify({"status": "ok"})
+    except BadRequest as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error("auth_2fa_failed", error=str(e), traceback=traceback.format_exc())
         return jsonify({"error": str(e)}), 400
@@ -123,4 +124,4 @@ async def _finalize_login(adapter):
     # Trigger a startup scan now that we are connected,
     # to catch any unread messages that existed before/during login.
     rule_service = get_rule_service()
-    asyncio.create_task(rule_service.run_startup_scan())
+    current_app.background_tasks.create(rule_service.run_startup_scan(), "startup_scan")

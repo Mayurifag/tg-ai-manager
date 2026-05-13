@@ -418,7 +418,33 @@ async def test_handle_new_message_event_autoread_on_action():
     )
     await svc.handle_new_message_event(event)
 
-    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=None)
+    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
+    assert event.is_read is True
+
+
+async def test_handle_new_message_event_topic_autoread_uses_message_id():
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(chat_id=100, rule_type=RuleType.AUTOREAD)
+    ]
+    action_repo = AsyncMock()
+    chat_repo = AsyncMock()
+    svc = make_service(
+        rule_repo=rule_repo, action_repo=action_repo, chat_repo=chat_repo
+    )
+
+    msg = make_message(id=42)
+    event = SystemEvent(
+        type="message",
+        text="hello",
+        chat_name="TestChat",
+        chat_id=100,
+        topic_id=7,
+        message_model=msg,
+    )
+    await svc.handle_new_message_event(event)
+
+    chat_repo.mark_as_read.assert_called_once_with(100, 7, max_id=42)
     assert event.is_read is True
 
 
