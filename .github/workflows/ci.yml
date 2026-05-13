@@ -84,12 +84,7 @@ jobs:
           platforms: linux/amd64
 
       - name: Trigger deploy
-        env:
-          WATCHTOWER_TOKEN: ${{ secrets.WATCHTOWER_HTTP_API_TOKEN }}
-          WATCHTOWER_URL: ${{ secrets.WATCHTOWER_URL }}
-        run: |
-          if [ -n "$WATCHTOWER_URL" ]; then
-            curl -X POST -H "Authorization: Bearer $WATCHTOWER_TOKEN" $WATCHTOWER_URL
-          else
-            echo "WATCHTOWER_URL not set, skipping trigger."
-          fi
+        uses: Mayurifag/multiple-watchtowers-update-action@master
+        with:
+          watchtower-urls: ${{ secrets.WATCHTOWER_URLS }}
+          watchtower-tokens: ${{ secrets.WATCHTOWER_TOKENS }}
