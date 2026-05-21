@@ -51,9 +51,8 @@ RUN uv sync --no-dev
 EXPOSE 8000
 VOLUME ["/app_data"]
 
-# Healthcheck: pings the login page (returns 200 OK) to verify web server is responsive
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/login || exit 1
+  CMD curl -f http://localhost:8000/api/health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
