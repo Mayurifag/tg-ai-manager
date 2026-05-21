@@ -124,4 +124,4 @@ async def _finalize_login(adapter):
     # Trigger a startup scan now that we are connected,
     # to catch any unread messages that existed before/during login.
     rule_service = get_rule_service()
-    current_app.background_tasks.create(rule_service.run_startup_scan(), "startup_scan")
+    current_app.managed_tasks.create(rule_service.run_startup_scan(), "startup_scan")
