@@ -123,7 +123,7 @@ def create_app() -> TypedQuart:
         app.user_repo = user_repo
         app.rule_service = rule_service
         app.chat_interactor = interactor
-        app.background_tasks = BackgroundTasks(logger)
+        app.managed_tasks = BackgroundTasks(logger)
 
         # 7. Create event bus and register subscribers in order:
         #    - event_repo first (persistence)
@@ -145,8 +145,8 @@ def create_app() -> TypedQuart:
         tg_adapter.add_event_listener(bus.dispatch)
 
         # 9. Background tasks
-        app.background_tasks.create(rule_service.run_startup_scan(), "startup_scan")
-        app.background_tasks.create(
+        app.managed_tasks.create(rule_service.run_startup_scan(), "startup_scan")
+        app.managed_tasks.create(
             job_background_maintenance(
                 action_repo=action_repo,
                 event_repo=event_repo,
@@ -161,7 +161,7 @@ def create_app() -> TypedQuart:
     async def shutdown():
         logger.info("application_shutdown")
         shutdown_event.set()
-        await app.background_tasks.shutdown(timeout=3.0)
+        await app.managed_tasks.shutdown(timeout=3.0)
 
         # Allow SSE generators to exit gracefully
         await asyncio.sleep(0.1)

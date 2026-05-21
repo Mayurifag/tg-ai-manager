@@ -17,4 +17,4 @@ class TypedQuart(Quart):
     rule_service: RuleService
     chat_interactor: ChatInteractor
     event_bus: EventBus
-    background_tasks: BackgroundTasks
+    managed_tasks: BackgroundTasks
