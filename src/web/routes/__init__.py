@@ -21,12 +21,11 @@ def register_routes(app: Quart):
 
     @app.before_request
     async def login_required():
-        # Allow static files, auth routes, and health check
         if (
             request.path.startswith("/static")
             or request.path.startswith("/api/auth")
             or request.path == "/login"
-            or request.path == "/health"
+            or request.path == "/api/health"
             or request.path == "/api/rules/export"
         ):
             return
