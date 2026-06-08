@@ -33,6 +33,7 @@ def app():
     _app.tg_adapter = MagicMock()
     _app.tg_adapter.client = client
     _app.tg_adapter.is_connected.return_value = True
+    _app.tg_adapter.connect = AsyncMock()
     _app.tg_adapter._write_queue.queue_size.return_value = 0
 
     _app.user_repo = MagicMock()
@@ -74,6 +75,21 @@ async def test_api_health_returns_503_when_telegram_is_disconnected(app, client)
     data = await response.get_json()
     assert data["status"] == "unhealthy"
     assert data["telegram_connected"] is False
+    app.tg_adapter.connect.assert_awaited_once()
+
+
+async def test_api_health_recovers_disconnected_telegram(app, client):
+    app.tg_adapter.is_connected.side_effect = [False, True]
+
+    response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["telegram_connected"] is True
+    assert data["telegram_authorized"] is True
+    assert data["telegram_authenticated_call"] is True
+    app.tg_adapter.connect.assert_awaited_once()
 
 
 async def test_api_health_returns_503_when_db_fails(app, client):
