@@ -42,6 +42,13 @@ async def _check_telegram(adapter) -> tuple[bool, bool, bool, bool]:
     authorized = False
     authenticated_call = False
 
+    if client_exists and not connected:
+        try:
+            await asyncio.wait_for(adapter.connect(), timeout=5.0)
+            connected = adapter.is_connected()
+        except Exception:
+            connected = False
+
     if client_exists and connected:
         try:
             authorized = bool(
