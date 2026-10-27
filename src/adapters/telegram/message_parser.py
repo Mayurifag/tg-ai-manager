@@ -50,11 +50,9 @@ class MessageParser:
         self._msg_id_to_chat_id[msg_id] = chat_id
 
     def _get_sender_color(self, sender: Any, sender_id: int) -> str:
-        color_index = 0
         peer_color = getattr(sender, "color", None)
-        if peer_color and hasattr(peer_color, "color"):
-            color_index = peer_color.color
-        else:
+        color_index = getattr(peer_color, "color", None)
+        if color_index is None:
             color_index = abs(sender_id) % 7
         palette = [
             "#e17076",
