@@ -56,7 +56,7 @@ services:
 - Reconnection clears Telethon 1.x's stale keepalive-ping state and explicitly
   requests update catch-up. This narrow workaround uses a private Telethon field;
   its regression tests must pass when upgrading Telethon.
-- Every 5 seconds, a background task checks Telegram's actual unread state in
+- Every 10 seconds, a background task checks Telegram's actual unread state in
   batches for explicitly enabled auto-read chats. It reads only those approved
   chats/topics, up to the message ID returned by the server. Text, bot, poll,
   service-message, and AI rules are not expanded into blanket chat permissions.
@@ -75,6 +75,8 @@ Telegram documents that passive channel/supergroup updates may be delayed or
 reduced: see [Working with Updates](https://core.telegram.org/api/updates#subscribing-to-updates-of-channels-supergroups).
 The batched unread-state check is a safety net, not a hard delivery SLA during
 network outages or Telegram rate limits.
+Five-second checks were tested but triggered repeated `GetPeerDialogsRequest`
+flood waits; the ten-second interval avoids that observed steady-state limit.
 
 ## TODO
 
