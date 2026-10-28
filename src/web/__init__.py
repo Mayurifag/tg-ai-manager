@@ -20,7 +20,10 @@ from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
 from src.rules.sync import sync_rules_from_remote
 from src.users.sqlite_repo import SqliteUserRepository
-from src.infrastructure.maintenance import job_background_maintenance
+from src.infrastructure.maintenance import (
+    job_background_maintenance,
+    job_telegram_recovery,
+)
 from src.web.routes import register_routes
 from src.web.serializers import json_serializer
 from src.web.sse import broadcast_event, connected_queues, shutdown_event
@@ -146,6 +149,10 @@ def create_app() -> TypedQuart:
 
         # 9. Background tasks
         app.managed_tasks.create(rule_service.run_startup_scan(), "startup_scan")
+        app.managed_tasks.create(
+            job_telegram_recovery(rule_service, user_repo, shutdown_event),
+            "telegram_recovery",
+        )
         app.managed_tasks.create(
             job_background_maintenance(
                 action_repo=action_repo,

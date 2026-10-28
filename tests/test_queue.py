@@ -114,6 +114,17 @@ async def test_stop_is_idempotent():
     await queue.stop()  # second stop should be a no-op
 
 
+async def test_reconnecting_does_not_start_duplicate_write_workers():
+    queue = TelegramWriteQueue()
+    await queue.start()
+    original_worker = queue._worker_task
+    await queue.start()
+    assert queue._worker_task is original_worker
+    assert queue.is_running()
+    await queue.stop()
+    assert not queue.is_running()
+
+
 async def test_enqueue_before_start_drains_after_start():
     """Items enqueued before start() are processed after the worker launches."""
     results = []

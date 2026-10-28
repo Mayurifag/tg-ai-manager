@@ -75,6 +75,7 @@ async def health():
     )
 
     queue_size = adapter._write_queue.queue_size()
+    queue_running = adapter._write_queue.is_running()
     subscriber_count = len(bus._subscribers)
 
     from src.web.sse import connected_queues
@@ -88,6 +89,7 @@ async def health():
         and connected
         and authorized
         and authenticated_call
+        and queue_running
     )
     status = "ok" if healthy else "unhealthy"
 
@@ -102,6 +104,10 @@ async def health():
             "telegram_authorized": authorized,
             "telegram_authenticated_call": authenticated_call,
             "write_queue_depth": queue_size,
+            "write_queue_running": bool(queue_running),
+            "telegram_reconnect_count": int(
+                getattr(adapter.client, "reconnect_count", 0)
+            ),
             "event_bus_subscribers": subscriber_count,
             "sse_clients": sse_clients,
         }

@@ -50,6 +50,30 @@ services:
       - ./tg_data:/app_data
 ~~~
 
+## Auto-read reliability
+
+- Live messages use a persistent MTProto connection, not Bot API webhooks.
+- Reconnection clears Telethon 1.x's stale keepalive-ping state and explicitly
+  requests update catch-up. This narrow workaround uses a private Telethon field;
+  its regression tests must pass when upgrading Telethon.
+- Every 10 seconds, a background task checks Telegram's actual unread state in
+  batches for explicitly enabled auto-read chats. It reads only those approved
+  chats/topics, up to the message ID returned by the server. Text, bot, poll,
+  service-message, and AI rules are not expanded into blanket chat permissions.
+- Transient read failures retain the newest pending message ID and retry with
+  bounded exponential backoff. Telegram flood waits are respected.
+- Health includes the write-worker state and reconnect count. Structured logs
+  identify message arrival, queued reads, successful RPCs, and reconciliation
+  using chat/message IDs and timings, without message contents or credentials.
+- Auto-read cannot guarantee that a push notification never appears, nor force
+  another device to refresh immediately. This service does not change online
+  presence, notification settings, or mention/reaction notification preferences.
+
+Telegram documents that passive channel/supergroup updates may be delayed or
+reduced: see [Working with Updates](https://core.telegram.org/api/updates#subscribing-to-updates-of-channels-supergroups).
+The batched unread-state check is a safety net, not a hard delivery SLA during
+network outages or Telegram rate limits.
+
 ## TODO
 
 - AI integration to skip ads - we will have prompt which will ask LLM if message is ad or not and auto-read if it is

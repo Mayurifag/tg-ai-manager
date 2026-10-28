@@ -329,6 +329,37 @@ class RuleService:
         except Exception as e:
             logger.warning("startup_scan_failed", error=repr(e))
 
+    async def reconcile_autoread(self) -> None:
+        """Repair missed updates only for explicitly enabled auto-read scopes."""
+        rules = [
+            rule
+            for rule in await self.rule_repo.get_all()
+            if rule.user_id == 1 and rule.rule_type == RuleType.AUTOREAD
+        ]
+        if not rules or not self.chat_repo.is_connected():
+            return
+
+        chat_ids = sorted({rule.chat_id for rule in rules})
+        unread_chats = await self.chat_repo.get_all_unread_chats(chat_ids)
+        for chat in unread_chats:
+            if chat.type == ChatType.FORUM:
+                topics = await self.chat_repo.get_unread_topics(chat.id)
+                for topic in topics:
+                    # Recheck rules: a user may disable one during the query.
+                    if await self.is_autoread_enabled(chat.id, topic.id):
+                        await self.chat_repo.mark_as_read(
+                            chat.id, topic.id, max_id=topic.last_message_id
+                        )
+            elif await self.is_autoread_enabled(chat.id):
+                await self.chat_repo.mark_as_read(chat.id, max_id=chat.last_message_id)
+            else:
+                continue
+            logger.info(
+                "autoread_reconciled",
+                chat_id=chat.id,
+                unread_count=chat.unread_count,
+            )
+
     async def toggle_ai_autoread(
         self, chat_id: int, topic_id: Optional[int], enabled: bool
     ) -> Optional[Rule]:

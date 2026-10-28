@@ -32,9 +32,16 @@ class TelegramWriteQueue:
 
     async def start(self) -> None:
         """Start the background worker. Call after the Telegram client connects."""
+        if self.is_running():
+            return
         self._running = True
         self._worker_task = asyncio.create_task(self._worker())
         logger.info("write_queue_started")
+
+    def is_running(self) -> bool:
+        return bool(
+            self._running and self._worker_task and not self._worker_task.done()
+        )
 
     async def stop(self) -> None:
         """Stop the background worker. Pending operations are dropped."""

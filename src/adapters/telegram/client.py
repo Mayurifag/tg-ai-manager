@@ -2,7 +2,6 @@ import asyncio
 import os
 from typing import Any, Awaitable, Callable, List, Optional
 
-from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import GetPasswordRequest
@@ -13,6 +12,7 @@ from src.adapters.telegram.forum_ops import ForumOps
 from src.adapters.telegram.write_ops import WriteOps
 from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
+from src.adapters.telegram.recovering_client import RecoveringTelegramClient
 from src.adapters.telegram.types import ITelethonClient
 from src.domain.models import SystemEvent
 from src.domain.ports import ChatRepository
@@ -37,13 +37,16 @@ class TelethonAdapter(ChatRepository):
         self._self_id: Optional[int] = None
 
         if self.api_id and self.api_hash:
-            self.client = TelegramClient(self.session, self.api_id, self.api_hash)  # type: ignore
+            self.client = RecoveringTelegramClient(
+                self.session, self.api_id, self.api_hash
+            )  # type: ignore
         else:
             logger.info("adapter_initialized_no_credentials")
 
         self.images_dir = os.path.join(os.getcwd(), "cache")
         self._event_handler_registered = False
         self._is_connected_flag = False
+        self._connect_lock = asyncio.Lock()
 
         # QR Login State
         self._qr_login: Any = None
@@ -86,9 +89,15 @@ class TelethonAdapter(ChatRepository):
             self._is_connected_flag
             and self.client is not None
             and self.client.is_connected()
+            and self._event_handler_registered
+            and self._write_queue.is_running()
         )
 
     async def connect(self):
+        async with self._connect_lock:
+            await self._connect()
+
+    async def _connect(self):
         if not self.client:
             logger.warning("connect_skipped_no_client_initialized")
             return
@@ -222,8 +231,8 @@ class TelethonAdapter(ChatRepository):
     async def get_chats(self, limit: int):
         return await self._chat_query_ops.get_chats(limit)
 
-    async def get_all_unread_chats(self):
-        return await self._chat_query_ops.get_all_unread_chats()
+    async def get_all_unread_chats(self, chat_ids: Optional[List[int]] = None):
+        return await self._chat_query_ops.get_all_unread_chats(chat_ids)
 
     async def get_chat(self, chat_id: int):
         return await self._chat_query_ops.get_chat(chat_id)

@@ -24,7 +24,9 @@ class ChatQueryPort(ABC):
         pass
 
     @abstractmethod
-    async def get_all_unread_chats(self) -> List[Chat]:
+    async def get_all_unread_chats(
+        self, chat_ids: Optional[List[int]] = None
+    ) -> List[Chat]:
         pass
 
     @abstractmethod

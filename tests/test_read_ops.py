@@ -1,5 +1,8 @@
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from telethon import functions
 
@@ -177,3 +180,55 @@ async def test_different_chats_keep_separate_read_all_calls():
     await queue.run_next()
 
     assert client.read_ack_calls == [("peer-100", None), ("peer-200", None)]
+
+
+async def test_transient_read_failure_retries_latest_message_id():
+    queue = ManualQueue()
+    client = FakeClient()
+    client.send_read_acknowledge = AsyncMock(
+        side_effect=[ConnectionError("offline"), True]
+    )
+    ops = make_ops(client, queue)
+    with patch.object(ops, "_schedule_enqueue") as schedule:
+        await ops.mark_as_read(100, max_id=10)
+        await queue.run_next()
+        schedule.assert_called_once_with((100, None), delay=1)
+        assert (100, None) in ops._active_keys
+        await ops.mark_as_read(100, max_id=20)
+        await ops._enqueue_key((100, None))
+        await queue.run_next()
+    assert client.send_read_acknowledge.await_args.kwargs == {"max_id": 20}
+    assert not ops._pending
+    assert not ops._active_keys
+
+
+async def test_permanent_read_failure_does_not_emit_success_or_stick_chat():
+    queue = ManualQueue()
+    client = FakeClient()
+    client.send_read_acknowledge = AsyncMock(
+        side_effect=[ValueError("invalid peer"), True]
+    )
+    dispatch = AsyncMock()
+    ops = make_ops(client, queue, dispatch=dispatch)
+    await ops.mark_as_read(100, max_id=10)
+    with pytest.raises(ValueError, match="invalid peer"):
+        await queue.run_next()
+    dispatch.assert_not_awaited()
+    assert not ops._active_keys
+    await ops.mark_as_read(100, max_id=20)
+    await queue.run_next()
+    dispatch.assert_awaited_once()
+
+
+async def test_invalid_topic_is_not_reported_as_read():
+    queue = ManualQueue()
+    client = AsyncMock()
+    client.return_value = True
+    client.side_effect = ValueError("TOPIC_ID_INVALID")
+    dispatch = AsyncMock()
+    ops = make_ops(client, queue, dispatch=dispatch)
+    await ops.mark_as_read(100, topic_id=10, max_id=50)
+    with pytest.raises(ValueError, match="TOPIC_ID_INVALID"):
+        await queue.run_next()
+    dispatch.assert_not_awaited()
+    assert not ops._active_keys

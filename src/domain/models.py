@@ -23,6 +23,7 @@ class Chat:
     image_url: Optional[str] = None
     icon_emoji: Optional[str] = None
     is_pinned: bool = False
+    last_message_id: Optional[int] = None
 
 
 @dataclass

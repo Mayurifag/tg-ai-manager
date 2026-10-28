@@ -1,6 +1,6 @@
 import traceback
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from telethon import types, utils
@@ -72,6 +72,23 @@ class EventHandlers:
 
     async def _handle_new_message(self, event: Any) -> None:
         try:
+            message_date = getattr(event.message, "date", None)
+            if isinstance(message_date, datetime):
+                logger.info(
+                    "telegram_message_received",
+                    chat_id=event.chat_id,
+                    message_id=event.message.id,
+                    message_date=message_date.isoformat(),
+                    delivery_seconds=round(
+                        (
+                            datetime.now(timezone.utc)
+                            - message_date.replace(
+                                tzinfo=message_date.tzinfo or timezone.utc
+                            )
+                        ).total_seconds(),
+                        3,
+                    ),
+                )
             if event.chat_id:
                 self._parser._cache_message_chat(event.message.id, event.chat_id)
 
