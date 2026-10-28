@@ -5,11 +5,11 @@ from telethon.errors import FloodWaitError
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
-TELEGRAM_RECOVERY_INTERVAL = 5
+TELEGRAM_RECOVERY_INTERVAL = 10
 
 
 async def job_telegram_recovery(rule_service, user_repo, shutdown_event):
-    """Reconnect promptly and reconcile approved scopes every 5 seconds.
+    """Reconnect promptly and reconcile approved scopes every 10 seconds.
 
     This is a safety net, not the primary update transport. Never infer read
     permission from a mention, reaction, or a partial global text rule.
