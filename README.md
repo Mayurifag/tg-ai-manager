@@ -60,6 +60,8 @@ services:
   batches for explicitly enabled auto-read chats. It reads only those approved
   chats/topics, up to the message ID returned by the server. Text, bot, poll,
   service-message, and AI rules are not expanded into blanket chat permissions.
+  Inaccessible chats are skipped and retried after five minutes; their rules
+  are preserved rather than deleted.
 - Transient read failures retain the newest pending message ID and retry with
   bounded exponential backoff. Telegram flood waits are respected.
 - Health includes the write-worker state and reconnect count. Structured logs

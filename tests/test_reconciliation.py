@@ -114,3 +114,16 @@ async def test_recovery_reconnects_then_reconciles_and_stops_cleanly():
         await asyncio.wait_for(job_telegram_recovery(svc, user_repo, shutdown), 1)
     svc.chat_repo.connect.assert_awaited_once()
     svc.reconcile_autoread.assert_awaited_once()
+
+
+async def test_inaccessible_rule_does_not_repeat_failed_lookup_every_scan():
+    client = AsyncMock()
+    client.get_input_entity.side_effect = ValueError("Chat not found")
+    ops = ChatQueryOps(client, None, None)
+    assert await ops.get_all_unread_chats([-100]) == []
+    assert await ops.get_all_unread_chats([-100]) == []
+    client.get_input_entity.assert_awaited_once_with(-100)
+    client.assert_not_awaited()
+    ops._unavailable_chats[-100] = 0
+    assert await ops.get_all_unread_chats([-100]) == []
+    assert client.get_input_entity.await_count == 2
