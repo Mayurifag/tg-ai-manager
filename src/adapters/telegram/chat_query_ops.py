@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from telethon import errors, types, utils
@@ -29,6 +30,7 @@ class ChatQueryOps:
         self.client = client
         self._parser = parser
         self._media = media
+        self._unavailable_chats: Dict[int, float] = {}
 
     async def get_chats(self, limit: int) -> list[Chat]:
         dialogs = await self.client.get_dialogs(limit=limit)
@@ -96,11 +98,19 @@ class ChatQueryOps:
         """Read server state in batches without loading avatars or histories."""
         peers = []
         for chat_id in sorted(set(chat_ids)):
+            if self._unavailable_chats.get(chat_id, 0) > time.monotonic():
+                continue
             try:
                 peer = await self.client.get_input_entity(chat_id)
                 peers.append(InputDialogPeer(peer=peer))
+                self._unavailable_chats.pop(chat_id, None)
             except (ValueError, errors.ChannelPrivateError):
-                logger.warning("reconcile_chat_unavailable", chat_id=chat_id)
+                self._unavailable_chats[chat_id] = time.monotonic() + 300
+                logger.warning(
+                    "reconcile_chat_unavailable",
+                    chat_id=chat_id,
+                    retry_after_seconds=300,
+                )
 
         results = []
         for offset in range(0, len(peers), 100):
