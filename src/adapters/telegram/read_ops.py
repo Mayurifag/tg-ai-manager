@@ -1,4 +1,5 @@
 import asyncio
+import time
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ DispatchFn = Callable[[SystemEvent], Awaitable[None]]
 class PendingRead:
     max_id: Optional[int]
     version: int
+    queued_at: float
 
 
 class ReadOps:
@@ -38,6 +40,7 @@ class ReadOps:
         self._pending: dict[ReadKey, PendingRead] = {}
         self._active_keys: set[ReadKey] = set()
         self._enqueue_tasks: set[asyncio.Task[None]] = set()
+        self._retry_counts: dict[ReadKey, int] = {}
 
     def set_dispatch_fn(self, dispatch_fn: Optional[DispatchFn]) -> None:
         self._dispatch_fn = dispatch_fn
@@ -64,10 +67,11 @@ class ReadOps:
         self, existing: Optional[PendingRead], max_id: Optional[int]
     ) -> PendingRead:
         if existing is None:
-            return PendingRead(max_id=max_id, version=1)
+            return PendingRead(max_id=max_id, version=1, queued_at=time.monotonic())
         return PendingRead(
             max_id=self._merge_max_id(existing.max_id, max_id),
             version=existing.version + 1,
+            queued_at=existing.queued_at,
         )
 
     def _merge_max_id(
@@ -77,14 +81,16 @@ class ReadOps:
             return None
         return max(existing, incoming)
 
-    def _schedule_enqueue(self, key: ReadKey) -> None:
-        task = asyncio.create_task(self._enqueue_after_delay(key))
+    def _schedule_enqueue(self, key: ReadKey, delay: Optional[float] = None) -> None:
+        task = asyncio.create_task(self._enqueue_after_delay(key, delay))
         self._enqueue_tasks.add(task)
         task.add_done_callback(self._enqueue_tasks.discard)
 
-    async def _enqueue_after_delay(self, key: ReadKey) -> None:
+    async def _enqueue_after_delay(
+        self, key: ReadKey, delay: Optional[float] = None
+    ) -> None:
         try:
-            await asyncio.sleep(self._coalesce_delay)
+            await asyncio.sleep(self._coalesce_delay if delay is None else delay)
             await self._enqueue_key(key)
         except Exception as e:
             self._active_keys.discard(key)
@@ -108,7 +114,40 @@ class ReadOps:
             self._active_keys.discard(key)
             return
 
-        await self._send_mark_as_read(key[0], key[1], pending.max_id)
+        logger.info(
+            "mark_as_read_sending",
+            chat_id=key[0],
+            topic_id=key[1],
+            max_id=pending.max_id,
+            queue_seconds=round(time.monotonic() - pending.queued_at, 3),
+        )
+        try:
+            await self._send_mark_as_read(key[0], key[1], pending.max_id)
+        except errors.FloodWaitError:
+            # The write queue owns Telegram's mandatory flood-wait backoff.
+            raise
+        except (OSError, asyncio.TimeoutError, errors.ServerError):
+            attempt = min(self._retry_counts.get(key, 0) + 1, 6)
+            self._retry_counts[key] = attempt
+            delay = min(2 ** (attempt - 1), 30)
+            logger.warning(
+                "mark_as_read_retry",
+                chat_id=key[0],
+                topic_id=key[1],
+                max_id=pending.max_id,
+                delay_seconds=delay,
+            )
+            self._schedule_enqueue(key, delay=delay)
+            return
+        except Exception:
+            # A permanent failure must not leave the chat stuck in active_keys,
+            # silently swallowing every future read request for that chat.
+            self._pending.pop(key, None)
+            self._active_keys.discard(key)
+            self._retry_counts.pop(key, None)
+            raise
+
+        self._retry_counts.pop(key, None)
 
         if self._pending.get(key) == pending:
             self._pending.pop(key, None)
@@ -123,6 +162,7 @@ class ReadOps:
         topic_id: Optional[int],
         max_id: Optional[int],
     ) -> None:
+        started = time.monotonic()
         try:
             input_peer = await self.client.get_input_entity(chat_id)
             if topic_id is None:
@@ -133,7 +173,6 @@ class ReadOps:
                     input_peer, chat_id, topic_id, max_id
                 )
 
-            await self._dispatch_read_event(chat_id, topic_id, topic_name, input_peer)
         except errors.FloodWaitError:
             raise
         except Exception as e:
@@ -144,6 +183,19 @@ class ReadOps:
                 error=repr(e),
                 traceback=traceback.format_exc(),
             )
+            raise
+
+        logger.info(
+            "mark_as_read_completed",
+            chat_id=chat_id,
+            topic_id=topic_id,
+            max_id=max_id,
+            rpc_seconds=round(time.monotonic() - started, 3),
+        )
+        try:
+            await self._dispatch_read_event(chat_id, topic_id, topic_name, input_peer)
+        except Exception:
+            logger.exception("read_event_dispatch_failed", chat_id=chat_id)
 
     async def _read_chat(self, input_peer: Any, max_id: Optional[int]) -> None:
         if max_id is None:
@@ -178,7 +230,6 @@ class ReadOps:
                     chat_id=chat_id,
                     topic_id=topic_id,
                 )
-                return None
             raise
 
     async def _latest_topic_message_id(self, input_peer: Any, topic_id: int) -> int:

@@ -1,7 +1,7 @@
 import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from telethon import types, utils
+from telethon import errors, types, utils
 from telethon.tl.functions.messages import GetPeerDialogsRequest
 from telethon.tl.types import InputDialogPeer
 
@@ -60,7 +60,11 @@ class ChatQueryOps:
             )
         return results
 
-    async def get_all_unread_chats(self) -> List[Chat]:
+    async def get_all_unread_chats(
+        self, chat_ids: Optional[List[int]] = None
+    ) -> List[Chat]:
+        if chat_ids is not None:
+            return await self._get_unread_chats_by_id(chat_ids)
         results = []
         try:
             folders = [0, 1]
@@ -86,6 +90,58 @@ class ChatQueryOps:
         except Exception as e:
             logger.error("get_all_unread_chats_failed", error=str(e))
 
+        return results
+
+    async def _get_unread_chats_by_id(self, chat_ids: List[int]) -> List[Chat]:
+        """Read server state in batches without loading avatars or histories."""
+        peers = []
+        for chat_id in sorted(set(chat_ids)):
+            try:
+                peer = await self.client.get_input_entity(chat_id)
+                peers.append(InputDialogPeer(peer=peer))
+            except (ValueError, errors.ChannelPrivateError):
+                logger.warning("reconcile_chat_unavailable", chat_id=chat_id)
+
+        results = []
+        for offset in range(0, len(peers), 100):
+            response = await self.client(
+                GetPeerDialogsRequest(peers=peers[offset : offset + 100])
+            )
+            entities = {
+                utils.get_peer_id(entity): entity
+                for entity in [*response.chats, *response.users]
+            }
+            for dialog in response.dialogs:
+                if dialog.unread_count <= 0:
+                    continue
+                chat_id = utils.get_peer_id(dialog.peer)
+                entity = entities.get(chat_id)
+                if entity is None:
+                    continue
+                if isinstance(entity, types.User):
+                    chat_type = ChatType.USER
+                elif getattr(entity, "forum", False):
+                    chat_type = ChatType.FORUM
+                elif getattr(entity, "broadcast", False):
+                    chat_type = ChatType.CHANNEL
+                else:
+                    chat_type = ChatType.GROUP
+                results.append(
+                    Chat(
+                        id=chat_id,
+                        name=utils.get_display_name(entity),
+                        unread_count=dialog.unread_count,
+                        type=chat_type,
+                        last_message_id=dialog.top_message,
+                    )
+                )
+                logger.info(
+                    "autoread_server_unread",
+                    chat_id=chat_id,
+                    unread_count=dialog.unread_count,
+                    read_max_id=dialog.read_inbox_max_id,
+                    top_message_id=dialog.top_message,
+                )
         return results
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:

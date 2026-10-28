@@ -108,6 +108,7 @@ class ForumOps:
                             name=t.title,
                             unread_count=t.unread_count,
                             type=ChatType.TOPIC,
+                            last_message_id=t.top_message,
                         )
                     )
             return topics

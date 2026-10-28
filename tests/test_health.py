@@ -35,6 +35,8 @@ def app():
     _app.tg_adapter.is_connected.return_value = True
     _app.tg_adapter.connect = AsyncMock()
     _app.tg_adapter._write_queue.queue_size.return_value = 0
+    _app.tg_adapter._write_queue.is_running.return_value = True
+    client.reconnect_count = 0
 
     _app.user_repo = MagicMock()
     _app.user_repo._connect.return_value = _Conn()
@@ -64,6 +66,8 @@ async def test_api_health_returns_ok(app, client):
     assert data["telegram_connected"] is True
     assert data["telegram_authorized"] is True
     assert data["telegram_authenticated_call"] is True
+    assert data["write_queue_running"] is True
+    assert data["telegram_reconnect_count"] == 0
 
 
 async def test_api_health_returns_503_when_telegram_is_disconnected(app, client):
@@ -118,3 +122,10 @@ async def test_health_alias_is_not_registered(client):
     response = await client.get("/health")
 
     assert response.status_code == 404
+
+
+async def test_api_health_is_unhealthy_if_write_worker_has_stopped(app, client):
+    app.tg_adapter._write_queue.is_running.return_value = False
+    response = await client.get("/api/health")
+    assert response.status_code == 503
+    assert (await response.get_json())["write_queue_running"] is False
