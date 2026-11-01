@@ -20,7 +20,7 @@ class ChatConnectionPort(ABC):
 
 class ChatQueryPort(ABC):
     @abstractmethod
-    async def get_chats(self, limit: int) -> List[Chat]:
+    async def get_chats(self) -> List[Chat]:
         pass
 
     @abstractmethod

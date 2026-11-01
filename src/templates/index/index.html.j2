@@ -1,6 +1,4 @@
 {% extends "base.html.j2" %}
-{% import "macros/chat_card.html.j2" as cards %}
-
 {% block head_extra %}
 <link rel="stylesheet" href="/static/css/chat_list.css?t={{ 'static/css/chat_list.css' | file_mtime }}">
 <link rel="stylesheet" href="/static/css/index_styles.css?t={{ 'static/css/index_styles.css' | file_mtime }}">
@@ -14,13 +12,12 @@
 
 {% block content %}
 <div class="chat-list" id="chat-list-container">
-    {% for chat in chats %}
-    <div class="chat-card-wrapper" data-chat-id="{{ chat.id }}" {% if chat.is_pinned %}data-is-pinned="true" {% endif
-        %}>
-        {{ cards.render_chat_card(chat) }}
-    </div>
-    {% endfor %}
+    {% with chats = page.chats %}{% include "partials/chat_cards.html.j2" %}{% endwith %}
 </div>
+<button id="load-more-chats" class="load-more-chats" type="button"
+    data-snapshot="{{ page.snapshot }}" data-next-offset="{{ page.next_offset if page.next_offset is not none else '' }}"
+    {% if page.next_offset is none %}hidden{% endif %}>Load more chats</button>
+<div id="chat-list-status" class="chat-list-status" role="status" aria-live="polite"></div>
 
 {% endblock %}
 

@@ -61,5 +61,5 @@ def reload_tg_adapter(session_string: Optional[str] = None) -> None:
     new_adapter.add_event_listener(app.event_bus.dispatch)
 
     app.tg_adapter = new_adapter
-    app.chat_interactor.repository = new_adapter
+    app.chat_interactor.replace_repository(new_adapter)
     app.rule_service.chat_repo = new_adapter

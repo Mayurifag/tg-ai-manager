@@ -1,5 +1,6 @@
 from quart import Blueprint, abort, jsonify, render_template, request
 
+from src.application.interactors import ChatSnapshotExpired
 from src.container import get_chat_interactor, get_rule_service, get_user_repo
 from src.rules.models import RuleType
 from src.web.requests import BadRequest, MarkReadRequest, ReactionRequest
@@ -14,8 +15,31 @@ def bad_request(error: BadRequest):
 @chat_bp.route("/")
 async def index():
     interactor = get_chat_interactor()
-    chats = await interactor.get_recent_chats()
-    return await render_template("index/index.html.j2", chats=chats)
+    page = await interactor.get_chat_page()
+    return await render_template("index/index.html.j2", page=page)
+
+
+@chat_bp.route("/api/chats")
+async def api_chats():
+    snapshot = request.args.get("snapshot") or None
+    raw_offset = request.args.get("offset", "0")
+    if (
+        len(raw_offset) > 9
+        or not raw_offset.isascii()
+        or not raw_offset.isdecimal()
+        or (snapshot is None and raw_offset != "0")
+    ):
+        return jsonify({"error": "Invalid chat page offset"}), 400
+
+    try:
+        page = await get_chat_interactor().get_chat_page(snapshot, int(raw_offset))
+    except ChatSnapshotExpired:
+        return jsonify({"error": "Chat list expired"}), 410
+
+    html = await render_template("partials/chat_cards.html.j2", chats=page.chats)
+    return jsonify(
+        {"html": html, "snapshot": page.snapshot, "next_offset": page.next_offset}
+    )
 
 
 @chat_bp.route("/actions")
