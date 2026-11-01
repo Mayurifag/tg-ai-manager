@@ -15,13 +15,12 @@
     <div><h1>Chats</h1><p>Unread first · Your Telegram conversations</p></div>
     <button id="refresh-chats" class="secondary-button" type="button">Refresh</button>
 </header>
-<div class="chat-list" id="chat-list-container" aria-busy="true">
-    {% for _ in range(6) %}<div class="chat-skeleton" aria-hidden="true"><span></span><div></div></div>{% endfor %}
+<div class="chat-list" id="chat-list-container" aria-busy="false">
+    {% for chat in page.chats %}{% include "partials/chat_card_wrapper.html.j2" %}{% endfor %}
 </div>
 <button id="load-more-chats" class="load-more-chats" type="button"
-    data-snapshot="" data-next-offset="0">Load more chats</button>
-<div id="chat-list-status" class="chat-list-status" role="status" aria-live="polite">Loading chats…</div>
-<noscript>Enable JavaScript to load your Telegram chats.</noscript>
+    data-snapshot="{{ page.snapshot }}" data-next-offset="{{ page.next_offset if page.next_offset is not none else '' }}"{% if page.next_offset is none %} hidden{% endif %}>Load more chats</button>
+<div id="chat-list-status" class="chat-list-status" role="status" aria-live="polite">{% if not page.chats %}No chats yet.{% endif %}</div>
 
 {% endblock %}
 

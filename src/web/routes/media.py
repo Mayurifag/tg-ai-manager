@@ -1,13 +1,14 @@
 import os
 
-from quart import Blueprint, redirect, send_file, send_from_directory
+from quart import Blueprint, abort, redirect, send_file, send_from_directory
 
 from src.container import _get_tg_adapter, get_chat_interactor
+from src.config import get_cache_dir
 
 media_bp = Blueprint("media", __name__)
 
 STATIC_DIR = os.path.join(os.getcwd(), "static")
-IMAGES_DIR = os.path.join(os.getcwd(), "cache")
+IMAGES_DIR = get_cache_dir()
 CSS_DIR = os.path.join(STATIC_DIR, "css")
 
 os.makedirs(IMAGES_DIR, exist_ok=True)
@@ -16,7 +17,16 @@ os.makedirs(CSS_DIR, exist_ok=True)
 
 @media_bp.route("/cache/<path:filename>")
 async def serve_images(filename):
-    return await send_from_directory(IMAGES_DIR, filename)
+    adapter = _get_tg_adapter()
+    active_dir = adapter.images_dir
+    prefix = os.path.relpath(active_dir, IMAGES_DIR)
+    if (
+        prefix == "."
+        or prefix.startswith("..")
+        or not filename.startswith(prefix + "/")
+    ):
+        abort(404)
+    return await send_from_directory(active_dir, filename[len(prefix) + 1 :])
 
 
 @media_bp.route("/media/<int(signed=True):chat_id>/<int(signed=True):msg_id>")

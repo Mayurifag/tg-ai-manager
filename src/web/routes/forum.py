@@ -14,6 +14,7 @@ async def forum_view(chat_id: int):
     )
     if not chat:
         abort(404)
+    interactor.prefetch_topics(chat, topics)
     return await render_template(
         "forum/forum.html.j2", chats=topics, chat=chat, parent_id=chat_id
     )

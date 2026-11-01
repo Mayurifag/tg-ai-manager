@@ -140,6 +140,7 @@ def create_app() -> TypedQuart:
         bus = EventBus()
         bus.subscribe(event_repo.add_event)
         bus.subscribe(rule_service.handle_new_message_event)
+        bus.subscribe(interactor.handle_event)
 
         async def _sse_broadcast(event):
             async with app.app_context():
@@ -154,6 +155,9 @@ def create_app() -> TypedQuart:
 
         # 9. Background tasks
         app.managed_tasks.create(rule_service.run_startup_scan(), "startup_scan")
+        app.managed_tasks.create(
+            interactor.run_cache_warmer(shutdown_event), "chat_cache_warmer"
+        )
         app.managed_tasks.create(
             job_telegram_recovery(rule_service, user_repo, shutdown_event),
             "telegram_recovery",

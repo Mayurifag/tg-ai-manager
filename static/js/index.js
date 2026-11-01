@@ -4,7 +4,7 @@ const listStatus = document.getElementById("chat-list-status");
 const updateTimeouts = new Map();
 let loadingChats = false;
 let chatObserver = null;
-let initialLoad = true;
+let initialLoad = false;
 let forceRefresh = false;
 
 function cardGroup(card) {
@@ -99,7 +99,79 @@ if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
   );
   chatObserver.observe(loadMoreButton);
 }
-loadMoreChats();
+
+// Restore the existing list immediately from the browser's back/forward cache,
+// then reconcile in the background without throwing away scroll position.
+window.addEventListener("pageshow", async (event) => {
+  if (!event.persisted || loadingChats) return;
+  loadingChats = true;
+  loadMoreButton.disabled = true;
+  if (chatObserver) chatObserver.unobserve(loadMoreButton);
+  const anchor = Array.from(chatList.children).find(
+    (card) => card.getBoundingClientRect().bottom > 0,
+  );
+  const anchorTop = anchor?.getBoundingClientRect().top;
+  const loadedCount = chatList.children.length;
+  try {
+    let response = await fetch("/api/chats?refresh=1");
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    let page = await response.json();
+    const updated = [];
+    while (true) {
+      const fragment = document.createElement("div");
+      fragment.innerHTML = page.html;
+      updated.push(...fragment.children);
+      if (updated.length >= loadedCount || page.next_offset === null) break;
+      const params = new URLSearchParams({
+        snapshot: page.snapshot,
+        offset: page.next_offset,
+      });
+      response = await fetch(`/api/chats?${params}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      page = await response.json();
+    }
+    const seen = new Set();
+    for (const card of updated) {
+      seen.add(card.dataset.chatId);
+      window.parseAppleEmojis(card);
+      const current = findCard(card.dataset.chatId);
+      if (current && current.outerHTML === card.outerHTML) {
+        chatList.append(current);
+      } else {
+        if (current) current.remove();
+        chatList.append(card);
+      }
+    }
+    if (page.next_offset === null) {
+      for (const card of Array.from(chatList.children)) {
+        if (!seen.has(card.dataset.chatId)) card.remove();
+      }
+    } else {
+      for (const card of Array.from(chatList.children)) {
+        if (!seen.has(card.dataset.chatId)) chatList.append(card);
+      }
+    }
+    loadMoreButton.dataset.snapshot = page.snapshot;
+    loadMoreButton.dataset.nextOffset = page.next_offset ?? "";
+    loadMoreButton.hidden = page.next_offset === null;
+    listStatus.textContent = chatList.children.length ? "" : "No chats yet.";
+    if (anchor && anchorTop !== undefined) {
+      const restoredAnchor = findCard(anchor.dataset.chatId);
+      if (restoredAnchor)
+        window.scrollBy(
+          0,
+          restoredAnchor.getBoundingClientRect().top - anchorTop,
+        );
+    }
+  } catch (error) {
+    console.error("Could not refresh chats after returning:", error);
+  } finally {
+    loadingChats = false;
+    loadMoreButton.disabled = false;
+    if (chatObserver && !loadMoreButton.hidden)
+      chatObserver.observe(loadMoreButton);
+  }
+});
 
 chatList.addEventListener("click", async (event) => {
   const button = event.target.closest(".mark-read-btn");

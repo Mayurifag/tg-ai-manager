@@ -33,7 +33,7 @@ async def login_page():
 @auth_bp.route("/api/auth/qr/start", methods=["POST"])
 async def qr_start():
     try:
-        reload_tg_adapter(session_string=None)  # type: ignore
+        await reload_tg_adapter(session_string=None)
         adapter = _get_tg_adapter()
 
         url = await adapter.start_qr_login()

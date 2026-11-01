@@ -391,9 +391,28 @@ const container = document.getElementById("messages-container");
 const currentTopicId = topicId;
 let isLoading = false;
 let allLoaded = false;
+let prefetchedHistory = null;
+
+function historyUrl(offsetId) {
+  let url = `/api/chat/${chatId}/history?offset_id=${offsetId}`;
+  if (currentTopicId) url += `&topic_id=${currentTopicId}`;
+  return url;
+}
+
+function prefetchOlderMessages() {
+  const messages = container.querySelectorAll("[data-oldest-id]");
+  if (allLoaded || !messages.length) return;
+  const offsetId = messages[messages.length - 1].dataset.oldestId;
+  if (prefetchedHistory?.offsetId === offsetId) return;
+  const promise = requestOk(historyUrl(offsetId))
+    .then((response) => response.json())
+    .catch(() => null);
+  prefetchedHistory = { offsetId, promise };
+}
 
 requestAnimationFrame(() => {
   window.scrollTo(0, document.documentElement.scrollHeight);
+  prefetchOlderMessages();
   if (document.documentElement.scrollHeight <= window.innerHeight + 100)
     loadOlderMessages();
 });
@@ -423,11 +442,15 @@ async function loadOlderMessages() {
   const offsetId = oldestMsg.dataset.oldestId;
 
   try {
-    let url = `/api/chat/${chatId}/history?offset_id=${offsetId}`;
-    if (currentTopicId) url += `&topic_id=${currentTopicId}`;
-
-    const response = await requestOk(url);
-    const data = await response.json();
+    let data =
+      prefetchedHistory?.offsetId === offsetId
+        ? await prefetchedHistory.promise
+        : null;
+    prefetchedHistory = null;
+    if (!data) {
+      const response = await requestOk(historyUrl(offsetId));
+      data = await response.json();
+    }
 
     if (data.count === 0) {
       allLoaded = true;
@@ -440,6 +463,7 @@ async function loadOlderMessages() {
       window.renderLocalTimes(fragment);
       while (fragment.firstChild) container.appendChild(fragment.firstChild);
       window.scrollBy(0, oldestMsg.getBoundingClientRect().top - previousTop);
+      prefetchOlderMessages();
     }
   } catch (error) {
     console.error("Failed to load history:", error);

@@ -181,38 +181,41 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const feedContainer = document.getElementById("event-feed-list");
-  const evtSource = new EventSource("/api/events/stream");
+  let evtSource;
 
-  evtSource.onmessage = function (e) {
-    const data = JSON.parse(e.data);
-    const customEvent = new CustomEvent("tg:event", { detail: data });
-    document.dispatchEvent(customEvent);
+  function connectEvents() {
+    evtSource = new EventSource("/api/events/stream");
 
-    if (data.type === "read" || data.type === "edited") return;
+    evtSource.onmessage = function (e) {
+      const data = JSON.parse(e.data);
+      const customEvent = new CustomEvent("tg:event", { detail: data });
+      document.dispatchEvent(customEvent);
 
-    if (feedContainer) {
-      const emptyMsg = feedContainer.querySelector(".empty-feed");
-      if (emptyMsg) emptyMsg.remove();
+      if (data.type === "read" || data.type === "edited") return;
 
-      const item = document.createElement("div");
-      item.className = `event-item type-${data.type}`;
+      if (feedContainer) {
+        const emptyMsg = feedContainer.querySelector(".empty-feed");
+        if (emptyMsg) emptyMsg.remove();
 
-      let iconHtml = "";
-      if (data.type === "deleted")
-        iconHtml = '<span class="event-type-icon">🗑️</span>';
-      else if (data.type === "action")
-        iconHtml = '<span class="event-type-icon">⚡</span>';
-      else if (data.type === "reaction_update")
-        iconHtml = '<span class="event-type-icon">👍</span>';
+        const item = document.createElement("div");
+        item.className = `event-item type-${data.type}`;
 
-      let chatLabel = data.chat_name;
-      if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
-      const linkHref = data.link || "#";
-      const debugJson = isDebug
-        ? window.TG.escapeHtml(JSON.stringify(data, null, 2))
-        : "";
+        let iconHtml = "";
+        if (data.type === "deleted")
+          iconHtml = '<span class="event-type-icon">🗑️</span>';
+        else if (data.type === "action")
+          iconHtml = '<span class="event-type-icon">⚡</span>';
+        else if (data.type === "reaction_update")
+          iconHtml = '<span class="event-type-icon">👍</span>';
 
-      item.innerHTML = `
+        let chatLabel = data.chat_name;
+        if (data.topic_name) chatLabel = `${data.topic_name} - ${chatLabel}`;
+        const linkHref = data.link || "#";
+        const debugJson = isDebug
+          ? window.TG.escapeHtml(JSON.stringify(data, null, 2))
+          : "";
+
+        item.innerHTML = `
                 <div class="event-header">
                     ${iconHtml}
                     <a href="${window.TG.escapeHtml(linkHref)}" class="event-chat-link" title="${window.TG.escapeHtml(chatLabel)}">${window.TG.escapeHtml(chatLabel)}</a>
@@ -222,11 +225,45 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
             `;
 
-      window.parseAppleEmojis(item);
-      feedContainer.insertBefore(item, feedContainer.firstChild);
+        window.parseAppleEmojis(item);
+        feedContainer.insertBefore(item, feedContainer.firstChild);
 
-      const items = feedContainer.querySelectorAll(".event-item");
-      if (items.length > 10) items[items.length - 1].remove();
+        const items = feedContainer.querySelectorAll(".event-item");
+        if (items.length > 10) items[items.length - 1].remove();
+      }
+    };
+  }
+  connectEvents();
+  window.addEventListener("pagehide", () => evtSource.close());
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) connectEvents();
+  });
+
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest("a.back-link");
+    if (
+      !link ||
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    try {
+      const previous = new URL(document.referrer);
+      const target = new URL(link.href);
+      if (
+        history.length > 1 &&
+        previous.origin === target.origin &&
+        previous.pathname === target.pathname
+      ) {
+        event.preventDefault();
+        history.back();
+      }
+    } catch (_) {
+      // Direct visits use the normal link instead.
     }
-  };
+  });
 });

@@ -16,9 +16,8 @@ def bad_request(error: BadRequest):
 
 @chat_bp.route("/")
 async def index():
-    # Render navigation immediately; Telegram's complete dialog scan is loaded
-    # separately so a slow RPC never leaves the browser on the previous page.
-    return await render_template("index/index.html.j2")
+    page = await get_chat_interactor().get_chat_page()
+    return await render_template("index/index.html.j2", page=page)
 
 
 @chat_bp.route("/api/chats")
