@@ -1,0 +1,182 @@
+.chat-profile {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.chat-profile-avatar {
+  display: block;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin: 0 auto 10px;
+}
+.chat-profile-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 2rem;
+}
+.chat-profile h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+.chat-profile p {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.history-status,
+.empty-messages {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 1rem;
+}
+
+.forwarded-from,
+.attachment-detail {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+.message-bubble .text a {
+  color: var(--text-accent);
+}
+.message-bubble .text blockquote {
+  margin: 0.65rem 0;
+  padding: 0.15rem 0.8rem;
+  border-left: 3px solid var(--text-accent);
+  color: var(--text-primary);
+  background: var(--quote-surface);
+}
+.message-bubble .text pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-inset);
+  padding: 0.7rem;
+  border-radius: 6px;
+}
+
+.media-content {
+  margin-bottom: 0.5rem;
+}
+.media-image-button {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: transparent;
+  cursor: zoom-in;
+}
+.inline-media,
+.message-video {
+  display: block;
+  width: auto;
+  max-width: min(100%, 520px);
+  max-height: 480px;
+  border-radius: 8px;
+}
+.message-sticker {
+  display: block;
+  max-width: min(100%, 240px);
+  max-height: 240px;
+}
+.album-grid {
+  width: min(100%, 500px);
+  min-width: min(55vw, 320px);
+}
+.album-item .media-image-button,
+.album-item video {
+  width: 100%;
+  height: 100%;
+}
+.album-item video {
+  object-fit: cover;
+}
+
+.audio-player,
+.poll-content,
+.file-attachment,
+.webpage-preview {
+  display: block;
+  padding: 0.7rem;
+  margin: 0.5rem 0;
+  border-radius: 8px;
+  background: var(--surface-inset);
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.attachment-title {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.audio-player audio {
+  display: block;
+  width: min(100%, 320px);
+  margin-top: 0.5rem;
+}
+.poll-option {
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  margin-top: 0.4rem;
+}
+.file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  text-decoration: none;
+}
+.file-attachment small,
+.webpage-preview span {
+  display: block;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+.webpage-preview {
+  text-decoration: none;
+}
+.webpage-preview strong {
+  color: var(--text-accent);
+}
+.webpage-preview:hover,
+.file-attachment:hover {
+  background: var(--surface-hover);
+}
+.reactions-container:empty {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .actions-grid {
+    grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  }
+  .chat-actions-container {
+    margin-top: 8px;
+  }
+  .message-bubble {
+    max-width: calc(100% - 44px);
+  }
+  .message-row.outgoing .message-bubble {
+    max-width: 90%;
+  }
+  .hover-reaction,
+  .debug-process {
+    position: static;
+    display: inline-flex;
+    opacity: 1;
+    margin-top: 0.35rem;
+    box-shadow: none;
+  }
+  .message-bubble:hover .hover-reaction,
+  .message-bubble:hover .debug-process {
+    transform: none;
+  }
+}

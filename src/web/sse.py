@@ -25,7 +25,15 @@ async def broadcast_event(event: SystemEvent):
             chat_id=event.chat_id,
         )
 
-    data = json.dumps(asdict(event), default=json_serializer)
+    payload = asdict(event)
+    message = payload.get("message_model")
+    if message:
+        # Telegram document IDs are 64-bit; JavaScript numbers cannot represent
+        # every value exactly. Keep emoji IDs as strings in live updates.
+        for reaction in message["reactions"]:
+            if reaction["custom_emoji_id"] is not None:
+                reaction["custom_emoji_id"] = str(reaction["custom_emoji_id"])
+    data = json.dumps(payload, default=json_serializer)
 
     for queue in connected_queues:
         await queue.put(data)

@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import os
 from typing import Any, Optional
 
@@ -19,6 +20,7 @@ class MediaManager:
     def __init__(self, client: Any, images_dir: str) -> None:
         self.client = client
         self.images_dir = images_dir
+        self._downloads: dict[tuple[int, int, str], asyncio.Task[Optional[str]]] = {}
 
     def _get_avatar_path(self, chat_id: int) -> str:
         return os.path.join(self.images_dir, f"{chat_id}.jpg")
@@ -142,7 +144,31 @@ class MediaManager:
     async def download_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"
     ) -> Optional[str]:
+        key = (chat_id, message_id, size_type)
+        task = self._downloads.get(key)
+        if task is None:
+            task = asyncio.create_task(
+                self._download_media(chat_id, message_id, size_type)
+            )
+            self._downloads[key] = task
+            task.add_done_callback(lambda _: self._downloads.pop(key, None))
+        # A disconnected browser must not cancel a download shared by another request.
+        return await asyncio.shield(task)
+
+    async def _download_media(
+        self, chat_id: int, message_id: int, size_type: str
+    ) -> Optional[str]:
         try:
+            suffix = "_full" if size_type == "full" else ""
+            pattern = os.path.join(
+                self.images_dir, f"media_{chat_id}_{message_id}{suffix}.*"
+            )
+            cached = next(
+                (path for path in glob.iglob(pattern) if os.path.isfile(path)), None
+            )
+            if cached:
+                return f"/cache/{os.path.basename(cached)}"
+
             entity = await self.client.get_entity(chat_id)
             messages = await self.client.get_messages(entity, ids=[message_id])
             if not messages:
@@ -168,7 +194,6 @@ class MediaManager:
                     elif "video/mp4" in message.media.document.mime_type:
                         ext = "mp4"
 
-            suffix = "_full" if size_type == "full" else ""
             filename = f"media_{chat_id}_{message_id}{suffix}.{ext}"
             path = os.path.join(self.images_dir, filename)
 

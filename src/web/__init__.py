@@ -6,6 +6,7 @@ import sys
 # Alembic Imports
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from jinja2 import select_autoescape
 from src.web.types import TypedQuart
 
 from src.adapters.telegram import TelethonAdapter
@@ -73,6 +74,10 @@ def create_app() -> TypedQuart:
     root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 
     app = TypedQuart(__name__, root_path=root_path, template_folder="src/templates")
+    # Quart's default recognizes .html, but not the project's .html.j2 files.
+    app.jinja_env.autoescape = select_autoescape(
+        enabled_extensions=("html", "htm", "xml", "xhtml", "svg", "html.j2")
+    )
 
     # Register filters
     file_mtime_filter(app)
@@ -199,8 +204,10 @@ def create_app() -> TypedQuart:
         interactor = typed_app.chat_interactor
         user_repo = typed_app.user_repo
 
-        events = await interactor.get_recent_events()
         user = await user_repo.get_user(1)
+        events = (
+            await interactor.get_recent_events() if user and user.debug_mode else []
+        )
 
         return {"recent_events": events, "current_user": user}
 

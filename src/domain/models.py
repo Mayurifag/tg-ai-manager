@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from html import escape as html_escape
 from typing import List, Optional
 
 
@@ -51,9 +52,17 @@ class Message:
     reply_to_sender_name: Optional[str] = None
     # Media fields
     has_media: bool = False
+    is_photo: bool = False
     is_video: bool = False
     is_sticker: bool = False
     sticker_emoji: Optional[str] = None
+    is_document: bool = False
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    webpage_url: Optional[str] = None
+    webpage_title: Optional[str] = None
+    webpage_description: Optional[str] = None
+    forwarded_from: Optional[str] = None
     # Audio fields
     is_audio: bool = False
     is_voice: bool = False
@@ -63,6 +72,7 @@ class Message:
     # Poll fields
     is_poll: bool = False
     poll_question: Optional[str] = None
+    poll_options: List[str] = field(default_factory=list)
     # Service Messages
     is_service: bool = False
     # Reactions
@@ -78,7 +88,7 @@ class Message:
 
         if self.has_media:
             if self.is_sticker:
-                return f"{self.sticker_emoji or ''} Sticker"
+                return f"{html_escape(self.sticker_emoji or '')} Sticker"
             elif self.is_video:
                 return "📹 Video"
             elif self.is_audio:
@@ -86,9 +96,15 @@ class Message:
                     return "🎤 Voice"
                 performer = self.audio_performer or ""
                 title = self.audio_title or "Music"
-                return f"🎵 {performer} - {title}" if performer else f"🎵 {title}"
+                return html_escape(
+                    f"🎵 {performer} - {title}" if performer else f"🎵 {title}"
+                )
             elif self.is_poll:
-                return f"Poll: {self.poll_question or 'Unknown Poll'}"
+                return html_escape(f"Poll: {self.poll_question or 'Unknown Poll'}")
+            elif self.is_document:
+                return html_escape(f"📄 {self.file_name or 'File'}")
+            elif self.webpage_title:
+                return html_escape(self.webpage_title)
             elif self.album_parts:
                 return "📷 Album"
             return "📷 Media"

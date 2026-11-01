@@ -191,24 +191,18 @@ class ChatQueryOps:
                     dialog = res.dialogs[0]
                     unread_count = dialog.unread_count
                     is_pinned = dialog.pinned
-            except Exception as e:
-                logger.warning(
-                    "fetch_dialog_stats_failed", chat_id=chat_id, error=str(e)
-                )
-
-            try:
-                messages = await self.client.get_messages(entity, limit=1)
-                if messages:
-                    latest_msg = messages[0]
-                    self._parser._cache_message_chat(latest_msg.id, chat_id)
+                    latest_msg = next(
+                        (msg for msg in res.messages if msg.id == dialog.top_message),
+                        None,
+                    )
+                    if latest_msg:
+                        self._parser._cache_message_chat(latest_msg.id, chat_id)
                     last_message_preview = format_message_preview(
                         latest_msg, c_type, {}
                     )
-                else:
-                    last_message_preview = "No messages"
             except Exception as e:
                 logger.warning(
-                    "fetch_latest_message_failed", chat_id=chat_id, error=str(e)
+                    "fetch_dialog_stats_failed", chat_id=chat_id, error=str(e)
                 )
 
             return Chat(
@@ -234,7 +228,7 @@ class ChatQueryOps:
         ids: Optional[List[int]] = None,
     ) -> List[Message]:
         try:
-            entity = await self.client.get_entity(chat_id)
+            entity = await self.client.get_input_entity(chat_id)
             messages = await self.client.get_messages(
                 entity, limit=limit, reply_to=topic_id, offset_id=offset_id, ids=ids
             )
@@ -249,10 +243,10 @@ class ChatQueryOps:
                     if rid:
                         reply_ids.append(rid)
 
-            replies_map = {}
+            replies_map = {msg.id: msg for msg in messages if msg}
+            reply_ids = [rid for rid in set(reply_ids) if rid not in replies_map]
             if reply_ids:
                 try:
-                    reply_ids = list(set(reply_ids))
                     replied_msgs = await self.client.get_messages(entity, ids=reply_ids)
                     for r in replied_msgs:
                         if r:

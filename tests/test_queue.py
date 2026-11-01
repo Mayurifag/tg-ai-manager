@@ -1,10 +1,57 @@
 """Tests for TelegramWriteQueue."""
 
 import asyncio
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from telethon import errors, types
+
+from src.adapters.telegram.write_ops import WriteOps
 import src.infrastructure.telegram_queue as tq_module
 from src.infrastructure.telegram_queue import TelegramWriteQueue
+
+
+async def test_reaction_toggle_preserves_other_chosen_reactions():
+    current = types.MessageReactions(
+        results=[
+            types.ReactionCount(
+                reaction=types.ReactionEmoji(emoticon="👍"), count=1, chosen_order=0
+            ),
+            types.ReactionCount(
+                reaction=types.ReactionCustomEmoji(document_id=123),
+                count=1,
+                chosen_order=1,
+            ),
+        ]
+    )
+    client = AsyncMock()
+    client.get_entity.return_value = "peer"
+    client.get_messages.side_effect = [[SimpleNamespace(reactions=current)], []]
+
+    async def execute(operation):
+        await operation()
+
+    queue = SimpleNamespace(enqueue=AsyncMock(side_effect=execute))
+    ops = WriteOps(client, MagicMock(), queue, None, AsyncMock())
+    await ops.send_reaction(1, 2, "👍")
+    request = client.await_args.args[0]
+    assert len(request.reaction) == 1
+    assert request.reaction[0].document_id == 123
+
+
+async def test_reaction_flood_wait_reaches_write_queue():
+    client = AsyncMock(side_effect=errors.FloodWaitError(request=None, capture=3))
+    client.get_entity.return_value = "peer"
+    client.get_messages.return_value = [SimpleNamespace(reactions=None)]
+
+    async def execute(operation):
+        await operation()
+
+    queue = SimpleNamespace(enqueue=AsyncMock(side_effect=execute))
+    ops = WriteOps(client, MagicMock(), queue, None, AsyncMock())
+    with pytest.raises(errors.FloodWaitError):
+        await ops.send_reaction(1, 2, "👍")
 
 
 async def test_enqueued_ops_run_in_order():

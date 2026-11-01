@@ -4,6 +4,8 @@ const listStatus = document.getElementById("chat-list-status");
 const updateTimeouts = new Map();
 let loadingChats = false;
 let chatObserver = null;
+let initialLoad = true;
+let forceRefresh = false;
 
 function cardGroup(card) {
   const unread = card.dataset.isUnread === "true";
@@ -33,16 +35,23 @@ async function loadMoreChats() {
   if (chatObserver) chatObserver.unobserve(loadMoreButton);
 
   try {
-    const params = new URLSearchParams({
-      snapshot: loadMoreButton.dataset.snapshot,
-      offset: loadMoreButton.dataset.nextOffset,
-    });
+    const params = new URLSearchParams();
+    if (loadMoreButton.dataset.snapshot) {
+      params.set("snapshot", loadMoreButton.dataset.snapshot);
+      params.set("offset", loadMoreButton.dataset.nextOffset);
+    }
+    if (forceRefresh) params.set("refresh", "1");
     let response = await fetch(`/api/chats?${params}`);
     // A restart or an expired snapshot should not strand a long-lived page.
     if (response.status === 410) response = await fetch("/api/chats");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const page = await response.json();
+    forceRefresh = false;
+    if (initialLoad) {
+      chatList.replaceChildren();
+      initialLoad = false;
+    }
     const fragment = document.createElement("div");
     fragment.innerHTML = page.html;
     for (const card of Array.from(fragment.children)) {
@@ -56,7 +65,7 @@ async function loadMoreChats() {
     loadMoreButton.dataset.nextOffset = page.next_offset ?? "";
     loadMoreButton.hidden = page.next_offset === null;
     loadMoreButton.textContent = "Load more chats";
-    listStatus.textContent = "";
+    listStatus.textContent = chatList.children.length ? "" : "No chats yet.";
     // Re-observe even if the button never left the viewport, such as when
     // duplicates were skipped or the page is shorter than the screen.
     if (chatObserver && !loadMoreButton.hidden)
@@ -68,10 +77,19 @@ async function loadMoreChats() {
   } finally {
     loadingChats = false;
     loadMoreButton.disabled = false;
+    chatList.setAttribute("aria-busy", "false");
   }
 }
 
 loadMoreButton.addEventListener("click", loadMoreChats);
+document.getElementById("refresh-chats").addEventListener("click", () => {
+  if (loadingChats) return;
+  initialLoad = true;
+  forceRefresh = true;
+  loadMoreButton.dataset.snapshot = "";
+  loadMoreButton.hidden = false;
+  loadMoreChats();
+});
 if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
   chatObserver = new IntersectionObserver(
     (entries) => {
@@ -81,6 +99,7 @@ if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
   );
   chatObserver.observe(loadMoreButton);
 }
+loadMoreChats();
 
 chatList.addEventListener("click", async (event) => {
   const button = event.target.closest(".mark-read-btn");
@@ -148,6 +167,7 @@ function reloadCard(chatId) {
 
 document.addEventListener("tg:event", (event) => {
   const data = event.detail;
+  if (initialLoad) return;
   if (!data.chat_id) return;
 
   if (
@@ -155,7 +175,7 @@ document.addEventListener("tg:event", (event) => {
     data.type === "deleted" ||
     data.type === "edited"
   ) {
-    reloadCard(data.chat_id);
+    if (findCard(data.chat_id)) reloadCard(data.chat_id);
     return;
   }
   if (data.type !== "message") return;
@@ -170,7 +190,9 @@ document.addEventListener("tg:event", (event) => {
   const previousGroup = cardGroup(wrapper);
   const preview = card.querySelector(".preview");
   if (preview) {
-    preview.textContent = data.text;
+    const plainText = document.createElement("div");
+    plainText.innerHTML = data.text;
+    preview.textContent = plainText.textContent;
     window.parseAppleEmojis(preview);
   }
 

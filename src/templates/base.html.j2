@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <meta name="supported-color-scheme" content="dark">
     <title>{% block title %}Telegram Manager{% endblock %}</title>
@@ -12,7 +13,7 @@
     {% block head_extra %}{% endblock %}
 </head>
 
-<body>
+<body{% if current_user and current_user.debug_mode %} class="debug-layout"{% endif %}>
     <div class="app-container">
         <!-- LEFT SIDEBAR -->
         <aside class="sidebar left-sidebar">
@@ -108,11 +109,11 @@
 
     <!-- Lightbox Modal -->
     <div id="lightbox" onclick="closeLightbox()">
-        <div class="lightbox-close" onclick="closeLightbox()">&times;</div>
-        <button class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">&#10094;</button>
-        <button class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)">&#10095;</button>
+        <button type="button" class="lightbox-close" onclick="closeLightbox()" aria-label="Close photo">&times;</button>
+        <button type="button" class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)" aria-label="Previous photo">&#10094;</button>
+        <button type="button" class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)" aria-label="Next photo">&#10095;</button>
         <div id="lightbox-loading">Loading full size...</div>
-        <img id="lightbox-img" src="" alt="Full View" onclick="event.stopPropagation()">
+        <img id="lightbox-img" alt="Full View" onclick="event.stopPropagation()">
     </div>
 
     <script>
