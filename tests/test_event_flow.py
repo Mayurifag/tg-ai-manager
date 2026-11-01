@@ -7,9 +7,10 @@ a real Telegram connection or Quart app context.
 """
 
 import asyncio
+import json
 from datetime import datetime
 
-from src.domain.models import SystemEvent
+from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.event_bus import EventBus
 
 
@@ -155,6 +156,38 @@ async def test_sse_queue_subscriber_receives_event():
     item = sse_queue.get_nowait()
     assert item is event
     assert item.text == "sse-test"
+
+
+async def test_sse_preserves_64_bit_custom_emoji_id():
+    from src.web.sse import broadcast_event, connected_queues
+
+    queue = asyncio.Queue()
+    connected_queues.add(queue)
+    message = Message(
+        id=1,
+        text="",
+        date=datetime.now(),
+        sender_name="Sender",
+        is_outgoing=False,
+        reactions=[
+            Reaction(
+                emoji="⭐", count=1, is_chosen=True, custom_emoji_id=9223372036854775807
+            )
+        ],
+    )
+    try:
+        await broadcast_event(
+            SystemEvent(
+                type="reaction_update", text="", chat_name="Chat", message_model=message
+            )
+        )
+        payload = json.loads(await queue.get())
+        assert (
+            payload["message_model"]["reactions"][0]["custom_emoji_id"]
+            == "9223372036854775807"
+        )
+    finally:
+        connected_queues.remove(queue)
 
 
 async def test_sse_queue_receives_exactly_one_event_per_dispatch():

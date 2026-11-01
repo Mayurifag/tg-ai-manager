@@ -33,21 +33,6 @@ class ForumOps:
             logger.error("fetch_topics_failed", error=str(e))
             return None
 
-    async def _get_top_messages_map(
-        self, entity: Any, top_message_ids: List[int]
-    ) -> Dict[int, Any]:
-        messages_map = {}
-        if top_message_ids:
-            try:
-                msgs = await self.client.get_messages(entity, ids=top_message_ids)
-                if msgs:
-                    for m in msgs:
-                        if m:
-                            messages_map[m.id] = m
-            except Exception:
-                pass
-        return messages_map
-
     async def get_forum_topics(self, chat_id: int, limit: int = 20) -> List[Chat]:
         try:
             entity = await self.client.get_entity(chat_id)
@@ -60,8 +45,8 @@ class ForumOps:
                 t for t in response.topics if not isinstance(t, types.ForumTopicDeleted)
             ]
 
-            top_message_ids = [t.top_message for t in valid_topics]
-            messages_map = await self._get_top_messages_map(entity, top_message_ids)
+            # GetForumTopics already includes the topic previews and senders.
+            messages_map = {msg.id: msg for msg in response.messages}
             for t in valid_topics:
                 last_msg = messages_map.get(t.top_message)
                 preview = format_message_preview(last_msg, ChatType.TOPIC)

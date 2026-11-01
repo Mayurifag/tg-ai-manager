@@ -1,157 +1,99 @@
 {% for msg in messages %}
-
 {% if msg.is_service %}
-<div class="service-message-row" id="msg-{{ msg.id }}" data-id="{{ msg.id }}">
-    <div class="service-message-bubble">
-        {{ msg.sender_name }} {{ msg.text }}
-    </div>
+<div class="service-message-row" id="msg-{{ msg.id }}" data-id="{{ msg.id }}" data-oldest-id="{{ msg.id }}">
+    <div class="service-message-bubble">{{ msg.sender_name }} {{ msg.text | safe }}</div>
 </div>
 {% else %}
-<div class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}" id="msg-{{ msg.id }}"
-    data-id="{{ msg.id }}">
+<article class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}" id="msg-{{ msg.id }}"
+    data-id="{{ msg.id }}" data-oldest-id="{{ msg.album_parts[0].id if msg.album_parts else msg.id }}">
     {% if not msg.is_outgoing %}
-    <div class="message-avatar"
-        style="width: 35px; height: 35px; min-width: 35px; margin-right: 8px; border-radius: 50%; overflow: hidden; flex-shrink: 0;">
+    <div class="message-avatar">
         {% if msg.avatar_url %}
-        <img src="{{ msg.avatar_url }}" alt="{{ msg.sender_initials }}"
-            style="width: 100%; height: 100%; object-fit: cover; display: block;">
+        <img src="{{ msg.avatar_url }}" alt="" loading="lazy">
         {% else %}
-        <div class="avatar-placeholder"
-            style="background-color: {{ msg.sender_color or '#ccc' }}; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; font-weight: bold; text-transform: uppercase;">
-            {{ msg.sender_initials or '?' }}
-        </div>
+        <div class="avatar-placeholder" style="background-color: {{ msg.sender_color or 'var(--surface-border)' }}">{{ msg.sender_initials or '?' }}</div>
         {% endif %}
     </div>
     {% endif %}
-
     <div class="message-bubble">
-        {% if not msg.is_outgoing and msg.sender_name %}
-        <span class="sender">{{ msg.sender_name }}</span>
-        {% endif %}
+        {% if not msg.is_outgoing and msg.sender_name %}<span class="sender">{{ msg.sender_name }}</span>{% endif %}
+        {% if msg.forwarded_from %}<div class="forwarded-from">Forwarded from {{ msg.forwarded_from }}</div>{% endif %}
 
         {% if msg.reply_to_msg_id %}
         <a href="#msg-{{ msg.reply_to_msg_id }}" class="reply-indicator">
-            <div class="reply-content">
-                <div class="reply-name">{{ msg.reply_to_sender_name or 'Unknown' }}</div>
-                <div class="reply-text">{{ msg.reply_to_text or 'Message unavailable' }}</div>
-            </div>
+            <span class="reply-name">{{ msg.reply_to_sender_name or 'Reply' }}</span>
+            <span class="reply-text">{{ msg.reply_to_text or 'Message unavailable' }}</span>
         </a>
         {% endif %}
 
         {% if msg.album_parts %}
-        <div class="media-content">
-            {% set count = msg.album_parts | length %}
-            {% set grid_class = 'items-more' %}
-            {% if count == 1 %}{% set grid_class = 'items-1' %}
-            {% elif count == 2 %}{% set grid_class = 'items-2' %}
-            {% elif count == 3 %}{% set grid_class = 'items-3' %}
-            {% elif count == 4 %}{% set grid_class = 'items-4' %}
-            {% endif %}
-
-            <div class="album-grid {{ grid_class }}">
-                {% for part in msg.album_parts %}
-                <div class="album-item">
-                    {% if part.is_video %}
-                    <video controls preload="metadata" style="width: 100%; height: 100%; object-fit: cover;">
-                        <source src="/media/{{ chat_id }}/{{ part.id }}">
-                    </video>
-                    {% else %}
-                    <img src="/media/{{ chat_id }}/{{ part.id }}" class="lightbox-trigger"
-                        data-full-src="/media/{{ chat_id }}/{{ part.id }}/full" onclick="openLightbox(this)"
-                        loading="lazy">
-                    {% endif %}
-                </div>
-                {% endfor %}
+        {% set count = msg.album_parts | length %}
+        <div class="media-content album-grid {{ 'items-' ~ count if count <= 4 else 'items-more' }}">
+            {% for part in msg.album_parts %}
+            <div class="album-item">
+                {% if part.is_video %}
+                <video controls preload="none"><source src="/media/{{ chat_id }}/{{ part.id }}"></video>
+                {% elif part.is_photo %}
+                <button type="button" class="media-image-button" aria-label="Open photo" onclick="openLightbox(this.firstElementChild)">
+                    <img src="/media/{{ chat_id }}/{{ part.id }}" class="lightbox-trigger" data-full-src="/media/{{ chat_id }}/{{ part.id }}/full" loading="lazy" alt="Photo">
+                </button>
+                {% else %}
+                <a class="file-attachment" href="/media/{{ chat_id }}/{{ part.id }}/full">{{ part.file_name or 'Open attachment' }}</a>
+                {% endif %}
             </div>
+            {% endfor %}
         </div>
-
-        {% elif msg.has_media %}
-        <div class="media-content" style="margin-bottom: 5px;">
-            {% if msg.is_video %}
-            <video controls preload="metadata"
-                style="max-width: 100%; border-radius: 8px; max-height: 400px; display: block;">
-                <source src="/media/{{ chat_id }}/{{ msg.id }}">
-            </video>
-
-            {% elif msg.is_sticker %}
-            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy"
-                style="max-width: 300px; max-height: 300px; display: block;" alt="Sticker">
-
-            {% elif msg.is_audio %}
-            <div class="audio-player"
-                style="background: rgba(0,0,0,0.05); padding: 8px; border-radius: 8px; min-width: 250px;">
-                <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                    <span style="font-size: 1.5rem; margin-right: 10px;">
-                        {{ '🎤' if msg.is_voice else '🎵' }}
-                    </span>
-                    <div style="overflow: hidden;">
-                        {% if msg.audio_title or msg.audio_performer %}
-                        <div style="font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            {{ msg.audio_title or 'Unknown Title' }}</div>
-                        <div
-                            style="font-size: 0.8rem; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            {{ msg.audio_performer or 'Unknown Artist' }}</div>
-                        {% else %}
-                        <div style="font-weight: bold;">Audio File</div>
-                        {% endif %}
-                    </div>
-                </div>
-                <audio controls preload="none" style="width: 100%; height: 30px;">
-                    <source src="/media/{{ chat_id }}/{{ msg.id }}">
-                </audio>
-            </div>
-
-            {% elif msg.is_poll %}
-            <div class="poll-content"
-                style="background: #f0f4f7; padding: 10px; border-radius: 8px; border: 1px solid #cfd8dc; color: #37474f; min-width: 250px;">
-                <div style="font-weight: bold; font-size: 1.05rem; margin-bottom: 5px;">🗳️ Poll: {{ msg.poll_question
-                    or 'Unknown Poll' }}</div>
-            </div>
-
-            {% else %}
-            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media lightbox-trigger"
-                data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full"
-                style="max-width: 250px; max-height: 300px; border-radius: 8px; display: block; cursor: pointer;"
-                onclick="openLightbox(this)">
-            {% endif %}
+        {% elif msg.is_video %}
+        <div class="media-content"><video controls preload="none" class="message-video"><source src="/media/{{ chat_id }}/{{ msg.id }}"></video></div>
+        {% elif msg.is_sticker %}
+        <div class="media-content"><img class="message-sticker" src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" alt="{{ msg.sticker_emoji or 'Sticker' }}"></div>
+        {% elif msg.is_photo %}
+        <div class="media-content"><button type="button" class="media-image-button" aria-label="Open photo" onclick="openLightbox(this.firstElementChild)">
+            <img src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" class="inline-media lightbox-trigger" data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full" alt="Photo">
+        </button></div>
+        {% elif msg.is_audio %}
+        <div class="audio-player">
+            <div class="attachment-title">{{ '🎤 Voice message' if msg.is_voice else (msg.audio_title or 'Audio') }}</div>
+            {% if msg.audio_performer %}<div class="attachment-detail">{{ msg.audio_performer }}</div>{% endif %}
+            <audio controls preload="none" src="/media/{{ chat_id }}/{{ msg.id }}"></audio>
         </div>
+        {% elif msg.is_poll %}
+        <div class="poll-content">
+            <div class="attachment-detail">Poll · View only</div>
+            <div class="attachment-title">{{ msg.poll_question or 'Poll' }}</div>
+            {% for option in msg.poll_options %}<div class="poll-option">{{ option }}</div>{% endfor %}
+        </div>
+        {% elif msg.is_document %}
+        <a class="file-attachment" href="/media/{{ chat_id }}/{{ msg.id }}/full">
+            <span aria-hidden="true">📄</span><span><strong>{{ msg.file_name or 'File' }}</strong>{% if msg.file_size is not none %}<small>{{ msg.file_size | filesizeformat }}</small>{% endif %}</span>
+        </a>
+        {% elif msg.has_media and not msg.webpage_url %}
+        <div class="attachment-detail">Unsupported attachment</div>
         {% endif %}
 
-        {% if msg.text %}
-        <div class="text">{{ msg.text | safe }}</div>
+        {% if msg.text %}<div class="text">{{ msg.text | safe }}</div>{% endif %}
+        {% if msg.webpage_url %}
+        <a class="webpage-preview" href="{{ msg.webpage_url }}" target="_blank" rel="noopener noreferrer">
+            <strong>{{ msg.webpage_title or msg.webpage_url }}</strong>
+            {% if msg.webpage_description %}<span>{{ msg.webpage_description }}</span>{% endif %}
+        </a>
         {% endif %}
 
         <div class="reactions-container" id="reactions-{{ msg.id }}">
             {% for r in msg.reactions %}
-            <div class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
-                data-emoji="{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}"
-                onclick="toggleReaction(this, {{ msg.id }}, '{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}')">
-                {% if r.custom_emoji_id %}
-                <img src="/media/custom_emoji/{{ r.custom_emoji_id }}"
-                    style="width: 20px; height: 20px; margin-right: 4px;">
-                {% else %}
-                <span>{{ r.emoji }}&#xFE0F;</span>
-                {% endif %}
+            <button type="button" class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
+                data-msg-id="{{ msg.id }}" data-emoji="{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}"
+                aria-pressed="{{ 'true' if r.is_chosen else 'false' }}" aria-label="React with {{ r.emoji }}">
+                {% if r.custom_emoji_id %}<img src="/media/custom_emoji/{{ r.custom_emoji_id }}" alt="" loading="lazy">
+                {% else %}<span>{{ r.emoji }}</span>{% endif %}
                 <span class="reaction-count">{{ r.count }}</span>
-            </div>
+            </button>
             {% endfor %}
         </div>
-
-        {# --- Hover Poop --- #}
-        <div class="hover-reaction" onclick="toggleReaction(this, {{ msg.id }}, '💩')" title="React with 💩">
-            💩
-        </div>
-
-        {# --- Debug Process Button (Only in Debug Mode) --- #}
-        {% if current_user.debug_mode %}
-        <div class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" title="Dry Run Rules">
-            ⚙️
-        </div>
-        {% endif %}
-
-        <!-- Client-Side Time Rendering -->
-        <div class="time local-time" data-timestamp="{{ msg.date.isoformat() }}"></div>
+        <button type="button" class="hover-reaction" data-msg-id="{{ msg.id }}" data-emoji="💩" aria-label="React with 💩" title="React with 💩">💩</button>
+        {% if current_user and current_user.debug_mode %}<button type="button" class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" aria-label="Dry run rules" title="Dry run rules">⚙️</button>{% endif %}
+        <time class="time local-time" datetime="{{ msg.date.isoformat() }}" data-timestamp="{{ msg.date.isoformat() }}"></time>
     </div>
-</div>
+</article>
 {% endif %}
 {% endfor %}

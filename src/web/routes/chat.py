@@ -1,3 +1,5 @@
+import asyncio
+
 from quart import Blueprint, abort, jsonify, render_template, request
 
 from src.application.interactors import ChatSnapshotExpired
@@ -14,9 +16,9 @@ def bad_request(error: BadRequest):
 
 @chat_bp.route("/")
 async def index():
-    interactor = get_chat_interactor()
-    page = await interactor.get_chat_page()
-    return await render_template("index/index.html.j2", page=page)
+    # Render navigation immediately; Telegram's complete dialog scan is loaded
+    # separately so a slow RPC never leaves the browser on the previous page.
+    return await render_template("index/index.html.j2")
 
 
 @chat_bp.route("/api/chats")
@@ -32,7 +34,9 @@ async def api_chats():
         return jsonify({"error": "Invalid chat page offset"}), 400
 
     try:
-        page = await get_chat_interactor().get_chat_page(snapshot, int(raw_offset))
+        page = await get_chat_interactor().get_chat_page(
+            snapshot, int(raw_offset), refresh=request.args.get("refresh") == "1"
+        )
     except ChatSnapshotExpired:
         return jsonify({"error": "Chat list expired"}), 410
 
@@ -55,14 +59,15 @@ async def chat_view(chat_id: int):
     rule_service = get_rule_service()
     user_repo = get_user_repo()
 
-    chat = await interactor.get_chat(chat_id)
+    chat, messages = await asyncio.gather(
+        interactor.get_chat(chat_id),
+        interactor.get_chat_messages(chat_id, topic_id=None),
+    )
     if not chat:
         abort(404)
 
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
-
-    messages = await interactor.get_chat_messages(chat_id, topic_id=None)
 
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
     ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id)
@@ -95,8 +100,12 @@ async def topic_view(chat_id: int, topic_id: int):
     rule_service = get_rule_service()
     user_repo = get_user_repo()
 
-    chat = await interactor.get_chat(chat_id)
-    messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
+    chat, messages = await asyncio.gather(
+        interactor.get_chat(chat_id),
+        interactor.get_chat_messages(chat_id, topic_id=topic_id),
+    )
+    if not chat:
+        abort(404)
     autoread_enabled = await rule_service.is_autoread_enabled(chat_id, topic_id)
     ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id, topic_id)
 

@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 import time
 from collections import OrderedDict
@@ -13,6 +14,7 @@ from src.domain.ports import ActionRepository, ChatRepository, EventRepository
 CHAT_PAGE_SIZE = 20
 CHAT_SNAPSHOT_TTL = 60 * 60
 MAX_CHAT_SNAPSHOTS = 8
+CHAT_LIST_TTL = 15
 
 
 @dataclass
@@ -37,6 +39,9 @@ class ChatInteractor:
         self.action_repo = action_repo
         self.event_repo = event_repo
         self._chat_snapshots: OrderedDict[str, tuple[float, List[Chat]]] = OrderedDict()
+        self._chat_list: Optional[tuple[float, List[Chat]]] = None
+        self._chat_list_lock = asyncio.Lock()
+        self._chat_list_generation = 0
 
     async def initialize(self):
         await self.repository.connect()
@@ -47,9 +52,14 @@ class ChatInteractor:
     def replace_repository(self, repository: ChatRepository) -> None:
         self.repository = repository
         self._chat_snapshots.clear()
+        self._invalidate_chat_list()
+
+    def _invalidate_chat_list(self) -> None:
+        self._chat_list = None
+        self._chat_list_generation += 1
 
     async def get_chat_page(
-        self, snapshot: Optional[str] = None, offset: int = 0
+        self, snapshot: Optional[str] = None, offset: int = 0, refresh: bool = False
     ) -> ChatPage:
         now = time.monotonic()
         for key, (last_used, _) in list(self._chat_snapshots.items()):
@@ -57,7 +67,20 @@ class ChatInteractor:
                 del self._chat_snapshots[key]
 
         if snapshot is None:
-            chats = await self.repository.get_chats()
+            while True:
+                async with self._chat_list_lock:
+                    if (
+                        refresh
+                        or self._chat_list is None
+                        or time.monotonic() - self._chat_list[0] >= CHAT_LIST_TTL
+                    ):
+                        generation = self._chat_list_generation
+                        chats = await self.repository.get_chats()
+                        if generation != self._chat_list_generation:
+                            continue
+                        self._chat_list = (time.monotonic(), chats)
+                    chats = self._chat_list[1]
+                    break
             # Telegram already orders pinned and recent chats; a stable sort
             # preserves that order within the unread and read groups.
             chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
@@ -109,6 +132,7 @@ class ChatInteractor:
         max_id: Optional[int] = None,
     ) -> None:
         await self.repository.mark_as_read(chat_id, topic_id, max_id=max_id)
+        self._invalidate_chat_list()
 
         chat = await self.repository.get_chat(chat_id)
         chat_name = chat.name if chat else f"Chat {chat_id}"

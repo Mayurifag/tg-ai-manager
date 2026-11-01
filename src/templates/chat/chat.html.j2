@@ -10,6 +10,7 @@ Messages
 
 {% block head_extra %}
 <link rel="stylesheet" href="/static/css/chat_styles.css?t={{ 'static/css/chat_styles.css' | file_mtime }}">
+<link rel="stylesheet" href="/static/css/post.css?t={{ 'static/css/post.css' | file_mtime }}">
 {% endblock %}
 
 {% block sidebar_back %}
@@ -22,51 +23,49 @@ Messages
 
 {% block sidebar_info %}
 {% if chat %}
-<div style="text-align: center; margin-bottom: 20px;">
+<div class="chat-profile">
     {% if chat.image_url %}
-    <img src="{{ chat.image_url }}"
-        style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; margin-bottom: 10px;">
+    <img src="{{ chat.image_url }}" alt="" class="chat-profile-avatar">
     {% else %}
-    <div
-        style="width: 80px; height: 80px; border-radius: 50%; background: #333; margin: 0 auto 10px auto; display: flex; align-items: center; justify-content: center; font-size: 2rem; color: #aaa;">
+    <div class="chat-profile-avatar chat-profile-placeholder">
         {{ chat.name[0] | upper }}
     </div>
     {% endif %}
-    <h3 style="margin: 0; font-size: 1.1rem;">{{ chat.name }}</h3>
-    <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9rem;">{{ chat.type.value | title }}</p>
+    <h3>{{ chat.name }}</h3>
+    <p>{{ chat.type.value | title }}</p>
 </div>
 
 <div class="chat-actions-container">
     <div class="actions-header">Actions</div>
     <div class="actions-grid">
-        <div class="action-item" id="btn-toggle-autoread" title="Toggle Autoread">
+        <button type="button" class="action-item" id="btn-toggle-autoread" title="Toggle Autoread" aria-pressed="{{ 'true' if autoread_enabled else 'false' }}">
             <span class="icon">👀</span>
             <span class="label">Autoread</span>
-            <div class="status-indicator {{ 'on' if autoread_enabled else 'off' }}"></div>
-        </div>
+            <span class="status-indicator {{ 'on' if autoread_enabled else 'off' }}" aria-hidden="true"></span>
+        </button>
 
-        <div class="action-item" id="btn-open-autoreact" title="Configure Autoreact">
+        <button type="button" class="action-item" id="btn-open-autoreact" title="Configure Autoreact" aria-haspopup="dialog">
             <span class="icon">⚡</span>
             <span class="label">Autoreact</span>
-            <div class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator"></div>
-        </div>
+            <span class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator" aria-hidden="true"></span>
+        </button>
 
-        <div class="action-item" id="btn-toggle-ai-autoread" title="Toggle AI Autoread">
+        <button type="button" class="action-item" id="btn-toggle-ai-autoread" title="Toggle AI Autoread" aria-pressed="{{ 'true' if ai_autoread_enabled else 'false' }}">
             <span class="icon">🤖</span>
             <span class="label">AI Read</span>
-            <div class="status-indicator {{ 'on' if ai_autoread_enabled else 'off' }}"></div>
-        </div>
+            <span class="status-indicator {{ 'on' if ai_autoread_enabled else 'off' }}" aria-hidden="true"></span>
+        </button>
 
-        <div class="action-item" id="btn-read-chat" title="Mark All Read">
+        <button type="button" class="action-item" id="btn-read-chat" title="Mark All Read">
             <span class="icon">✅</span>
             <span class="label">Mark Read</span>
-        </div>
+        </button>
 
         {% if topic_id %}
-        <div class="action-item" id="btn-apply-topics" title="Copy Autoread to All Topics">
+        <button type="button" class="action-item" id="btn-apply-topics" title="Copy Autoread to All Topics">
             <span class="icon">📋</span>
             <span class="label">Copy All</span>
-        </div>
+        </button>
         {% endif %}
     </div>
 </div>
@@ -77,21 +76,19 @@ Messages
 {% endblock %}
 
 {% block content %}
+<div id="loading-indicator" class="history-status" role="status" aria-live="polite" hidden>Loading older messages…</div>
 <div class="messages-container" id="messages-container">
     {% include "chat/messages_partial.html.j2" %}
-</div>
-
-<div id="loading-indicator" style="display: none; text-align: center; padding: 10px; color: #666;">
-    Loading...
+    {% if not messages %}<p class="empty-messages">No messages to show.</p>{% endif %}
 </div>
 
 <div id="toast"></div>
 
-<div id="autoreact-modal" class="modal-overlay">
+<div id="autoreact-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="autoreact-title" hidden>
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Autoreact Configuration</h3>
-            <span class="modal-close" onclick="closeArModal()">&times;</span>
+            <h3 id="autoreact-title">Autoreact Configuration</h3>
+            <button type="button" class="modal-close" onclick="closeArModal()" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <label class="toggle-switch-wrapper">

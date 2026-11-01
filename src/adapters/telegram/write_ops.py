@@ -67,7 +67,7 @@ class WriteOps:
                 current_my_reactions = []
                 if hasattr(msg, "reactions") and msg.reactions:
                     for rc in msg.reactions.results:
-                        if getattr(rc, "chosen", False):
+                        if getattr(rc, "chosen_order", None) is not None:
                             current_my_reactions.append(rc.reaction)
 
                 new_reactions_list = []
@@ -105,6 +105,8 @@ class WriteOps:
                         )
                     )
                     success = True
+                except errors.FloodWaitError:
+                    raise
                 except errors.ReactionInvalidError:
                     logger.info(
                         "reaction_stack_failed_fallback_replace",

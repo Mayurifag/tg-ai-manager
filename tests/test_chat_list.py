@@ -1,15 +1,18 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from quart import Quart
+from telethon import types
 
 from src.adapters.telegram.chat_query_ops import ChatQueryOps
 from src.application import interactors
 from src.application.interactors import ChatInteractor, ChatSnapshotExpired
 from src.domain.models import Chat, ChatType
 from src.web.routes.chat import chat_bp
+from src.web import create_app
 
 
 def make_chats(count=47):
@@ -66,6 +69,42 @@ async def test_telegram_fetches_all_dialogs():
     assert [chat.id for chat in chats] == list(range(35))
 
 
+async def test_chat_preview_uses_dialog_response_without_an_extra_history_request():
+    entity = types.User(id=42, access_hash=99, first_name="Chat")
+    dialog = SimpleNamespace(unread_count=2, pinned=True, top_message=7)
+    message = SimpleNamespace(id=7, message="Latest", media=None)
+    client = AsyncMock(
+        return_value=SimpleNamespace(dialogs=[dialog], messages=[message])
+    )
+    client.get_entity.return_value = entity
+    media = SimpleNamespace(_get_chat_image=AsyncMock(return_value=None))
+    ops = ChatQueryOps(client, MagicMock(), media)
+
+    chat = await ops.get_chat(42)
+    assert chat.last_message_preview == "Latest"
+    assert chat.unread_count == 2 and chat.is_pinned
+    client.get_messages.assert_not_awaited()
+
+
+async def test_message_replies_already_in_page_do_not_need_another_request():
+    messages = [
+        SimpleNamespace(id=2, reply_to=SimpleNamespace(reply_to_msg_id=1)),
+        SimpleNamespace(id=1, reply_to=None),
+    ]
+    client = SimpleNamespace(
+        get_input_entity=AsyncMock(return_value="peer"),
+        get_messages=AsyncMock(return_value=messages),
+    )
+    parser = MagicMock()
+    parser._parse_message = AsyncMock(side_effect=lambda msg, replies, chat_id: msg)
+    ops = ChatQueryOps(client, parser, MagicMock())
+
+    result = await ops.get_messages(42)
+    assert result == messages
+    client.get_messages.assert_awaited_once()
+    assert parser._parse_message.await_args_list[0].args[1][1] is messages[1]
+
+
 async def test_unread_first_across_stable_pages(interactor):
     first = await interactor.get_chat_page()
     # Changes to the source list must not shift the boundaries of this snapshot.
@@ -119,12 +158,15 @@ async def test_page_routes_render_consistent_card_metadata(client):
     response = await client.get("/")
     html = await response.get_data(as_text=True)
     assert response.status_code == 200
-    assert html.index('data-chat-id="45"') < html.index('data-chat-id="0"')
-    assert 'data-chat-id="1" data-is-unread="true"' in html
-    assert 'data-is-pinned="true"' in html
-    assert 'data-next-offset="20"' in html
+    assert 'id="chat-list-container" aria-busy="true"' in html
 
     first = await (await client.get("/api/chats")).get_json()
+    assert first["html"].index('data-chat-id="45"') < first["html"].index(
+        'data-chat-id="0"'
+    )
+    assert 'data-chat-id="1" data-is-unread="true"' in first["html"]
+    assert 'data-is-pinned="true"' in first["html"]
+    assert first["next_offset"] == 20
     second_response = await client.get(
         f"/api/chats?snapshot={first['snapshot']}&offset={first['next_offset']}"
     )
@@ -133,6 +175,89 @@ async def test_page_routes_render_consistent_card_metadata(client):
     assert second["next_offset"] == 40
     assert 'data-chat-id="18"' in second["html"]
     assert 'data-chat-id="45"' not in second["html"]
+
+
+async def test_index_does_not_wait_for_telegram(client, interactor):
+    assert (await client.get("/")).status_code == 200
+    interactor.repository.get_chats.assert_not_awaited()
+
+
+async def test_chat_route_renders_telegram_posts_with_autoescaping():
+    from datetime import datetime, timezone
+    from src.domain.models import Message
+    from src.users.models import User
+
+    app = create_app()
+    app.tg_adapter = SimpleNamespace(is_connected=lambda: True)
+    app.user_repo = SimpleNamespace(
+        get_user=AsyncMock(return_value=User(username="@me"))
+    )
+    app.rule_service = SimpleNamespace(
+        is_autoread_enabled=AsyncMock(return_value=True),
+        is_ai_autoread_enabled=AsyncMock(return_value=False),
+        get_rule=AsyncMock(return_value=None),
+    )
+    app.chat_interactor = SimpleNamespace(
+        get_chat=AsyncMock(
+            return_value=Chat(
+                id=42, name="<Channel>", unread_count=0, type=ChatType.CHANNEL
+            )
+        ),
+        get_chat_messages=AsyncMock(
+            return_value=[
+                Message(
+                    id=7,
+                    text="<blockquote>Quoted text</blockquote>",
+                    date=datetime.now(timezone.utc),
+                    sender_name="<Sender>",
+                    is_outgoing=False,
+                )
+            ]
+        ),
+        get_recent_events=AsyncMock(),
+    )
+    response = await app.test_client().get("/chat/42")
+    html = await response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert "&lt;Channel&gt;" in html and "&lt;Sender&gt;" in html
+    assert "<blockquote>Quoted text</blockquote>" in html
+    assert 'aria-pressed="true"' in html
+    app.chat_interactor.get_recent_events.assert_not_awaited()
+
+
+async def test_chat_list_reuses_and_refreshes_cache(interactor, monkeypatch):
+    clock = [0]
+    monkeypatch.setattr(interactors.time, "monotonic", lambda: clock[0])
+    first, second = await asyncio.gather(
+        interactor.get_chat_page(), interactor.get_chat_page()
+    )
+    assert first.snapshot != second.snapshot
+    interactor.repository.get_chats.assert_awaited_once()
+    await interactor.get_chat_page(refresh=True)
+    assert interactor.repository.get_chats.await_count == 2
+    clock[0] += interactors.CHAT_LIST_TTL
+    await interactor.get_chat_page()
+    assert interactor.repository.get_chats.await_count == 3
+
+
+async def test_account_switch_during_fetch_does_not_cache_previous_account(interactor):
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def old_chats():
+        started.set()
+        await finish.wait()
+        return make_chats(1)
+
+    interactor.repository.get_chats = AsyncMock(side_effect=old_chats)
+    task = asyncio.create_task(interactor.get_chat_page())
+    await started.wait()
+    new_repo = MagicMock()
+    new_repo.get_chats = AsyncMock(return_value=make_chats(2))
+    interactor.replace_repository(new_repo)
+    finish.set()
+    page = await task
+    assert len(page.chats) == 2
+    new_repo.get_chats.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

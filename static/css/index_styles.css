@@ -45,3 +45,55 @@
 .chat-list-status {
   margin: 0.5rem 0;
 }
+
+.page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.4rem;
+}
+.page-heading h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+.page-heading p {
+  color: var(--text-muted);
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+}
+.secondary-button,
+.load-more-chats {
+  background: var(--surface-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+.secondary-button:hover,
+.load-more-chats:hover {
+  background: var(--surface-raised);
+}
+.chat-skeleton {
+  height: 72px;
+  padding: 0.75rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.chat-skeleton span {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  flex-shrink: 0;
+}
+.chat-skeleton div {
+  width: 50%;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+}

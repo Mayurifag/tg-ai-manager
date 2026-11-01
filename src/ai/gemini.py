@@ -23,5 +23,6 @@ class GeminiClassifier(AIClassifier):
         response = await self._client.aio.models.generate_content(
             model=self._model,
             contents=prompt,
+            config={"store": False},
         )
         return response.text.strip().lower() == "true"

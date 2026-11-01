@@ -1,16 +1,20 @@
 from datetime import datetime
 from html import escape as html_escape
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from urllib.parse import urlsplit
 
 from telethon import utils
 from telethon.extensions import html
 from telethon.tl import types
 from telethon.tl.types import (
     DocumentAttributeAudio,
+    DocumentAttributeFilename,
     DocumentAttributeSticker,
     DocumentAttributeVideo,
     MessageMediaDocument,
+    MessageMediaPhoto,
     MessageMediaPoll,
+    MessageMediaWebPage,
     PeerChannel,
     PeerChat,
     PeerUser,
@@ -116,7 +120,7 @@ class MessageParser:
         for rc in reaction_counts:
             emoji_str = ""
             custom_id = None
-            is_chosen = getattr(rc, "chosen", False)
+            is_chosen = getattr(rc, "chosen_order", None) is not None
 
             if isinstance(rc.reaction, ReactionEmoji):
                 emoji_str = rc.reaction.emoticon
@@ -174,14 +178,45 @@ class MessageParser:
 
         is_poll = False
         poll_question = None
+        poll_options = []
+        is_photo = isinstance(media, MessageMediaPhoto)
+        is_document = False
+        file_name = None
+        file_size = None
+        webpage_url = None
+        webpage_title = None
+        webpage_description = None
 
         if has_media:
             if isinstance(media, MessageMediaPoll):
                 is_poll = True
                 poll = media.poll
                 poll_question = getattr(poll.question, "text", "Poll")
+                poll_options = [
+                    getattr(answer.text, "text", "") for answer in poll.answers
+                ]
+            elif isinstance(media, MessageMediaWebPage):
+                webpage = media.webpage
+                url = getattr(webpage, "url", None)
+                try:
+                    parsed_url = urlsplit(url) if url else None
+                    safe_url = (
+                        parsed_url
+                        and parsed_url.scheme in ("http", "https")
+                        and parsed_url.hostname
+                    )
+                except ValueError:
+                    safe_url = False
+                if safe_url:
+                    webpage_url = url
+                    webpage_title = getattr(webpage, "title", None) or getattr(
+                        webpage, "site_name", None
+                    )
+                    webpage_description = getattr(webpage, "description", None)
             elif isinstance(media, MessageMediaDocument):
-                for attr in getattr(media.document, "attributes", []):
+                document = media.document
+                file_size = getattr(document, "size", None)
+                for attr in getattr(document, "attributes", []):
                     if isinstance(attr, DocumentAttributeVideo):
                         is_video = True
                     elif isinstance(attr, DocumentAttributeSticker):
@@ -193,8 +228,22 @@ class MessageParser:
                         audio_title = getattr(attr, "title", None)
                         audio_performer = getattr(attr, "performer", None)
                         audio_duration = getattr(attr, "duration", None)
+                    elif isinstance(attr, DocumentAttributeFilename):
+                        file_name = attr.file_name
+                is_document = not (is_video or is_sticker or is_audio)
 
-        sender_name = "Unknown"
+        forwarded_from = None
+        forward = getattr(msg, "fwd_from", None)
+        if forward:
+            forwarded_from = getattr(forward, "from_name", None) or getattr(
+                forward, "post_author", None
+            )
+            if not forwarded_from:
+                forward_sender = getattr(getattr(msg, "forward", None), "sender", None)
+                if forward_sender:
+                    forwarded_from = utils.get_display_name(forward_sender)
+
+        sender_name = getattr(msg, "post_author", None) or "Unknown"
         sender_id = 0
         sender_username = None
         avatar_url = None
@@ -202,12 +251,11 @@ class MessageParser:
         sender_color = "#ccc"
 
         if getattr(msg, "from_id", None):
-            if isinstance(msg.from_id, types.PeerUser):
-                sender_id = msg.from_id.user_id
-            elif isinstance(msg.from_id, types.PeerChannel):
-                sender_id = msg.from_id.channel_id
+            sender_id = utils.get_peer_id(msg.from_id)
 
         sender = getattr(msg, "sender", None)
+        if not sender and getattr(msg, "post", False):
+            sender = getattr(msg, "chat", None)
         if sender_id and not sender:
             try:
                 sender = await self.client.get_entity(sender_id)
@@ -215,7 +263,7 @@ class MessageParser:
                 pass
 
         if sender:
-            sender_id = sender.id
+            sender_id = utils.get_peer_id(sender)
             sender_name = utils.get_display_name(sender)
             sender_username = getattr(sender, "username", None)
             avatar_url = await self._media._get_chat_image(sender, sender_id)
@@ -232,7 +280,8 @@ class MessageParser:
             reply_to_msg_id = getattr(reply_header, "reply_to_msg_id", None)
             if reply_to_msg_id and reply_to_msg_id in replies_map:
                 r_msg = replies_map[reply_to_msg_id]
-                r_text = self._extract_text(r_msg)
+                # Replies are plain text previews, not escaped markup.
+                r_text = getattr(r_msg, "message", "") or ""
                 if not r_text:
                     r_text = "📷 Media"
                 reply_to_text = r_text
@@ -259,9 +308,17 @@ class MessageParser:
             reply_to_text=reply_to_text,
             reply_to_sender_name=reply_to_sender,
             has_media=has_media,
+            is_photo=is_photo,
             is_video=is_video,
             is_sticker=is_sticker,
             sticker_emoji=sticker_emoji,
+            is_document=is_document,
+            file_name=file_name,
+            file_size=file_size,
+            webpage_url=webpage_url,
+            webpage_title=webpage_title,
+            webpage_description=webpage_description,
+            forwarded_from=forwarded_from,
             is_audio=is_audio,
             is_voice=is_voice,
             audio_title=audio_title,
@@ -269,6 +326,7 @@ class MessageParser:
             audio_duration=audio_duration,
             is_poll=is_poll,
             poll_question=poll_question,
+            poll_options=poll_options,
             is_service=is_service,
             reactions=reactions,
             grouped_id=grouped_id,

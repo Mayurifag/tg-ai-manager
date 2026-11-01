@@ -88,6 +88,16 @@ async def test_classify_reuses_client():
     assert mock_cls.call_count == 1
 
 
+async def test_gemini_request_disables_optional_logging():
+    client = _mock_client("false")
+    with patch("src.ai.gemini.google.genai.Client", return_value=client):
+        classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
+        await classifier.classify_is_ad("test")
+    assert client.aio.models.generate_content.await_args.kwargs["config"] == {
+        "store": False
+    }
+
+
 # ---------------------------------------------------------------------------
 # API error propagation
 # ---------------------------------------------------------------------------
