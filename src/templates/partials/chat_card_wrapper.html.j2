@@ -1,4 +1,5 @@
 {% import "macros/chat_card.html.j2" as cards %}
-<div class="chat-card-wrapper" data-chat-id="{{ chat.id }}">
+<div class="chat-card-wrapper" data-chat-id="{{ chat.id }}" data-is-unread="{{ 'true' if chat.unread_count > 0 else 'false' }}"
+    {% if chat.is_pinned %}data-is-pinned="true"{% endif %}>
     {{ cards.render_chat_card(chat) }}
 </div>

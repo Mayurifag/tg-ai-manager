@@ -1,9 +1,29 @@
+import secrets
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.application.message_views import group_messages_into_albums
 from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
+
+
+CHAT_PAGE_SIZE = 20
+CHAT_SNAPSHOT_TTL = 60 * 60
+MAX_CHAT_SNAPSHOTS = 8
+
+
+@dataclass
+class ChatPage:
+    chats: List[Chat]
+    snapshot: str
+    next_offset: Optional[int]
+
+
+class ChatSnapshotExpired(Exception):
+    pass
 
 
 class ChatInteractor:
@@ -16,6 +36,7 @@ class ChatInteractor:
         self.repository = repository
         self.action_repo = action_repo
         self.event_repo = event_repo
+        self._chat_snapshots: OrderedDict[str, tuple[float, List[Chat]]] = OrderedDict()
 
     async def initialize(self):
         await self.repository.connect()
@@ -23,8 +44,36 @@ class ChatInteractor:
     async def shutdown(self):
         await self.repository.disconnect()
 
-    async def get_recent_chats(self, limit: int = 20) -> List[Chat]:
-        return await self.repository.get_chats(limit)
+    def replace_repository(self, repository: ChatRepository) -> None:
+        self.repository = repository
+        self._chat_snapshots.clear()
+
+    async def get_chat_page(
+        self, snapshot: Optional[str] = None, offset: int = 0
+    ) -> ChatPage:
+        now = time.monotonic()
+        for key, (last_used, _) in list(self._chat_snapshots.items()):
+            if now - last_used >= CHAT_SNAPSHOT_TTL:
+                del self._chat_snapshots[key]
+
+        if snapshot is None:
+            chats = await self.repository.get_chats()
+            # Telegram already orders pinned and recent chats; a stable sort
+            # preserves that order within the unread and read groups.
+            chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
+            snapshot = secrets.token_urlsafe(18)
+            while len(self._chat_snapshots) >= MAX_CHAT_SNAPSHOTS:
+                self._chat_snapshots.popitem(last=False)
+        else:
+            cached = self._chat_snapshots.get(snapshot)
+            if cached is None:
+                raise ChatSnapshotExpired
+            chats = cached[1]
+
+        self._chat_snapshots[snapshot] = (time.monotonic(), chats)
+        self._chat_snapshots.move_to_end(snapshot)
+        end = offset + CHAT_PAGE_SIZE
+        return ChatPage(chats[offset:end], snapshot, end if end < len(chats) else None)
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
         return await self.repository.get_chat(chat_id)

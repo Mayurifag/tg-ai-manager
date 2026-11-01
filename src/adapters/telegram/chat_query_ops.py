@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Loading the complete list must not evict the live message-to-chat cache.
+RECENT_DIALOG_CACHE_LIMIT = 20
+
 
 class ChatQueryOps:
     def __init__(
@@ -32,8 +35,8 @@ class ChatQueryOps:
         self._media = media
         self._unavailable_chats: Dict[int, float] = {}
 
-    async def get_chats(self, limit: int) -> list[Chat]:
-        dialogs = await self.client.get_dialogs(limit=limit)
+    async def get_chats(self) -> list[Chat]:
+        dialogs = await self.client.get_dialogs(limit=None)
         results = []
         for d in dialogs:
             chat_type = map_telethon_dialog_to_chat_type(d)
@@ -43,7 +46,7 @@ class ChatQueryOps:
             image_url = await self._media._get_chat_image(d.entity, d.id)
 
             msg = getattr(d, "message", None)
-            if msg:
+            if msg and len(results) < RECENT_DIALOG_CACHE_LIMIT:
                 self._parser._cache_message_chat(msg.id, d.id)
 
             preview = format_message_preview(msg, chat_type, {})

@@ -228,8 +228,8 @@ class TelethonAdapter(ChatRepository):
 
     # --- ChatRepository delegation ---
 
-    async def get_chats(self, limit: int):
-        return await self._chat_query_ops.get_chats(limit)
+    async def get_chats(self):
+        return await self._chat_query_ops.get_chats()
 
     async def get_all_unread_chats(self, chat_ids: Optional[List[int]] = None):
         return await self._chat_query_ops.get_all_unread_chats(chat_ids)
