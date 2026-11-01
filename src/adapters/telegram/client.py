@@ -14,6 +14,7 @@ from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
 from src.adapters.telegram.recovering_client import RecoveringTelegramClient
 from src.adapters.telegram.types import ITelethonClient
+from src.config import get_cache_dir
 from src.domain.models import SystemEvent
 from src.domain.ports import ChatRepository
 from src.infrastructure.logging import get_logger
@@ -43,7 +44,7 @@ class TelethonAdapter(ChatRepository):
         else:
             logger.info("adapter_initialized_no_credentials")
 
-        self.images_dir = os.path.join(os.getcwd(), "cache")
+        self.images_dir = get_cache_dir()
         self._event_handler_registered = False
         self._is_connected_flag = False
         self._connect_lock = asyncio.Lock()
@@ -82,8 +83,6 @@ class TelethonAdapter(ChatRepository):
         )
         self._write_ops.set_dispatch_fn(self._event_handlers._dispatch)
 
-        self._media.cleanup_startup_cache()
-
     def is_connected(self) -> bool:
         return (
             self._is_connected_flag
@@ -107,9 +106,9 @@ class TelethonAdapter(ChatRepository):
                 await self.client.connect()
 
             if await self.client.is_user_authorized():
+                await self._fetch_self_id()
                 self._is_connected_flag = True
                 await self._write_queue.start()
-                await self._fetch_self_id()
                 self._register_handlers()
             else:
                 self._is_connected_flag = False
@@ -123,12 +122,16 @@ class TelethonAdapter(ChatRepository):
         try:
             if self.client:
                 me = await self.client.get_me()
-                if me:
-                    self._self_id = me.id
-                    self._parser.self_id = me.id
-                    logger.info("self_id_cached", user_id=self._self_id)
+                if not me or not isinstance(me.id, int):
+                    raise RuntimeError("Could not identify the Telegram account")
+                self._self_id = me.id
+                self._media.set_account(me.id)
+                self.images_dir = self._media.images_dir
+                self._parser.self_id = me.id
+                logger.info("self_id_cached", user_id=self._self_id)
         except Exception as e:
             logger.error("fetch_self_id_failed", error=str(e))
+            raise
 
     def _register_handlers(self):
         if self.client and not self._event_handler_registered:
@@ -139,6 +142,7 @@ class TelethonAdapter(ChatRepository):
         if self._qr_task:
             self._qr_task.cancel()
             self._qr_task = None
+        await self._media.close()
         await self._write_queue.stop()
         if self.client and self.client.is_connected():
             await self.client.disconnect()
@@ -163,9 +167,9 @@ class TelethonAdapter(ChatRepository):
         try:
             logger.info("2fa_attempt")
             await self.client.sign_in(password=password)
+            await self._fetch_self_id()
             self._is_connected_flag = True
             await self._write_queue.start()
-            await self._fetch_self_id()
             self._register_handlers()
             logger.info("2fa_success")
         except Exception as e:
@@ -204,10 +208,10 @@ class TelethonAdapter(ChatRepository):
         try:
             logger.info("qr_wait_loop_started")
             await self._qr_login.wait()
+            await self._fetch_self_id()
             self._qr_status = "authorized"
             self._is_connected_flag = True
             await self._write_queue.start()
-            await self._fetch_self_id()
             self._register_handlers()
             logger.info("qr_login_success")
         except SessionPasswordNeededError:

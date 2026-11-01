@@ -261,6 +261,14 @@ class ChatQueryOps:
                         msg, replies_map, chat_id=chat_id
                     )
                     result_messages.append(parsed)
+            try:
+                self._media.prefetch_previews(
+                    chat_id, [msg for msg in messages if msg], result_messages
+                )
+            except Exception as error:
+                logger.warning(
+                    "preview_prefetch_failed", chat_id=chat_id, error=repr(error)
+                )
             return result_messages
         except Exception as e:
             logger.error("get_messages_failed", chat_id=chat_id, error=str(e))

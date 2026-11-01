@@ -49,7 +49,7 @@ def get_event_bus() -> EventBus:
     return _app().event_bus
 
 
-def reload_tg_adapter(session_string: Optional[str] = None) -> None:
+async def reload_tg_adapter(session_string: Optional[str] = None) -> None:
     settings = get_settings()
     new_adapter = TelethonAdapter(
         session_string=session_string,
@@ -58,8 +58,10 @@ def reload_tg_adapter(session_string: Optional[str] = None) -> None:
     )
 
     app = _app()
+    old_adapter = app.tg_adapter
     new_adapter.add_event_listener(app.event_bus.dispatch)
 
     app.tg_adapter = new_adapter
     app.chat_interactor.replace_repository(new_adapter)
     app.rule_service.chat_repo = new_adapter
+    await old_adapter.disconnect()

@@ -10,7 +10,7 @@ from telethon import types
 from src.adapters.telegram.chat_query_ops import ChatQueryOps
 from src.application import interactors
 from src.application.interactors import ChatInteractor, ChatSnapshotExpired
-from src.domain.models import Chat, ChatType
+from src.domain.models import Chat, ChatType, Message, SystemEvent
 from src.web.routes.chat import chat_bp
 from src.web import create_app
 
@@ -158,7 +158,9 @@ async def test_page_routes_render_consistent_card_metadata(client):
     response = await client.get("/")
     html = await response.get_data(as_text=True)
     assert response.status_code == 200
-    assert 'id="chat-list-container" aria-busy="true"' in html
+    assert 'id="chat-list-container" aria-busy="false"' in html
+    assert html.index('data-chat-id="45"') < html.index('data-chat-id="0"')
+    assert "chat-skeleton" not in html
 
     first = await (await client.get("/api/chats")).get_json()
     assert first["html"].index('data-chat-id="45"') < first["html"].index(
@@ -177,9 +179,167 @@ async def test_page_routes_render_consistent_card_metadata(client):
     assert 'data-chat-id="45"' not in second["html"]
 
 
-async def test_index_does_not_wait_for_telegram(client, interactor):
+async def test_index_renders_warm_dialogs_without_another_telegram_scan(
+    client, interactor
+):
+    await interactor.get_chat_page()
     assert (await client.get("/")).status_code == 200
-    interactor.repository.get_chats.assert_not_awaited()
+    interactor.repository.get_chats.assert_awaited_once()
+
+
+async def test_background_warms_recent_histories_and_reuses_them(interactor):
+    from datetime import datetime
+
+    interactor.repository.is_connected.return_value = True
+    interactor.repository.get_chats.return_value = make_chats(2)
+    interactor.repository.get_messages = AsyncMock(
+        return_value=[
+            Message(
+                id=7,
+                text="ready",
+                date=datetime.now(),
+                sender_name="A",
+                is_outgoing=False,
+            )
+        ]
+    )
+    stop = asyncio.Event()
+    warmer = asyncio.create_task(interactor.run_cache_warmer(stop))
+    try:
+
+        async def wait_until_warm():
+            while interactor.repository.get_messages.await_count < 2:
+                await asyncio.sleep(0.001)
+
+        await asyncio.wait_for(wait_until_warm(), timeout=2)
+        await interactor._prefetch_queue.join()
+        assert (await interactor.get_chat_messages(1))[0].text == "ready"
+        assert interactor.repository.get_messages.await_count == 2
+        assert (await interactor.get_chat(1)).id == 1
+        interactor.repository.get_chat.assert_not_called()
+    finally:
+        stop.set()
+        await warmer
+
+
+async def test_inflight_history_is_refetched_after_new_message(interactor):
+    from datetime import datetime
+
+    started, finish = asyncio.Event(), asyncio.Event()
+    old = Message(
+        id=1, text="old", date=datetime.now(), sender_name="A", is_outgoing=False
+    )
+    new = Message(
+        id=2, text="new", date=datetime.now(), sender_name="A", is_outgoing=False
+    )
+
+    async def fetch(*args, **kwargs):
+        if interactor.repository.get_messages.await_count == 1:
+            started.set()
+            await finish.wait()
+            return [old]
+        return [new]
+
+    interactor.repository.get_messages = AsyncMock(side_effect=fetch)
+    task = asyncio.create_task(interactor.get_chat_messages(42))
+    await started.wait()
+    await interactor.handle_event(
+        SystemEvent(type="message", text="new", chat_name="A", chat_id=42)
+    )
+    finish.set()
+    assert (await task)[0].id == 2
+    assert (await interactor.get_chat_messages(42))[0].id == 2
+    assert interactor.repository.get_messages.await_count == 2
+
+
+async def test_concurrent_navigation_shares_the_prefetch(interactor):
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def fetch(*args, **kwargs):
+        started.set()
+        await finish.wait()
+        return []
+
+    interactor.repository.get_messages = AsyncMock(side_effect=fetch)
+    background = asyncio.create_task(interactor.get_chat_messages(42))
+    await started.wait()
+    foreground = asyncio.create_task(interactor.get_chat_messages(42))
+    finish.set()
+    assert await asyncio.gather(background, foreground) == [[], []]
+    interactor.repository.get_messages.assert_awaited_once()
+
+
+async def test_busy_chat_does_not_retry_forever(interactor):
+    async def fetch(*args, **kwargs):
+        await interactor.handle_event(
+            SystemEvent(type="message", text="new", chat_name="A", chat_id=42)
+        )
+        return []
+
+    interactor.repository.get_messages = AsyncMock(side_effect=fetch)
+    assert await asyncio.wait_for(interactor.get_chat_messages(42), timeout=1) == []
+    assert interactor.repository.get_messages.await_count == 3
+
+
+async def test_message_cache_does_not_reuse_old_account_after_switch(interactor):
+    from datetime import datetime
+
+    started, finish = asyncio.Event(), asyncio.Event()
+    old = Message(
+        id=1, text="old", date=datetime.now(), sender_name="A", is_outgoing=False
+    )
+    new = Message(
+        id=2, text="new", date=datetime.now(), sender_name="A", is_outgoing=False
+    )
+
+    async def fetch_old(*args, **kwargs):
+        started.set()
+        await finish.wait()
+        return [old]
+
+    interactor.repository.get_messages = AsyncMock(side_effect=fetch_old)
+    task = asyncio.create_task(interactor.get_chat_messages(42))
+    await started.wait()
+    new_repo = MagicMock()
+    new_repo.get_messages = AsyncMock(return_value=[new])
+    interactor.replace_repository(new_repo)
+    finish.set()
+    assert (await task)[0].id == 2
+    assert (await interactor.get_chat_messages(42))[0].id == 2
+    new_repo.get_messages.assert_awaited_once()
+
+
+async def test_list_stays_available_during_background_refresh(interactor):
+    await interactor.get_chat_page()
+    interactor._warmer_running = True
+    started, finish = asyncio.Event(), asyncio.Event()
+
+    async def refresh():
+        started.set()
+        await finish.wait()
+        return make_chats(2)
+
+    interactor.repository.get_chats.side_effect = refresh
+    task = asyncio.create_task(interactor._get_chat_list(refresh=True))
+    await started.wait()
+    page = await asyncio.wait_for(interactor.get_chat_page(), timeout=0.5)
+    assert len(page.chats) == 20
+    finish.set()
+    await task
+    assert len((await interactor.get_chat_page()).chats) == 2
+
+
+async def test_forum_topics_are_warmed_and_invalidated_by_events(interactor):
+    topics = [Chat(id=11, name="Topic", unread_count=0, type=ChatType.TOPIC)]
+    interactor.repository.get_forum_topics = AsyncMock(return_value=topics)
+    assert await interactor.get_forum_topics(42) == topics
+    assert await interactor.get_forum_topics(42) == topics
+    interactor.repository.get_forum_topics.assert_awaited_once()
+    await interactor.handle_event(
+        SystemEvent(type="message", text="new", chat_name="Forum", chat_id=42)
+    )
+    assert await interactor.get_forum_topics(42) == topics
+    assert interactor.repository.get_forum_topics.await_count == 2
 
 
 async def test_chat_route_renders_telegram_posts_with_autoescaping():

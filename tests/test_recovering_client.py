@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
@@ -61,3 +63,13 @@ def test_adapter_readiness_requires_handlers_and_write_worker():
     adapter._write_queue.is_running.return_value = True
     adapter._event_handler_registered = False
     assert not adapter.is_connected()
+
+
+async def test_cache_account_requires_a_known_telegram_user():
+    adapter = object.__new__(TelethonAdapter)
+    adapter.client = Mock()
+    adapter.client.get_me = AsyncMock(return_value=None)
+    adapter._media = Mock()
+    with pytest.raises(RuntimeError, match="identify the Telegram account"):
+        await adapter._fetch_self_id()
+    adapter._media.set_account.assert_not_called()
