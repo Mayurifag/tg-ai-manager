@@ -1,5 +1,4 @@
 import asyncio
-import os
 from typing import Any, Awaitable, Callable, List, Optional
 
 from telethon.errors import SessionPasswordNeededError
@@ -14,8 +13,7 @@ from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
 from src.adapters.telegram.recovering_client import RecoveringTelegramClient
 from src.adapters.telegram.types import ITelethonClient
-from src.config import get_cache_dir
-from src.domain.models import SystemEvent
+from src.domain.models import MediaContent, SystemEvent
 from src.domain.ports import ChatRepository
 from src.infrastructure.logging import get_logger
 from src.infrastructure.telegram_queue import TelegramWriteQueue
@@ -44,7 +42,6 @@ class TelethonAdapter(ChatRepository):
         else:
             logger.info("adapter_initialized_no_credentials")
 
-        self.images_dir = get_cache_dir()
         self._event_handler_registered = False
         self._is_connected_flag = False
         self._connect_lock = asyncio.Lock()
@@ -59,10 +56,8 @@ class TelethonAdapter(ChatRepository):
         # Write queue
         self._write_queue = TelegramWriteQueue()
 
-        os.makedirs(self.images_dir, exist_ok=True)
-
         # Build collaborators
-        self._media = MediaManager(self.client, self.images_dir)
+        self._media = MediaManager(self.client)
         self._parser = MessageParser(self.client, self._media)
         self._chat_query_ops = ChatQueryOps(
             client=self.client, parser=self._parser, media=self._media
@@ -125,8 +120,6 @@ class TelethonAdapter(ChatRepository):
                 if not me or not isinstance(me.id, int):
                     raise RuntimeError("Could not identify the Telegram account")
                 self._self_id = me.id
-                self._media.set_account(me.id)
-                self.images_dir = self._media.images_dir
                 self._parser.self_id = me.id
                 logger.info("self_id_cached", user_id=self._self_id)
         except Exception as e:
@@ -281,10 +274,10 @@ class TelethonAdapter(ChatRepository):
 
     async def download_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"
-    ) -> Optional[str]:
+    ) -> Optional[MediaContent]:
         return await self._media.download_media(chat_id, message_id, size_type)
 
-    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
+    async def get_chat_avatar(self, chat_id: int) -> Optional[bytes]:
         return await self._media.get_chat_avatar(chat_id)
 
     async def run_storage_maintenance(self) -> None:
@@ -297,5 +290,13 @@ class TelethonAdapter(ChatRepository):
 
     # --- Additional methods used by routes ---
 
-    async def get_custom_emoji_media(self, doc_id: int) -> Optional[str]:
+    async def get_custom_emoji_media(self, doc_id: int) -> Optional[MediaContent]:
         return await self._media.get_custom_emoji_media(doc_id)
+
+    async def get_stream_document(self, chat_id: int, message_id: int) -> Any:
+        return await self._media.get_document(chat_id, message_id)
+
+    def stream_document(
+        self, chat_id: int, message_id: int, document: Any, start: int, length: int
+    ):
+        return self._media.iter_document(chat_id, message_id, document, start, length)

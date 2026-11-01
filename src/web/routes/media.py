@@ -1,63 +1,152 @@
 import os
+import re
+from urllib.parse import quote
 
-from quart import Blueprint, abort, redirect, send_file, send_from_directory
+from quart import (
+    Blueprint,
+    abort,
+    make_response,
+    redirect,
+    request,
+    send_from_directory,
+    url_for,
+)
+from telethon.tl.types import DocumentAttributeFilename
+from werkzeug.http import dump_options_header
+from werkzeug.utils import secure_filename
 
 from src.container import _get_tg_adapter, get_chat_interactor
-from src.config import get_cache_dir
 
 media_bp = Blueprint("media", __name__)
 
 STATIC_DIR = os.path.join(os.getcwd(), "static")
-IMAGES_DIR = get_cache_dir()
 CSS_DIR = os.path.join(STATIC_DIR, "css")
+INLINE_MEDIA_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "video/webm",
+}
 
-os.makedirs(IMAGES_DIR, exist_ok=True)
 os.makedirs(CSS_DIR, exist_ok=True)
 
 
-@media_bp.route("/cache/<path:filename>")
-async def serve_images(filename):
-    adapter = _get_tg_adapter()
-    active_dir = adapter.images_dir
-    prefix = os.path.relpath(active_dir, IMAGES_DIR)
-    if (
-        prefix == "."
-        or prefix.startswith("..")
-        or not filename.startswith(prefix + "/")
-    ):
+async def _media_response(chat_id: int, msg_id: int, size_type: str):
+    content = await get_chat_interactor().get_media(
+        chat_id, msg_id, size_type=size_type
+    )
+    if not content:
         abort(404)
-    return await send_from_directory(active_dir, filename[len(prefix) + 1 :])
+    if content.data is None:
+        response = redirect(
+            url_for("media.stream_document", chat_id=chat_id, msg_id=msg_id)
+        )
+    else:
+        response = await make_response(content.data)
+        response.mimetype = (
+            content.mime_type
+            if content.mime_type in INLINE_MEDIA_TYPES
+            else "application/octet-stream"
+        )
+        if response.mimetype == "application/octet-stream":
+            response.headers["Content-Disposition"] = "attachment"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @media_bp.route("/media/<int(signed=True):chat_id>/<int(signed=True):msg_id>")
 async def get_message_media(chat_id: int, msg_id: int):
-    interactor = get_chat_interactor()
-
-    public_path = await interactor.get_media_path(chat_id, msg_id, size_type="preview")
-    if public_path:
-        return redirect(public_path)
-
-    return "", 404
+    return await _media_response(chat_id, msg_id, "preview")
 
 
 @media_bp.route("/media/<int(signed=True):chat_id>/<int(signed=True):msg_id>/full")
 async def get_message_media_full(chat_id: int, msg_id: int):
-    interactor = get_chat_interactor()
+    return await _media_response(chat_id, msg_id, "full")
 
-    public_path = await interactor.get_media_path(chat_id, msg_id, size_type="full")
-    if public_path:
-        return redirect(public_path)
 
-    return "", 404
+@media_bp.route("/media/stream/<int(signed=True):chat_id>/<int(signed=True):msg_id>")
+async def stream_document(chat_id: int, msg_id: int):
+    adapter = _get_tg_adapter()
+    document = await adapter.get_stream_document(chat_id, msg_id)
+    if (
+        not document
+        or not isinstance(getattr(document, "size", None), int)
+        or document.size < 0
+    ):
+        abort(404)
+    size = document.size
+    start, end = 0, size
+    raw_range = request.headers.get("Range")
+    if raw_range:
+        requested = request.range
+        interval = (
+            requested.range_for_length(size)
+            if requested and requested.units == "bytes" and len(requested.ranges) == 1
+            else None
+        )
+        if interval is None:
+            response = await make_response("", 416)
+            response.headers["Content-Range"] = f"bytes */{size}"
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        start, end = interval
+
+    response = await make_response(
+        adapter.stream_document(chat_id, msg_id, document, start, end - start)
+    )
+    response.status_code = 206 if raw_range else 200
+    mime_type = getattr(document, "mime_type", "") or "application/octet-stream"
+    response.mimetype = (
+        mime_type
+        if re.fullmatch(r"(?:video|audio)/[a-zA-Z0-9!#$&^_.+-]+", mime_type)
+        else "application/octet-stream"
+    )
+    if response.mimetype == "application/octet-stream":
+        filename = next(
+            (
+                attr.file_name
+                for attr in getattr(document, "attributes", [])
+                if isinstance(attr, DocumentAttributeFilename)
+            ),
+            "file",
+        )
+        filename = (
+            "".join(
+                "_" if char in "/\\" else char
+                for char in filename
+                if 32 <= ord(char) != 127
+            )
+            or "file"
+        )
+        fallback = secure_filename(filename) or "file"
+        response.headers["Content-Disposition"] = (
+            dump_options_header("attachment", {"filename": fallback})
+            + "; filename*=UTF-8''"
+            + quote(filename, safe="")
+        )
+    response.headers["Content-Length"] = str(end - start)
+    response.headers["Accept-Ranges"] = "bytes"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if raw_range:
+        response.headers["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
+    response.timeout = None
+    return response
 
 
 @media_bp.route("/media/avatar/<int(signed=True):chat_id>")
 async def get_avatar(chat_id: int):
     interactor = get_chat_interactor()
 
-    avatar_path = await interactor.get_chat_avatar(chat_id)
-    if avatar_path and os.path.exists(avatar_path):
-        return await send_file(avatar_path, mimetype="image/jpeg")
+    avatar = await interactor.get_chat_avatar(chat_id)
+    if avatar:
+        response = await make_response(avatar)
+        response.mimetype = "image/jpeg"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     return "", 404
 
@@ -69,9 +158,19 @@ async def get_custom_emoji(doc_id: int):
     if not adapter:
         return "", 404
 
-    public_path = await adapter.get_custom_emoji_media(doc_id)
-    if public_path:
-        return redirect(public_path)
+    content = await adapter.get_custom_emoji_media(doc_id)
+    if content and content.data is not None:
+        response = await make_response(content.data)
+        response.mimetype = (
+            content.mime_type
+            if content.mime_type in INLINE_MEDIA_TYPES
+            else "application/octet-stream"
+        )
+        if response.mimetype == "application/octet-stream":
+            response.headers["Content-Disposition"] = "attachment"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     return "", 404
 

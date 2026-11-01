@@ -48,9 +48,9 @@ services:
       - ./tg_data:/app_data
 ```
 
-Recent message previews and avatars are cached under `/app_data/cache`, separated by Telegram account, and kept across
-container updates. This contains private Telegram media; protect the mounted data directory. `CACHE_MAX_SIZE_MB` limits
-the active account's cache (default 1024 MB).
+Recent message previews and avatars are preloaded into a bounded in-memory cache after startup. `CACHE_MAX_SIZE_MB`
+controls its size (default 128 MB). The cache is lost when the app restarts; full videos and documents are streamed on
+demand.
 
 ## Auto-read reliability
 

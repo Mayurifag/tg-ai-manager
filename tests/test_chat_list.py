@@ -222,6 +222,26 @@ async def test_background_warms_recent_histories_and_reuses_them(interactor):
         await warmer
 
 
+async def test_prefetch_worker_survives_a_cancelled_shared_download(interactor):
+    first, second = make_chats(2)
+    first.image_url = "/media/avatar/0"
+    interactor.repository.get_chat_avatar = AsyncMock(
+        side_effect=asyncio.CancelledError
+    )
+    interactor.repository.get_messages = AsyncMock(return_value=[])
+    interactor._queue_prefetch([first, second])
+    worker = asyncio.create_task(interactor._prefetch_worker())
+    try:
+        await asyncio.wait_for(interactor._prefetch_queue.join(), timeout=2)
+        assert not worker.done()
+        interactor.repository.get_messages.assert_awaited_once_with(
+            second.id, topic_id=None, offset_id=0
+        )
+    finally:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
 async def test_inflight_history_is_refetched_after_new_message(interactor):
     from datetime import datetime
 

@@ -132,6 +132,8 @@ class EventHandlers:
         try:
             if event.chat_id:
                 self._parser._cache_message_chat(event.message.id, event.chat_id)
+                self._media.invalidate_message(event.chat_id, event.message.id)
+                self._media.remember_messages(event.chat_id, [event.message])
 
             chat = None
             chat_name = "Unknown"
@@ -183,6 +185,14 @@ class EventHandlers:
                     chat_id = utils.get_peer_id(
                         types.PeerChannel(event.original_update.channel_id)
                     )
+
+            if event.deleted_ids:
+                for message_id in event.deleted_ids:
+                    message_chat_id = getattr(event, "chat_id", None) or (
+                        self._parser._msg_id_to_chat_id.get(message_id) or chat_id
+                    )
+                    if message_chat_id:
+                        self._media.invalidate_message(message_chat_id, message_id)
 
             chat_name = "Unknown"
             if chat_id:
