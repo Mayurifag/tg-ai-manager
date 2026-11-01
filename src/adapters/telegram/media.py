@@ -28,6 +28,7 @@ class MediaManager:
         self._cache: OrderedDict[tuple, tuple[float, MediaContent]] = OrderedDict()
         self._cache_size = 0
         self._messages: OrderedDict[tuple[int, int], tuple[float, Any]] = OrderedDict()
+        self._avatar_entities: OrderedDict[int, Any] = OrderedDict()
         self._downloads: dict[tuple, asyncio.Task[Optional[MediaContent]]] = {}
         self._download_tasks: set[asyncio.Task[Optional[MediaContent]]] = set()
         self._preview_queue: asyncio.Queue[tuple[int, Optional[int]]] = asyncio.Queue(
@@ -94,11 +95,16 @@ class MediaManager:
         if photo and (
             getattr(photo, "photo_id", None) or getattr(photo, "photo_small", None)
         ):
+            self._avatar_entities[chat_id] = entity
+            self._avatar_entities.move_to_end(chat_id)
+            while len(self._avatar_entities) > 1000:
+                self._avatar_entities.popitem(last=False)
             return f"/media/avatar/{chat_id}"
         return None
 
     def clear_chat_avatar(self, chat_id: int) -> None:
         self._invalidate(("avatar", chat_id))
+        self._avatar_entities.pop(chat_id, None)
 
     def invalidate_message(self, chat_id: int, message_id: int) -> None:
         self._messages.pop((chat_id, message_id), None)
@@ -139,7 +145,9 @@ class MediaManager:
 
         async def download() -> Optional[MediaContent]:
             try:
-                entity = await self.client.get_entity(chat_id)
+                entity = self._avatar_entities.get(chat_id)
+                if entity is None:
+                    entity = await self.client.get_entity(chat_id)
                 data = await self.client.download_profile_photo(
                     entity, file=bytes, download_big=False
                 )
@@ -356,6 +364,7 @@ class MediaManager:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._cache.clear()
         self._messages.clear()
+        self._avatar_entities.clear()
         while not self._preview_queue.empty():
             self._preview_queue.get_nowait()
             self._preview_queue.task_done()

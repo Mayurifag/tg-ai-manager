@@ -52,6 +52,28 @@ async def test_preloaded_photo_is_in_memory_and_reused(tmp_path, monkeypatch):
     await manager.close()
 
 
+async def test_avatar_download_reuses_the_entity_returned_by_telegram():
+    entity = types.User(
+        id=42,
+        access_hash=1,
+        min=True,
+        photo=types.UserProfilePhoto(photo_id=5, dc_id=1),
+    )
+    client = MagicMock()
+    client.get_entity = AsyncMock(side_effect=ValueError("Entity not in cache"))
+    client.download_profile_photo = AsyncMock(return_value=b"avatar")
+    manager = MediaManager(client)
+    assert await manager._get_chat_image(entity, 42) == "/media/avatar/42"
+    assert await manager.get_chat_avatar(42) == b"avatar"
+    client.get_entity.assert_not_awaited()
+    client.download_profile_photo.assert_awaited_once_with(
+        entity, file=bytes, download_big=False
+    )
+    manager.clear_chat_avatar(42)
+    assert 42 not in manager._avatar_entities
+    await manager.close()
+
+
 async def test_concurrent_photo_requests_share_download_when_one_is_cancelled():
     started, finish = asyncio.Event(), asyncio.Event()
     raw = SimpleNamespace(id=12, media=types.MessageMediaPhoto())
