@@ -1,196 +1,189 @@
 import asyncio
-import glob
 import os
 import time
-from typing import Any, Optional
+from collections import OrderedDict
+from typing import Any, AsyncIterator, Optional
 
-from telethon import functions, utils
+from telethon import errors, functions
 from telethon.tl.types import (
-    DocumentAttributeAudio,
     DocumentAttributeSticker,
-    DocumentAttributeVideo,
     MessageMediaDocument,
     MessageMediaPhoto,
 )
 
+from src.domain.models import MediaContent
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
+MESSAGE_REFERENCE_TTL = 300
+AVATAR_TTL = 24 * 60 * 60
 
 
 class MediaManager:
-    def __init__(self, client: Any, images_dir: str) -> None:
+    """Bounded, process-local preview cache; no media is written to disk."""
+
+    def __init__(self, client: Any) -> None:
         self.client = client
-        self.base_dir = images_dir
-        self.images_dir = images_dir
-        self.account_id: Optional[int] = None
-        self._downloads: dict[tuple[int, int, str], asyncio.Task[Optional[str]]] = {}
-        self._avatars: dict[int, asyncio.Task[Optional[str]]] = {}
-        self._preview_queue: asyncio.Queue[tuple[int, Any]] = asyncio.Queue(
+        self._limit = max(1, int(os.getenv("CACHE_MAX_SIZE_MB", "128"))) * 1024 * 1024
+        self._cache: OrderedDict[tuple, tuple[float, MediaContent]] = OrderedDict()
+        self._cache_size = 0
+        self._messages: OrderedDict[tuple[int, int], tuple[float, Any]] = OrderedDict()
+        self._downloads: dict[tuple, asyncio.Task[Optional[MediaContent]]] = {}
+        self._download_tasks: set[asyncio.Task[Optional[MediaContent]]] = set()
+        self._preview_queue: asyncio.Queue[tuple[int, Optional[int]]] = asyncio.Queue(
             maxsize=1000
         )
         self._preview_pending: set[tuple[int, Optional[int]]] = set()
-        self._queued_messages: dict[tuple[int, int], Any] = {}
         self._preview_workers: set[asyncio.Task[None]] = set()
 
-    def set_account(self, account_id: int) -> None:
-        self.account_id = account_id
-        self.images_dir = os.path.join(self.base_dir, str(account_id))
-        os.makedirs(self.images_dir, exist_ok=True)
+    def _get(self, key: tuple) -> Optional[MediaContent]:
+        cached = self._cache.get(key)
+        if cached is None:
+            return None
+        if key[0] == "avatar" and time.monotonic() - cached[0] >= AVATAR_TTL:
+            self._invalidate(key)
+            return None
+        self._cache.move_to_end(key)
+        return cached[1]
 
-    def _cache_url(self, path: str) -> str:
-        return "/cache/" + os.path.relpath(path, self.base_dir).replace(os.sep, "/")
-
-    def _get_avatar_path(self, chat_id: int) -> str:
-        return os.path.join(self.images_dir, f"{chat_id}.jpg")
-
-    async def run_storage_maintenance(self):
-        """
-        Enforces the disk usage limit for the cache directory.
-        Deletes oldest files (by modification time) until total size is under limit.
-        """
-        if not self.images_dir or not os.path.exists(self.images_dir):
+    def _put(self, key: tuple, item: MediaContent) -> None:
+        if item.data is None or len(item.data) > self._limit:
             return
+        previous = self._cache.pop(key, None)
+        if previous and previous[1].data is not None:
+            self._cache_size -= len(previous[1].data)
+        while self._cache and self._cache_size + len(item.data) > self._limit:
+            _, old = self._cache.popitem(last=False)
+            self._cache_size -= len(old[1].data or b"")
+        self._cache[key] = (time.monotonic(), item)
+        self._cache_size += len(item.data)
 
-        limit_mb = int(os.getenv("CACHE_MAX_SIZE_MB", "1024"))
-        limit_bytes = limit_mb * 1024 * 1024
-
-        await asyncio.to_thread(self._cleanup_sync, limit_bytes)
-
-    def _cleanup_sync(self, limit_bytes: int):
-        try:
-            files = []
-            total_size = 0
-
-            with os.scandir(self.images_dir) as entries:
-                for entry in entries:
-                    if entry.is_file():
-                        stat = entry.stat()
-                        total_size += stat.st_size
-                        if not entry.name.endswith(".part"):
-                            files.append((entry.path, stat.st_mtime, stat.st_size))
-
-            if total_size <= limit_bytes:
-                return
-
-            files.sort(key=lambda x: x[1])
-
-            deleted_count = 0
-            freed_bytes = 0
-
-            for path, _, size in files:
-                if total_size <= limit_bytes:
-                    break
-                try:
-                    os.remove(path)
-                    total_size -= size
-                    freed_bytes += size
-                    deleted_count += 1
-                except OSError as e:
-                    logger.error("cache_delete_failed", path=path, error=str(e))
-
-            if deleted_count > 0:
-                logger.info(
-                    "cache_maintenance_completed",
-                    deleted_files=deleted_count,
-                    freed_mb=round(freed_bytes / (1024 * 1024), 2),
-                )
-
-        except Exception as e:
-            logger.error("cache_maintenance_failed", error=str(e))
-
-    async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
-        if hasattr(entity, "photo") and entity.photo:
-            if getattr(entity.photo, "photo_id", None) or getattr(
-                entity.photo, "photo_small", None
-            ):
-                account = (
-                    f"?account={self.account_id}" if self.account_id is not None else ""
-                )
-                return f"/media/avatar/{chat_id}{account}"
-        return None
-
-    def clear_chat_avatar(self, chat_id: int):
-        """Removes the cached avatar to force re-download."""
-        path = self._get_avatar_path(chat_id)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-                logger.info("avatar_cache_cleared", chat_id=chat_id)
-            except OSError as e:
-                logger.error("avatar_clear_failed", chat_id=chat_id, error=str(e))
-
-    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
-        """
-        Retrieves a cached avatar, refreshing it at most once per day.
-        """
-        task = self._avatars.get(chat_id)
+    async def _shared(self, key: tuple, download) -> Optional[MediaContent]:
+        cached = self._get(key)
+        if cached is not None:
+            return cached
+        task = self._downloads.get(key)
         if task is None:
-            task = asyncio.create_task(self._download_avatar(chat_id))
-            self._avatars[chat_id] = task
-            task.add_done_callback(lambda _: self._avatars.pop(chat_id, None))
+
+            async def run() -> Optional[MediaContent]:
+                item = await download()
+                if item and self._downloads.get(key) is asyncio.current_task():
+                    self._put(key, item)
+                return item
+
+            def finished(completed: asyncio.Task[Optional[MediaContent]]) -> None:
+                self._download_tasks.discard(completed)
+                if self._downloads.get(key) is completed:
+                    self._downloads.pop(key, None)
+
+            task = asyncio.create_task(run())
+            self._downloads[key] = task
+            self._download_tasks.add(task)
+            task.add_done_callback(finished)
         return await asyncio.shield(task)
 
-    async def _download_avatar(self, chat_id: int) -> Optional[str]:
-        path = self._get_avatar_path(chat_id)
-        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 86400:
-            return path
+    def _invalidate(self, key: tuple) -> None:
+        item = self._cache.pop(key, None)
+        if item and item[1].data is not None:
+            self._cache_size -= len(item[1].data)
+        # Let existing callers finish, but never reuse or cache an obsolete download.
+        self._downloads.pop(key, None)
 
-        temporary_path = path + ".part"
-        try:
+    async def _get_chat_image(self, entity: Any, chat_id: int) -> Optional[str]:
+        photo = getattr(entity, "photo", None)
+        if photo and (
+            getattr(photo, "photo_id", None) or getattr(photo, "photo_small", None)
+        ):
+            return f"/media/avatar/{chat_id}"
+        return None
+
+    def clear_chat_avatar(self, chat_id: int) -> None:
+        self._invalidate(("avatar", chat_id))
+
+    def invalidate_message(self, chat_id: int, message_id: int) -> None:
+        self._messages.pop((chat_id, message_id), None)
+        for size_type in ("preview", "full"):
+            self._invalidate(("media", chat_id, message_id, size_type))
+
+    def remember_messages(self, chat_id: int, messages: list[Any]) -> None:
+        for message in messages:
+            if message and getattr(message, "media", None):
+                key = (chat_id, message.id)
+                self._messages[key] = (time.monotonic(), message)
+                self._messages.move_to_end(key)
+        while len(self._messages) > 1000:
+            self._messages.popitem(last=False)
+
+    async def _message(
+        self, chat_id: int, message_id: int, *, refresh: bool = False
+    ) -> Any:
+        key = (chat_id, message_id)
+        cached = self._messages.get(key)
+        if (
+            cached
+            and not refresh
+            and time.monotonic() - cached[0] < MESSAGE_REFERENCE_TTL
+        ):
+            self._messages.move_to_end(key)
+            return cached[1]
+        self._messages.pop(key, None)
+        entity = await self.client.get_entity(chat_id)
+        messages = await self.client.get_messages(entity, ids=[message_id])
+        if not messages or not messages[0]:
+            return None
+        self.remember_messages(chat_id, messages)
+        return messages[0]
+
+    async def get_chat_avatar(self, chat_id: int) -> Optional[bytes]:
+        key = ("avatar", chat_id)
+
+        async def download() -> Optional[MediaContent]:
             try:
                 entity = await self.client.get_entity(chat_id)
-            except ValueError:
-                logger.debug("avatar_entity_not_found", chat_id=chat_id)
-                return path if os.path.exists(path) else None
+                data = await self.client.download_profile_photo(
+                    entity, file=bytes, download_big=False
+                )
+                if isinstance(data, bytes) and data:
+                    return MediaContent(data=data, mime_type="image/jpeg")
+            except Exception as error:
+                logger.warning(
+                    "avatar_download_failed", chat_id=chat_id, error=str(error)
+                )
+            return None
 
-            result = await self.client.download_profile_photo(
-                entity, file=temporary_path, download_big=False
-            )
-            if result:
-                os.replace(result, path)
-                return path
-            return path if os.path.exists(path) else None
-        except Exception as e:
-            logger.error("avatar_download_failed", chat_id=chat_id, error=str(e))
-            return path if os.path.exists(path) else None
-        finally:
-            if os.path.exists(temporary_path):
-                os.remove(temporary_path)
+        item = await self._shared(key, download)
+        return item.data if item else None
 
     def prefetch_previews(
         self, chat_id: int, messages: list[Any], parsed: list[Any]
     ) -> None:
-        """Warm lightweight image previews, never whole videos or documents."""
+        self.remember_messages(chat_id, messages)
         for message in messages:
             media = getattr(message, "media", None)
             sticker = (
                 isinstance(media, MessageMediaDocument)
+                and getattr(media.document, "mime_type", "") == "image/webp"
                 and any(
                     isinstance(attr, DocumentAttributeSticker)
                     for attr in getattr(media.document, "attributes", [])
                 )
-                and getattr(media.document, "mime_type", "") == "image/webp"
             )
             if not isinstance(media, MessageMediaPhoto) and not sticker:
                 continue
             key = (chat_id, message.id)
-            if key in self._preview_pending or self._preview_queue.full():
-                continue
-            self._preview_pending.add(key)
-            self._queued_messages[key] = message
-            self._preview_queue.put_nowait((chat_id, message))
+            if key not in self._preview_pending and not self._preview_queue.full():
+                self._preview_pending.add(key)
+                self._preview_queue.put_nowait((chat_id, message.id))
         for message in parsed:
             key = (message.sender_id, None)
             if (
-                not message.avatar_url
-                or not message.sender_id
-                or key in self._preview_pending
-                or self._preview_queue.full()
+                message.avatar_url
+                and message.sender_id
+                and key not in self._preview_pending
+                and not self._preview_queue.full()
             ):
-                continue
-            self._preview_pending.add(key)
-            self._preview_queue.put_nowait((message.sender_id, None))
+                self._preview_pending.add(key)
+                self._preview_queue.put_nowait((message.sender_id, None))
         self._preview_workers.difference_update(
             {task for task in self._preview_workers if task.done()}
         )
@@ -201,187 +194,170 @@ class MediaManager:
 
     async def _preview_worker(self) -> None:
         while not self._preview_queue.empty():
-            chat_id, message = self._preview_queue.get_nowait()
+            chat_id, message_id = self._preview_queue.get_nowait()
             try:
-                if message is None:
+                if message_id is None:
                     await self.get_chat_avatar(chat_id)
                 else:
-                    await self.download_media(chat_id, message.id, message=message)
+                    await self.download_media(chat_id, message_id)
             finally:
-                self._preview_pending.discard(
-                    (chat_id, message.id if message else None)
-                )
-                if message:
-                    self._queued_messages.pop((chat_id, message.id), None)
+                self._preview_pending.discard((chat_id, message_id))
                 self._preview_queue.task_done()
-
-    async def close(self) -> None:
-        tasks = [
-            *self._preview_workers,
-            *self._downloads.values(),
-            *self._avatars.values(),
-        ]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
 
     async def download_media(
         self,
         chat_id: int,
         message_id: int,
         size_type: str = "preview",
-        *,
-        message: Any = None,
-    ) -> Optional[str]:
-        key = (chat_id, message_id, size_type)
-        task = self._downloads.get(key)
-        if task is None:
-            if message is None and size_type == "preview":
-                message = self._queued_messages.get((chat_id, message_id))
-            task = asyncio.create_task(
-                self._download_media(chat_id, message_id, size_type, message)
-            )
-            self._downloads[key] = task
-            task.add_done_callback(lambda _: self._downloads.pop(key, None))
-        # A disconnected browser must not cancel a download shared by another request.
-        return await asyncio.shield(task)
+    ) -> Optional[MediaContent]:
+        key = ("media", chat_id, message_id, size_type)
 
-    async def _download_media(
-        self, chat_id: int, message_id: int, size_type: str, message: Any = None
-    ) -> Optional[str]:
-        try:
-            suffix = "_full" if size_type == "full" else ""
-            pattern = os.path.join(
-                self.images_dir, f"media_{chat_id}_{message_id}{suffix}.*"
-            )
-            cached = next(
-                (
-                    path
-                    for path in glob.iglob(pattern)
-                    if os.path.isfile(path) and not path.endswith(".part")
-                ),
-                None,
-            )
-            if cached:
-                return self._cache_url(cached)
-
-            if message is None:
-                entity = await self.client.get_entity(chat_id)
-                messages = await self.client.get_messages(entity, ids=[message_id])
-                if not messages:
+        async def download() -> Optional[MediaContent]:
+            try:
+                current = await self._message(chat_id, message_id)
+                media = getattr(current, "media", None)
+                if not media:
                     return None
-                message = messages[0]
-
-            if not message or not getattr(message, "media", None):
-                return None
-
-            ext = "jpg"
-            guessed_ext = utils.get_extension(message.media)
-            if guessed_ext:
-                ext = guessed_ext.lstrip(".")
-
-            if hasattr(message.media, "document"):
-                if hasattr(message.media.document, "mime_type"):
-                    if "webp" in message.media.document.mime_type:
-                        ext = "webp"
-                    elif "audio/ogg" in message.media.document.mime_type:
-                        ext = "ogg"
-                    elif "audio/mpeg" in message.media.document.mime_type:
-                        ext = "mp3"
-                    elif "video/mp4" in message.media.document.mime_type:
-                        ext = "mp4"
-
-            filename = f"media_{chat_id}_{message_id}{suffix}.{ext}"
-            path = os.path.join(self.images_dir, filename)
-            temporary_path = path + ".part"
-
-            if os.path.exists(path):
-                return self._cache_url(path)
-
-            is_sticker = False
-            is_audio = False
-            is_video = False
-
-            if isinstance(message.media, MessageMediaDocument):
-                for attr in getattr(message.media.document, "attributes", []):
-                    if isinstance(attr, DocumentAttributeSticker):
-                        is_sticker = True
-                    if isinstance(attr, DocumentAttributeAudio):
-                        is_audio = True
-                    if isinstance(attr, DocumentAttributeVideo):
-                        is_video = True
-
-            result = None
-
-            if is_sticker or is_audio or is_video:
-                result = await self.client.download_media(message, file=temporary_path)
-            else:
-                if size_type == "full":
-                    result = await self.client.download_media(
-                        message, file=temporary_path, thumb=None
+                if isinstance(media, MessageMediaDocument):
+                    document = media.document
+                    sticker = any(
+                        isinstance(attr, DocumentAttributeSticker)
+                        for attr in getattr(document, "attributes", [])
                     )
-                else:
-                    result = await self.client.download_media(
-                        message, file=temporary_path, thumb="m"
-                    )
-                    if not result:
-                        result = await self.client.download_media(
-                            message, file=temporary_path
+                    if not sticker:
+                        return MediaContent(
+                            data=None,
+                            mime_type=getattr(document, "mime_type", None)
+                            or "application/octet-stream",
                         )
+                    mime_type = (
+                        getattr(document, "mime_type", None)
+                        or "application/octet-stream"
+                    )
+                    data = await self.client.download_media(current, file=bytes)
+                else:
+                    mime_type = "image/jpeg"
+                    if size_type == "full":
+                        data = await self.client.download_media(current, file=bytes)
+                    else:
+                        data = None
+                        for thumb in ("m", "x", "s", 0):
+                            data = await self.client.download_media(
+                                current, file=bytes, thumb=thumb
+                            )
+                            if data:
+                                break
+                if isinstance(data, bytes) and data:
+                    return MediaContent(data=data, mime_type=mime_type)
+            except Exception as error:
+                logger.warning(
+                    "download_media_failed",
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    error=str(error),
+                )
+            return None
 
-            if result:
-                os.replace(result, path)
-                return self._cache_url(path)
+        return await self._shared(key, download)
 
-        except Exception as e:
-            logger.error(
-                "download_media_failed",
+    async def get_document(self, chat_id: int, message_id: int) -> Any:
+        try:
+            message = await self._message(chat_id, message_id)
+            media = getattr(message, "media", None)
+            return media.document if isinstance(media, MessageMediaDocument) else None
+        except Exception as error:
+            logger.warning(
+                "document_lookup_failed",
                 chat_id=chat_id,
                 message_id=message_id,
-                error=str(e),
-            )
-        finally:
-            if "temporary_path" in locals() and os.path.exists(temporary_path):
-                os.remove(temporary_path)
-        return None
-
-    async def get_custom_emoji_media(self, document_id: int) -> Optional[str]:
-        filename = f"emoji_{document_id}.webp"
-        path = os.path.join(self.images_dir, filename)
-
-        if os.path.exists(path):
-            return self._cache_url(path)
-
-        webm_path = path.replace(".webp", ".webm")
-        if os.path.exists(webm_path):
-            return self._cache_url(webm_path)
-
-        try:
-            result = await self.client(
-                functions.messages.GetCustomEmojiDocumentsRequest(
-                    document_id=[document_id]
-                )
-            )
-
-            if not result:
-                return None
-
-            document = result[0]
-
-            ext = "webp"
-            if document.mime_type == "video/webm":
-                ext = "webm"
-            elif document.mime_type == "application/x-tgsticker":
-                ext = "tgs"
-
-            final_path = os.path.join(self.images_dir, f"emoji_{document_id}.{ext}")
-
-            await self.client.download_media(document, file=final_path)
-
-            return self._cache_url(final_path)
-
-        except Exception as e:
-            logger.error(
-                "download_custom_emoji_failed", doc_id=document_id, error=str(e)
+                error=str(error),
             )
             return None
+
+    async def iter_document(
+        self, chat_id: int, message_id: int, document: Any, start: int, length: int
+    ) -> AsyncIterator[bytes]:
+        remaining = length
+        offset = start
+        for attempt in range(2):
+            if not remaining:
+                return
+            iterator = self.client.iter_download(
+                document,
+                offset=offset,
+                chunk_size=65536,
+                request_size=524288,
+                file_size=document.size,
+            )
+            try:
+                async for chunk in iterator:
+                    data = bytes(chunk[:remaining])
+                    remaining -= len(data)
+                    offset += len(data)
+                    yield data
+                    if not remaining:
+                        return
+                raise IOError("Telegram document stream ended early")
+            except (
+                errors.FileReferenceExpiredError,
+                errors.FileReferenceEmptyError,
+                errors.FileReferenceInvalidError,
+                errors.FilerefUpgradeNeededError,
+            ):
+                if attempt:
+                    raise
+                message = await self._message(chat_id, message_id, refresh=True)
+                media = getattr(message, "media", None)
+                replacement = (
+                    media.document if isinstance(media, MessageMediaDocument) else None
+                )
+                if not replacement or replacement.id != document.id:
+                    raise
+                document = replacement
+            finally:
+                # Telethon's iterator has no _sender until its first iteration.
+                if getattr(iterator, "_sender", None):
+                    await iterator.close()
+
+    async def get_custom_emoji_media(self, document_id: int) -> Optional[MediaContent]:
+        key = ("emoji", document_id)
+
+        async def download() -> Optional[MediaContent]:
+            try:
+                documents = await self.client(
+                    functions.messages.GetCustomEmojiDocumentsRequest(
+                        document_id=[document_id]
+                    )
+                )
+                if documents:
+                    document = documents[0]
+                    data = await self.client.download_media(document, file=bytes)
+                    if isinstance(data, bytes) and data:
+                        return MediaContent(
+                            data=data,
+                            mime_type=document.mime_type or "application/octet-stream",
+                        )
+            except Exception as error:
+                logger.warning(
+                    "download_custom_emoji_failed", doc_id=document_id, error=str(error)
+                )
+            return None
+
+        return await self._shared(key, download)
+
+    async def run_storage_maintenance(self) -> None:
+        # The LRU limit is enforced on every insertion.
+        return None
+
+    async def close(self) -> None:
+        tasks = [*self._preview_workers, *self._download_tasks]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._cache.clear()
+        self._messages.clear()
+        while not self._preview_queue.empty():
+            self._preview_queue.get_nowait()
+            self._preview_queue.task_done()
+        self._preview_pending.clear()
+        self._cache_size = 0

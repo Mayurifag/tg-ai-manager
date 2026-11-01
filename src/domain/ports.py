@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from src.domain.models import ActionLog, Chat, Message, SystemEvent
+from src.domain.models import ActionLog, Chat, MediaContent, Message, SystemEvent
 
 
 class ChatConnectionPort(ABC):
@@ -69,11 +69,11 @@ class TelegramMediaPort(ABC):
     @abstractmethod
     async def download_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"
-    ) -> Optional[str]:
+    ) -> Optional[MediaContent]:
         pass
 
     @abstractmethod
-    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
+    async def get_chat_avatar(self, chat_id: int) -> Optional[bytes]:
         pass
 
     @abstractmethod

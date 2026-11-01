@@ -7,7 +7,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.application.message_views import group_messages_into_albums
-from src.domain.models import ActionLog, Chat, ChatType, Message, SystemEvent
+from src.domain.models import (
+    ActionLog,
+    Chat,
+    ChatType,
+    MediaContent,
+    Message,
+    SystemEvent,
+)
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
 from src.infrastructure.logging import get_logger
 
@@ -170,6 +177,11 @@ class ChatInteractor:
                 logger.warning(
                     "chat_prefetch_failed", chat_id=chat.id, error=repr(error)
                 )
+            except asyncio.CancelledError:
+                # An old repository's shared download can be cancelled when an
+                # account is switched without cancelling this worker itself.
+                if asyncio.current_task().cancelling():
+                    raise
             finally:
                 self._prefetch_pending.discard((generation, chat.id, topic_id))
                 self._prefetch_queue.task_done()
@@ -362,12 +374,12 @@ class ChatInteractor:
     async def get_action_logs(self, limit: int = 50) -> List[ActionLog]:
         return await self.action_repo.get_logs(limit)
 
-    async def get_media_path(
+    async def get_media(
         self, chat_id: int, message_id: int, size_type: str = "preview"
-    ) -> Optional[str]:
+    ) -> Optional[MediaContent]:
         return await self.repository.download_media(chat_id, message_id, size_type)
 
-    async def get_chat_avatar(self, chat_id: int) -> Optional[str]:
+    async def get_chat_avatar(self, chat_id: int) -> Optional[bytes]:
         return await self.repository.get_chat_avatar(chat_id)
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:

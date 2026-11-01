@@ -1,5 +1,4 @@
 from functools import lru_cache
-import os
 from typing import Optional
 
 from pydantic_settings import BaseSettings
@@ -19,7 +18,3 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()  # type: ignore
-
-
-def get_cache_dir() -> str:
-    return os.path.abspath(os.environ.get("CACHE_DIR", "cache"))

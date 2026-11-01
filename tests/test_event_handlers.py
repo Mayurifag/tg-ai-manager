@@ -1,6 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.telegram.event_handlers import EventHandlers
 from src.domain.models import Message, SystemEvent
@@ -74,3 +74,29 @@ async def test_new_message_uses_reply_top_id_in_forum_chat():
     assert received[0].topic_id == 7
     assert received[0].topic_name == "Topic"
     get_topic_name.assert_awaited_once_with(100, 7)
+
+
+async def test_edited_message_invalidates_and_replaces_media_reference():
+    parser = FakeParser()
+    media = MagicMock()
+    event = FakeNewMessageEvent(forum=False)
+    handler = EventHandlers(None, parser, media, AsyncMock())
+
+    await handler._handle_edited_message(event)
+
+    media.invalidate_message.assert_called_once_with(100, 42)
+    media.remember_messages.assert_called_once_with(100, [event.message])
+
+
+async def test_deleted_messages_invalidate_each_media_reference():
+    parser = FakeParser()
+    media = MagicMock()
+    client = SimpleNamespace(get_entity=AsyncMock(return_value=None))
+    event = SimpleNamespace(chat_id=100, deleted_ids=[42, 43])
+    handler = EventHandlers(client, parser, media, AsyncMock())
+
+    await handler._handle_deleted_message(event)
+
+    assert media.invalidate_message.call_count == 2
+    media.invalidate_message.assert_any_call(100, 42)
+    media.invalidate_message.assert_any_call(100, 43)

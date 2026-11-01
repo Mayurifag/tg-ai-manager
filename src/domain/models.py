@@ -13,6 +13,13 @@ class ChatType(str, Enum):
     TOPIC = "topic"
 
 
+@dataclass(frozen=True)
+class MediaContent:
+    # Documents are streamed; image previews are held in memory.
+    data: Optional[bytes]
+    mime_type: str
+
+
 @dataclass
 class Chat:
     id: int

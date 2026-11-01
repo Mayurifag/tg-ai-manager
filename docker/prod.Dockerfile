@@ -7,7 +7,6 @@ FROM ghcr.io/astral-sh/uv:trixie-slim
 ENV PYTHONUNBUFFERED=1
 ENV VALKEY_URL="redis://127.0.0.1:6379/0"
 ENV DB_PATH="/app_data/data.db"
-ENV CACHE_DIR="/app_data/cache"
 # Use a custom venv location for consistency
 ENV UV_PROJECT_ENVIRONMENT="/venv"
 ENV PATH="/venv/bin:$PATH"
