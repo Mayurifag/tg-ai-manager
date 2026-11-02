@@ -55,6 +55,7 @@ def test_adapter_readiness_requires_handlers_and_write_worker():
     adapter.client.is_connected.return_value = True
     adapter._is_connected_flag = True
     adapter._event_handler_registered = True
+    adapter._retired = False
     adapter._write_queue = Mock()
     adapter._write_queue.is_running.return_value = True
     assert adapter.is_connected()
@@ -62,6 +63,9 @@ def test_adapter_readiness_requires_handlers_and_write_worker():
     assert not adapter.is_connected()
     adapter._write_queue.is_running.return_value = True
     adapter._event_handler_registered = False
+    assert not adapter.is_connected()
+    adapter._event_handler_registered = True
+    adapter._retired = True
     assert not adapter.is_connected()
 
 

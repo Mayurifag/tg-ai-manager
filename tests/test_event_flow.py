@@ -9,7 +9,12 @@ a real Telegram connection or Quart app context.
 import asyncio
 import json
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from src.adapters.valkey_repo import ValkeyEventRepository
+from src.domain.errors import LogUnavailable
 from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.event_bus import EventBus
 
@@ -21,6 +26,71 @@ def _make_event(**kwargs) -> SystemEvent:
         text=kwargs.get("text", "hello"),
         chat_name=kwargs.get("chat_name", "test-chat"),
     )
+
+
+async def test_log_write_outage_is_reported_without_stopping_event_delivery():
+    events = ValkeyEventRepository("redis://localhost")
+    pipe = MagicMock()
+    pipe.__aenter__.return_value = pipe
+    pipe.execute = AsyncMock(side_effect=OSError("synthetic cache outage"))
+    events.redis = MagicMock()
+    events.redis.pipeline.return_value = pipe
+    message = _make_event()
+    with pytest.raises(LogUnavailable):
+        await events.add_event(message)
+
+    bus = EventBus()
+    receiver = AsyncMock()
+    bus.subscribe(events.add_event)
+    bus.subscribe(receiver)
+    await bus.dispatch(message)
+    receiver.assert_awaited_once_with(message)
+
+
+async def test_log_insertion_and_cleanup_use_bounded_atomic_retention(monkeypatch):
+    events = ValkeyEventRepository("redis://localhost")
+    pipe = MagicMock()
+    pipe.__aenter__.return_value = pipe
+    pipe.execute = AsyncMock(return_value=[0, 0, True])
+    events.redis = MagicMock()
+    events.redis.pipeline.return_value = pipe
+    monkeypatch.setattr("src.adapters.valkey_repo.time.time", lambda: 50_000)
+
+    await events.add_event(_make_event())
+    events.redis.pipeline.assert_called_with(transaction=True)
+    pipe.zadd.assert_called_once()
+    pipe.zremrangebyscore.assert_called_with("system_events", "-inf", 39_200)
+    pipe.zremrangebyrank.assert_called_with("system_events", 0, -10_001)
+    pipe.expire.assert_called_with("system_events", 10_800)
+    pipe.execute.assert_awaited_once()
+
+    pipe.reset_mock()
+    await events.cleanup_expired()
+    pipe.zremrangebyscore.assert_called_once_with("system_events", "-inf", 39_200)
+    pipe.zremrangebyrank.assert_called_once_with("system_events", 0, -10_001)
+    pipe.expire.assert_called_once_with("system_events", 10_800)
+    pipe.execute.assert_awaited_once()
+
+
+async def test_event_persistence_does_not_copy_discarded_message_payload():
+    class ExpensivePayload:
+        def __deepcopy__(self, _memo):
+            raise AssertionError("discarded payload must not be copied")
+
+    events = ValkeyEventRepository("redis://localhost")
+    pipe = MagicMock()
+    pipe.__aenter__.return_value = pipe
+    pipe.execute = AsyncMock()
+    events.redis = MagicMock()
+    events.redis.pipeline.return_value = pipe
+    event = _make_event()
+    event.message_model = ExpensivePayload()
+    event.rendered_html = "synthetic rendering"
+
+    await events.add_event(event)
+    payload = json.loads(next(iter(pipe.zadd.call_args.args[1])))
+    assert payload["message_model"] is None and payload["rendered_html"] is None
+    assert payload["text"] == "hello"
 
 
 async def test_subscriber_receives_dispatched_event():
@@ -113,6 +183,40 @@ async def test_error_in_subscriber_does_not_block_subsequent_subscribers():
     assert reached == ["ok"]
 
 
+async def test_stalled_action_log_does_not_block_read_event_delivery(monkeypatch):
+    from src.application.interactors import ChatInteractor
+
+    monkeypatch.setattr("src.infrastructure.action_logging.ACTION_LOG_TIMEOUT", 0.01)
+    action_repo = MagicMock()
+
+    async def stalled(*_):
+        await asyncio.Event().wait()
+
+    action_repo.add_log = AsyncMock(side_effect=stalled)
+    interactor = ChatInteractor(MagicMock(), action_repo, MagicMock())
+    bus = EventBus()
+    received = []
+
+    async def collect(event):
+        received.append(event.type)
+
+    bus.subscribe(interactor.handle_event)
+    bus.subscribe(collect)
+    await asyncio.wait_for(
+        bus.dispatch(
+            SystemEvent(
+                type="read",
+                text="done",
+                chat_name="Synthetic",
+                chat_id=42,
+                read_origin="manual",
+            )
+        ),
+        timeout=0.5,
+    )
+    assert received == ["read"]
+
+
 async def test_no_subscribers_dispatch_is_safe():
     """Dispatching with no subscribers registered does not raise."""
     bus = EventBus()
@@ -159,10 +263,10 @@ async def test_sse_queue_subscriber_receives_event():
 
 
 async def test_sse_preserves_64_bit_custom_emoji_id():
-    from src.web.sse import broadcast_event, connected_queues
+    from src.web.sse import EventBroadcaster
 
-    queue = asyncio.Queue()
-    connected_queues.add(queue)
+    broadcaster = EventBroadcaster()
+    subscription = broadcaster.subscribe(chat_id=10)
     message = Message(
         id=1,
         text="",
@@ -175,19 +279,20 @@ async def test_sse_preserves_64_bit_custom_emoji_id():
             )
         ],
     )
-    try:
-        await broadcast_event(
-            SystemEvent(
-                type="reaction_update", text="", chat_name="Chat", message_model=message
-            )
+    await broadcaster.broadcast(
+        SystemEvent(
+            type="reaction_update",
+            text="",
+            chat_name="Chat",
+            chat_id=10,
+            message_model=message,
         )
-        payload = json.loads(await queue.get())
-        assert (
-            payload["message_model"]["reactions"][0]["custom_emoji_id"]
-            == "9223372036854775807"
-        )
-    finally:
-        connected_queues.remove(queue)
+    )
+    payload = json.loads(await subscription.queue.get())
+    assert (
+        payload["message_model"]["reactions"][0]["custom_emoji_id"]
+        == "9223372036854775807"
+    )
 
 
 async def test_sse_queue_receives_exactly_one_event_per_dispatch():

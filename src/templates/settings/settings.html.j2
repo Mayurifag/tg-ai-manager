@@ -15,36 +15,36 @@
 <div class="settings-container">
     <div class="section-card">
         <div class="gs-grid">
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_service_messages')"
+            <label class="gs-card toggle-card"
                 data-tooltip="Automatically mark service messages (joins, pins, etc.) as read.">
-                <input type="checkbox" id="t-service" {% if settings.autoread_service_messages %}checked{% endif %}>
+                <input type="checkbox" id="t-service" onchange="toggleSetting('autoread_service_messages')" {% if settings.autoread_service_messages %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">Service Messages</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
 
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_polls')"
+            <label class="gs-card toggle-card"
                 data-tooltip="Automatically read messages containing Polls.">
-                <input type="checkbox" id="t-polls" {% if settings.autoread_polls %}checked{% endif %}>
+                <input type="checkbox" id="t-polls" onchange="toggleSetting('autoread_polls')" {% if settings.autoread_polls %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">Polls</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
 
-            <label class="gs-card toggle-card" onclick="toggleSetting('autoread_self')"
+            <label class="gs-card toggle-card"
                 data-tooltip="Mark chat as read if I send a message from another device.">
-                <input type="checkbox" id="t-self" {% if settings.autoread_self %}checked{% endif %}>
+                <input type="checkbox" id="t-self" onchange="toggleSetting('autoread_self')" {% if settings.autoread_self %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">My Messages</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
 
-            <label class="gs-card toggle-card" onclick="toggleSetting('debug_mode')"
+            <label class="gs-card toggle-card"
                 data-tooltip="Enable right sidebar with live event stream and dry-run tools.">
-                <input type="checkbox" id="t-debug" {% if settings.debug_mode %}checked{% endif %}>
+                <input type="checkbox" id="t-debug" onchange="toggleSetting('debug_mode')" {% if settings.debug_mode %}checked{% endif %}>
                 <div class="gs-content">
                     <span class="gs-label">Debug Mode</span>
                     <span class="gs-status-badge"></span>
@@ -52,6 +52,7 @@
             </label>
         </div>
 
+        <p id="settings-status" role="status" aria-live="polite"></p>
         <div class="gs-expanded-row">
             <div class="gs-display-card {{ 'has-content' if settings.autoread_bots else '' }}"
                 data-tooltip="Messages from these usernames will be auto-read everywhere.">
@@ -93,13 +94,15 @@
 
     <div class="section-card">
         <div style="font-size:1rem;font-weight:600;color:#ccc;margin-bottom:12px;">🤖 AI Configuration</div>
+        <p>Enabling AI Read for a chat or topic sends eligible message text to Google's Gemini API. Configure a model and API key first. Requests may incur charges; long messages, timeouts, and invalid responses are skipped. A positive result still requires the selective unread safety check.</p>
+        <p>The app requests <code>store=false</code> for optional API logs, but this does not prevent Google's abuse-monitoring retention or other processing. Google may use unpaid-tier content to improve its products. See <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer">Gemini API terms</a>.</p>
         <div class="gs-expanded-row">
             <div class="gs-display-card">
                 <div class="gs-display-header">
                     <span>AI Provider</span>
                 </div>
                 <div class="gs-display-content">
-                    <select id="select-ai-provider"
+                    <select id="select-ai-provider" aria-label="AI provider"
                         style="background:#2a2a2c;border:1px solid #444;color:#fff;border-radius:4px;padding:6px 10px;width:100%;"
                         onchange="patchSetting({ai_provider: this.value})">
                         <option value="gemini" {% if not settings.ai_provider or settings.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option>
@@ -157,104 +160,109 @@
 
     {% if settings.debug_mode %}
     <div class="danger-zone">
-        <button type="button" class="reset-btn" id="reset-btn">Reset everything</button>
+        <button type="button" class="reset-btn" id="reset-btn">Forget local account</button>
     </div>
     {% endif %}
 </div>
 
-<div id="modal-bots" class="modal-overlay">
+<dialog id="modal-bots" class="modal-overlay" aria-labelledby="modal-bots-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Edit Autoread Users</h3>
-            <span class="modal-close" onclick="closeModal('modal-bots')">&times;</span>
+            <h3 id="modal-bots-title">Edit Autoread Users</h3>
+            <button type="button" class="modal-close" onclick="closeModal('modal-bots')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <textarea id="input-bots"
+            <textarea id="input-bots" aria-label="Autoread usernames"
                 style="width:100%; height:100px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 placeholder="@BotFather, @OtherBot">{{ settings.autoread_bots }}</textarea>
             <div class="help-text">Comma separated list of usernames.</div>
+            <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-bots')">Cancel</button>
             <button class="btn-save" onclick="saveField('autoread_bots', 'input-bots')">Save</button>
         </div>
     </div>
-</div>
+</dialog>
 
-<div id="modal-regex" class="modal-overlay">
+<dialog id="modal-regex" class="modal-overlay" aria-labelledby="modal-regex-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Edit Autoread Regex</h3>
-            <span class="modal-close" onclick="closeModal('modal-regex')">&times;</span>
+            <h3 id="modal-regex-title">Edit Autoread Regex</h3>
+            <button type="button" class="modal-close" onclick="closeModal('modal-regex')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="text" id="input-regex"
+            <input type="text" id="input-regex" aria-label="Autoread regular expression"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 value="{{ settings.autoread_regex }}" placeholder="(crypto|buy|sell)">
             <div class="help-text">Regular expression to match against message text.</div>
+            <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-regex')">Cancel</button>
             <button class="btn-save" onclick="saveField('autoread_regex', 'input-regex')">Save</button>
         </div>
     </div>
-</div>
+</dialog>
 
-<div id="modal-ai-model" class="modal-overlay">
+<dialog id="modal-ai-model" class="modal-overlay" aria-labelledby="modal-ai-model-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Edit AI Model</h3>
-            <span class="modal-close" onclick="closeModal('modal-ai-model')">&times;</span>
+            <h3 id="modal-ai-model-title">Edit AI Model</h3>
+            <button type="button" class="modal-close" onclick="closeModal('modal-ai-model')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="text" id="input-ai-model"
+            <input type="text" id="input-ai-model" aria-label="AI model"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 value="{{ settings.ai_model }}" placeholder="gemini-2.0-flash-lite-preview">
             <div class="help-text">The model identifier for the selected AI provider.</div>
+            <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-ai-model')">Cancel</button>
             <button class="btn-save" onclick="saveAiModel()">Save</button>
         </div>
     </div>
-</div>
+</dialog>
 
-<div id="modal-ai-key" class="modal-overlay">
+<dialog id="modal-ai-key" class="modal-overlay" aria-labelledby="modal-ai-key-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Edit AI API Key</h3>
-            <span class="modal-close" onclick="closeModal('modal-ai-key')">&times;</span>
+            <h3 id="modal-ai-key-title">Edit AI API Key</h3>
+            <button type="button" class="modal-close" onclick="closeModal('modal-ai-key')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="password" id="input-ai-key"
+            <input type="password" id="input-ai-key" aria-label="Gemini API key"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 placeholder="Enter your Gemini API key">
             <div class="help-text">Your API key is stored securely and never displayed again.</div>
+            <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-ai-key')">Cancel</button>
             <button class="btn-save" onclick="saveAiKey()">Save</button>
         </div>
     </div>
-</div>
+</dialog>
 
-<div id="modal-ai-prompt" class="modal-overlay">
+<dialog id="modal-ai-prompt" class="modal-overlay" aria-labelledby="modal-ai-prompt-title">
     <div class="modal-content">
         <div class="modal-header">
-            <h3>Edit AI Prompt</h3>
-            <span class="modal-close" onclick="closeModal('modal-ai-prompt')">&times;</span>
+            <h3 id="modal-ai-prompt-title">Edit AI Prompt</h3>
+            <button type="button" class="modal-close" onclick="closeModal('modal-ai-prompt')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <textarea id="input-ai-prompt"
+            <textarea id="input-ai-prompt" aria-label="AI prompt"
                 style="width:100%; height:120px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;">{{ settings.ai_prompt }}</textarea>
             <div class="help-text">System prompt sent to the AI model for context.</div>
+            <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeModal('modal-ai-prompt')">Cancel</button>
             <button class="btn-save" onclick="saveAiPrompt()">Save</button>
         </div>
     </div>
-</div>
+</dialog>
 
 {% endblock %}
 

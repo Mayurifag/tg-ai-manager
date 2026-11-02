@@ -40,13 +40,15 @@ def _mock_client(response_text: str) -> MagicMock:
 
 def test_gemini_classifier_is_ai_classifier():
     """GeminiClassifier must be a concrete implementation of AIClassifier."""
-    with patch("src.ai.gemini.google.genai.Client", return_value=_mock_client("true")):
+    with patch(
+        "src.ai.gemini.google.genai.Client", return_value=_mock_client('{"is_ad":true}')
+    ):
         classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
     assert isinstance(classifier, AIClassifier)
 
 
 # ---------------------------------------------------------------------------
-# Happy-path: various "true" / "false" response forms
+# Happy-path: structured boolean response
 # ---------------------------------------------------------------------------
 
 
@@ -54,14 +56,8 @@ def test_gemini_classifier_is_ai_classifier():
 @pytest.mark.parametrize(
     "response_text, expected",
     [
-        ("true", True),
-        ("True", True),
-        ("TRUE", True),
-        ("  true  ", True),
-        ("false", False),
-        ("False", False),
-        ("FALSE", False),
-        ("  false\n", False),
+        ('{"is_ad": true}', True),
+        (' {"is_ad": false} ', False),
     ],
 )
 async def test_classify_is_ad_parses_response(response_text: str, expected: bool):
@@ -80,7 +76,7 @@ async def test_classify_is_ad_parses_response(response_text: str, expected: bool
 
 async def test_classify_reuses_client():
     with patch(
-        "src.ai.gemini.google.genai.Client", return_value=_mock_client("true")
+        "src.ai.gemini.google.genai.Client", return_value=_mock_client('{"is_ad":true}')
     ) as mock_cls:
         classifier = GeminiClassifier(api_key="my-key", model="gemini-2.0-flash")
         await classifier.classify_is_ad("some text")
@@ -89,13 +85,26 @@ async def test_classify_reuses_client():
 
 
 async def test_gemini_request_disables_optional_logging():
-    client = _mock_client("false")
+    client = _mock_client('{"is_ad":false}')
     with patch("src.ai.gemini.google.genai.Client", return_value=client):
         classifier = GeminiClassifier(api_key="test-key", model="gemini-2.0-flash")
         await classifier.classify_is_ad("test")
-    assert client.aio.models.generate_content.await_args.kwargs["config"] == {
-        "store": False
-    }
+    config = client.aio.models.generate_content.await_args.kwargs["config"]
+    assert config.store is False
+    assert config.response_mime_type == "application/json"
+    assert "untrusted data" in config.system_instruction
+    assert config.response_schema["required"] == ["is_ad"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "true", "{}", '{"is_ad":1}', '{"is_ad":"true"}', '{"is_ad":true,"extra":1}'],
+)
+async def test_malformed_response_is_not_a_positive_classification(value):
+    with patch("src.ai.gemini.google.genai.Client", return_value=_mock_client(value)):
+        classifier = GeminiClassifier(api_key="test-key", model="gemini-test")
+        with pytest.raises(ValueError, match="Invalid AI classification response"):
+            await classifier.classify_is_ad("hello")
 
 
 # ---------------------------------------------------------------------------

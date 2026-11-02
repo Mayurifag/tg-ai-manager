@@ -1,10 +1,20 @@
-from quart import Blueprint, jsonify, render_template, request
+import hmac
+import re
+
+from quart import Blueprint, current_app, jsonify, render_template, request
 
 from src.config import get_settings
-from src.container import _get_tg_adapter, get_rule_service, get_user_repo
-from src.rules.models import RuleType
+from src.container import (
+    _get_tg_adapter,
+    get_rule_service,
+    get_user_repo,
+    reload_tg_adapter,
+)
+from src.rules.models import DEFAULT_AUTOREACT_EMOJI, RuleType
+from src.rules.ports import InheritedRuleError
 from src.rules.sqlite_repo import SqliteRuleRepository
 from src.users.models import User
+from src.requests import optional_int, require_int
 from src.web.requests import (
     ApplyAllTopicsRequest,
     AutoreactConfigRequest,
@@ -19,6 +29,16 @@ settings_bp = Blueprint("settings", __name__)
 
 def bad_request(error: BadRequest):
     return jsonify({"error": str(error)}), 400
+
+
+def rule_result(rule, topic_id):
+    return jsonify(
+        {
+            "status": "ok",
+            "enabled": bool(rule),
+            "inherited": bool(rule and topic_id is not None and rule.topic_id is None),
+        }
+    )
 
 
 @settings_bp.route("/settings", methods=["GET"])
@@ -42,40 +62,22 @@ async def save_settings():
     if not current_user:
         return jsonify({"error": "User not found"}), 404
 
-    updated_user = User(
-        id=current_user.id,
-        api_id=current_user.api_id,
-        api_hash=current_user.api_hash,
-        username=current_user.username,
-        session_string=current_user.session_string,
-        autoread_service_messages=bool(
-            patch.get(
-                "autoread_service_messages", current_user.autoread_service_messages
-            )
-        ),
-        autoread_polls=bool(patch.get("autoread_polls", current_user.autoread_polls)),
-        autoread_self=bool(patch.get("autoread_self", current_user.autoread_self)),
-        autoread_bots=patch.get("autoread_bots", current_user.autoread_bots),
-        autoread_regex=patch.get("autoread_regex", current_user.autoread_regex),
-        debug_mode=bool(patch.get("debug_mode", current_user.debug_mode)),
-        ai_provider=patch.get("ai_provider", current_user.ai_provider),
-        ai_model=patch.get("ai_model", current_user.ai_model),
-        ai_api_key=patch.get("ai_api_key", current_user.ai_api_key),
-        ai_prompt=patch.get("ai_prompt", current_user.ai_prompt),
+    updated = await repo.update_fields(
+        current_user.id, patch.values, expected_session=current_user.session_string
     )
-
-    await repo.save_user(updated_user)
+    if not updated:
+        return jsonify({"error": "Account changed; retry the request"}), 409
+    if patch.values.keys() & {"ai_provider", "ai_model", "ai_api_key", "ai_prompt"}:
+        await get_rule_service().invalidate_ai()
     return jsonify({"status": "ok"})
 
 
 @settings_bp.route("/api/settings/reset", methods=["POST"])
 async def reset_account():
-    adapter = _get_tg_adapter()
-    if adapter:
-        await adapter.disconnect()
-
-    repo = get_user_repo()
-    await repo.delete_user(1)
+    async with current_app.login_lock:
+        await reload_tg_adapter(session_string=None)
+        repo = get_user_repo()
+        await repo.delete_user(1)
 
     return jsonify({"status": "ok"})
 
@@ -91,8 +93,13 @@ async def api_toggle_autoread():
     except BadRequest as e:
         return bad_request(e)
 
-    await rule_service.toggle_autoread(body.chat_id, body.topic_id, body.enabled)
-    return jsonify({"status": "ok"})
+    try:
+        rule = await rule_service.toggle_autoread(
+            body.chat_id, body.topic_id, body.enabled
+        )
+    except InheritedRuleError as e:
+        return jsonify({"error": str(e)}), 409
+    return rule_result(rule, body.topic_id)
 
 
 @settings_bp.route("/api/rules/ai_autoread/toggle", methods=["POST"])
@@ -103,8 +110,13 @@ async def api_toggle_ai_autoread():
     except BadRequest as e:
         return bad_request(e)
 
-    await rule_service.toggle_ai_autoread(body.chat_id, body.topic_id, body.enabled)
-    return jsonify({"status": "ok"})
+    try:
+        rule = await rule_service.toggle_ai_autoread(
+            body.chat_id, body.topic_id, body.enabled
+        )
+    except InheritedRuleError as e:
+        return jsonify({"error": str(e)}), 409
+    return rule_result(rule, body.topic_id)
 
 
 @settings_bp.route("/api/rules/autoread/apply_all", methods=["POST"])
@@ -127,26 +139,36 @@ async def api_set_autoreact():
     except BadRequest as e:
         return bad_request(e)
 
-    await rule_service.set_autoreact(
-        body.chat_id, body.topic_id, body.enabled, body.config
-    )
-    return jsonify({"status": "ok"})
+    try:
+        rule = await rule_service.set_autoreact(
+            body.chat_id, body.topic_id, body.enabled, body.config
+        )
+    except InheritedRuleError as e:
+        return jsonify({"error": str(e)}), 409
+    return rule_result(rule, body.topic_id)
 
 
 @settings_bp.route("/api/rules/autoreact/get", methods=["GET"])
 async def api_get_autoreact():
     rule_service = get_rule_service()
-    chat_id = request.args.get("chat_id", type=int)
-    topic_id = request.args.get("topic_id", type=int)
-
-    if not chat_id:
-        return jsonify({"error": "chat_id required"}), 400
+    try:
+        params = request.args.to_dict()
+        chat_id = require_int(params, "chat_id")
+        topic_id = optional_int(params, "topic_id")
+    except BadRequest as e:
+        return bad_request(e)
 
     rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
 
     if rule:
-        return jsonify({"enabled": True, "config": rule.config})
-    return jsonify({"enabled": False, "config": {}})
+        return jsonify(
+            {
+                "enabled": True,
+                "config": rule.config,
+                "inherited": bool(topic_id and rule.topic_id is None),
+            }
+        )
+    return jsonify({"enabled": False, "config": {}, "inherited": False})
 
 
 @settings_bp.route("/api/debug/process", methods=["POST"])
@@ -157,8 +179,10 @@ async def api_debug_process():
     except BadRequest as e:
         return bad_request(e)
 
-    result = await rule_service.simulate_process_message(body.chat_id, body.msg_id)
-    return jsonify(result)
+    result = await rule_service.simulate_process_message(
+        body.chat_id, body.msg_id, topic_id=body.topic_id, evaluate_ai=body.evaluate_ai
+    )
+    return jsonify(result), 400 if "error" in result else 200
 
 
 @settings_bp.route("/api/rules/<int:rule_id>", methods=["DELETE"])
@@ -172,23 +196,54 @@ async def api_delete_rule(rule_id: int):
 @settings_bp.route("/api/rules/export", methods=["GET"])
 async def api_export_rules():
     settings = get_settings()
-    rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
-    all_rules = await rule_repo.get_all()
-
-    user_repo = get_user_repo()
-    user = await user_repo.get_user(1)
+    expected = settings.RULES_EXPORT_TOKEN
+    authorization = request.headers.get("Authorization", "")
+    supplied = (
+        authorization.removeprefix("Bearer ")
+        if authorization.startswith("Bearer ")
+        else ""
+    )
+    if (
+        not isinstance(expected, str)
+        or not re.fullmatch(r"[A-Za-z0-9._~-]{32,256}", expected, re.ASCII)
+        or not hmac.compare_digest(supplied.encode("utf-8"), expected.encode("ascii"))
+    ):
+        response = jsonify({"error": "Export authorization required"})
+        response.headers["Cache-Control"] = "no-store"
+        return response, 403
+    # Account replacement and reset use this same lock. Do not label rules
+    # fetched from one account with a subsequently activated account's ID.
+    async with current_app.login_lock:
+        rule_repo = SqliteRuleRepository(db_path=settings.DB_PATH)
+        all_rules = await rule_repo.get_all()
+        user = await get_user_repo().get_user(1)
+        adapter = _get_tg_adapter()
+        account_id = (
+            getattr(adapter, "_self_id", None)
+            if adapter and adapter.is_connected()
+            else None
+        )
     if not user:
         user = User()
 
-    rules_list = [
-        {
-            "rule_type": rule.rule_type.value,
-            "chat_id": rule.chat_id,
-            "topic_id": rule.topic_id,
-            "config": rule.config,
-        }
-        for rule in all_rules
-    ]
+    rules_list = []
+    for rule in all_rules:
+        config = rule.config
+        if rule.rule_type == RuleType.AUTOREACT and isinstance(config, dict):
+            # Older saved rules may omit fields that were implicit at runtime.
+            # Make those defaults explicit without weakening import validation.
+            config = dict(config)
+            config.setdefault("emoji", DEFAULT_AUTOREACT_EMOJI)
+            if config.get("target_users") is None:
+                config["target_users"] = []
+        rules_list.append(
+            {
+                "rule_type": rule.rule_type.value,
+                "chat_id": rule.chat_id,
+                "topic_id": rule.topic_id,
+                "config": config,
+            }
+        )
 
     user_settings = {
         "autoread_service_messages": user.autoread_service_messages,
@@ -199,11 +254,16 @@ async def api_export_rules():
         "debug_mode": user.debug_mode,
         "ai_provider": user.ai_provider,
         "ai_model": user.ai_model,
-        "ai_api_key": user.ai_api_key,
         "ai_prompt": user.ai_prompt,
     }
 
-    return jsonify({"rules": rules_list, "user_settings": user_settings})
+    if type(account_id) is not int or account_id <= 0:
+        account_id = None
+    response = jsonify(
+        {"account_id": account_id, "rules": rules_list, "user_settings": user_settings}
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @settings_bp.route("/api/rules", methods=["GET"])

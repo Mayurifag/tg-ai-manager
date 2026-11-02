@@ -80,6 +80,27 @@ img.emoji {
   outline-offset: 3px;
 }
 
+dialog.modal-overlay,
+dialog#lightbox {
+  box-sizing: border-box;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+}
+
+dialog.modal-overlay:not([open]),
+dialog#lightbox:not([open]) {
+  display: none;
+}
+
+dialog.modal-overlay::backdrop,
+dialog#lightbox::backdrop {
+  background: transparent;
+}
+
 /* Common Sidebar Styles */
 .sidebar-top {
   margin-bottom: 20px;
@@ -135,6 +156,13 @@ img.emoji {
 .setting-option:hover {
   color: #fff;
   background: #2a2a2c;
+}
+
+button.setting-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
 }
 
 /* USER PROFILE SECTION (Pinned Bottom) */

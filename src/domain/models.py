@@ -34,6 +34,19 @@ class Chat:
     last_message_id: Optional[int] = None
 
 
+@dataclass(frozen=True)
+class ForumTopicCursor:
+    date: datetime
+    message_id: int
+    topic_id: int
+
+
+@dataclass
+class ForumTopicPage:
+    topics: List[Chat]
+    next_cursor: Optional[ForumTopicCursor]
+
+
 @dataclass
 class Reaction:
     emoji: str
@@ -61,6 +74,8 @@ class Message:
     has_media: bool = False
     is_photo: bool = False
     is_video: bool = False
+    media_width: Optional[int] = None
+    media_height: Optional[int] = None
     is_sticker: bool = False
     sticker_emoji: Optional[str] = None
     is_document: bool = False
@@ -87,6 +102,24 @@ class Message:
     # Grouping (Albums)
     grouped_id: Optional[int] = None
     album_parts: Optional[List["Message"]] = None  # Holds other messages in the group
+    # Raw Telegram text is for decisions; text contains sanitized presentation HTML.
+    raw_text: Optional[str] = None
+
+    @property
+    def media_geometry(self) -> tuple[int, int, int]:
+        # shortcut: unknown or >20:1 dimensions use a 4:3 placeholder;
+        # revisit if legitimate Telegram media needs more extreme ratios.
+        width, height = self.media_width, self.media_height
+        if (
+            type(width) is not int
+            or type(height) is not int
+            or not 0 < width <= 100_000
+            or not 0 < height <= 100_000
+            or width > height * 20
+            or height > width * 20
+        ):
+            return 320, 4, 3
+        return min(520, width, max(1, 480 * width // height)), width, height
 
     def get_preview_text(self) -> str:
         """Returns a text representation of the message, handling media fallbacks."""
@@ -119,6 +152,13 @@ class Message:
         return "Message"
 
 
+@dataclass(frozen=True)
+class MessageContext:
+    message: Message
+    topic_id: Optional[int]
+    scope_known: bool
+
+
 @dataclass
 class SystemEvent:
     type: str  # "message", "edited", "deleted", "action", "reaction_update"
@@ -132,6 +172,9 @@ class SystemEvent:
     message_model: Optional[Message] = None
     rendered_html: Optional[str] = None
     is_read: bool = False
+    scope_known: bool = True
+    read_origin: Optional[str] = None
+    read_through: Optional[int] = None
 
 
 @dataclass

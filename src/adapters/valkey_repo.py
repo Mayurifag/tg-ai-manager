@@ -2,8 +2,9 @@ import json
 import time
 from datetime import datetime
 from typing import List, TypeVar, Generic, Dict, Any
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from redis.asyncio import Redis
+from src.domain.errors import LogUnavailable
 from src.domain.ports import ActionRepository, EventRepository
 from src.domain.models import ActionLog, SystemEvent
 from src.infrastructure.logging import get_logger
@@ -11,6 +12,8 @@ from src.infrastructure.logging import get_logger
 logger = get_logger(__name__)
 
 T = TypeVar("T")
+MAX_LOG_ENTRIES = 10_000
+LOG_RETENTION_SECONDS = 3 * 60 * 60
 
 
 class BaseValkeyLogRepository(Generic[T]):
@@ -39,42 +42,61 @@ class BaseValkeyLogRepository(Generic[T]):
     async def close(self) -> None:
         await self.redis.aclose()
 
+    def _queue_retention(self, pipe: Any) -> None:
+        pipe.zremrangebyscore(self.key_prefix, "-inf", time.time() - self.ttl_seconds)
+        pipe.zremrangebyrank(self.key_prefix, 0, -MAX_LOG_ENTRIES - 1)
+        # Last-write/cleanup expiry is a fallback if the hourly job stops.
+        # Individual entries can survive up to roughly twice the TTL in that case.
+        pipe.expire(self.key_prefix, self.ttl_seconds)
+
     async def _add_item(self, item_dict: Dict[str, Any], score: float) -> None:
         try:
-            # 1. Serialize
             data_str = json.dumps(self._serialize(item_dict))
-
-            # 2. Add to Sorted Set
-            await self.redis.zadd(self.key_prefix, {data_str: score})
-
-        except Exception as e:
-            logger.error(f"{self.key_prefix}_add_failed", error=str(e))
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.zadd(self.key_prefix, {data_str: score})
+                self._queue_retention(pipe)
+                await pipe.execute()
+        except Exception as error:
+            logger.warning(
+                f"{self.key_prefix}_add_failed", category=type(error).__name__
+            )
+            raise LogUnavailable("History storage unavailable") from error
 
     async def cleanup_expired(self) -> None:
-        """Removes items older than ttl_seconds."""
+        """Trim expired and excess records even if no new events arrive."""
         try:
-            now = time.time()
-            cutoff = now - self.ttl_seconds
-            removed = await self.redis.zremrangebyscore(self.key_prefix, "-inf", cutoff)
+            async with self.redis.pipeline(transaction=True) as pipe:
+                self._queue_retention(pipe)
+                expired, excess, _ = await pipe.execute()
+            removed = expired + excess
             if removed > 0:
                 logger.info(f"{self.key_prefix}_cleanup", removed_count=removed)
-        except Exception as e:
-            logger.error(f"{self.key_prefix}_cleanup_failed", error=str(e))
+        except Exception as error:
+            logger.warning(
+                f"{self.key_prefix}_cleanup_failed", category=type(error).__name__
+            )
 
     async def _fetch_items(self, limit: int) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            return []
         try:
             # ZREVRANGE: Newest (highest score) first
-            items = await self.redis.zrevrange(self.key_prefix, 0, limit - 1)
+            # shortcut: one request returns at most 1,000 log records; revisit
+            # if an explicit paginated history interface needs larger pages.
+            items = await self.redis.zrevrange(self.key_prefix, 0, min(limit, 1000) - 1)
             return [json.loads(i) for i in items]
-        except Exception as e:
-            logger.error(f"{self.key_prefix}_fetch_failed", error=str(e))
-            return []
+        except Exception as error:
+            logger.warning(
+                f"{self.key_prefix}_fetch_failed", category=type(error).__name__
+            )
+            raise LogUnavailable("History storage unavailable") from error
 
 
 class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepository):
     def __init__(self, redis_url: str):
-        # 3 Hours TTL (10800 seconds)
-        super().__init__(redis_url, key_prefix="action_log", ttl_seconds=10800)
+        super().__init__(
+            redis_url, key_prefix="action_log", ttl_seconds=LOG_RETENTION_SECONDS
+        )
         self.sequence_key = "action_log_seq"
 
     async def add_log(self, log: ActionLog) -> None:
@@ -87,40 +109,52 @@ class ValkeyActionRepository(BaseValkeyLogRepository[ActionLog], ActionRepositor
             log_dict = asdict(log)
 
             await self._add_item(log_dict, log.date.timestamp())
-        except Exception as e:
-            logger.error("action_log_add_wrapper_failed", error=str(e))
+        except LogUnavailable:
+            raise
+        except Exception as error:
+            logger.warning(
+                "action_log_add_wrapper_failed", category=type(error).__name__
+            )
+            raise LogUnavailable("History storage unavailable") from error
 
     async def get_logs(self, limit: int = 50) -> List[ActionLog]:
         dicts = await self._fetch_items(limit)
         results = []
-        for d in dicts:
-            # Reconstruct datetime
-            if "date" in d and isinstance(d["date"], str):
-                d["date"] = datetime.fromisoformat(d["date"])
-            results.append(ActionLog(**d))
+        try:
+            for d in dicts:
+                # Reconstruct datetime
+                if "date" in d and isinstance(d["date"], str):
+                    d["date"] = datetime.fromisoformat(d["date"])
+                results.append(ActionLog(**d))
+        except (TypeError, ValueError, KeyError) as error:
+            logger.warning("action_log_invalid_record", category=type(error).__name__)
+            raise LogUnavailable("History contains invalid records") from error
         return results
 
 
 class ValkeyEventRepository(BaseValkeyLogRepository[SystemEvent], EventRepository):
     def __init__(self, redis_url: str):
-        # 3 Hours TTL (10800 seconds)
-        super().__init__(redis_url, key_prefix="system_events", ttl_seconds=10800)
+        super().__init__(
+            redis_url, key_prefix="system_events", ttl_seconds=LOG_RETENTION_SECONDS
+        )
 
     async def add_event(self, event: SystemEvent) -> None:
         # We don't need to persist 'rendered_html' as it is transient/large
-        event_copy = asdict(event)
-        event_copy["rendered_html"] = None
-        event_copy["message_model"] = None
+        event_copy = asdict(replace(event, rendered_html=None, message_model=None))
 
         await self._add_item(event_copy, event.date.timestamp())
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
         dicts = await self._fetch_items(limit)
         results = []
-        for d in dicts:
-            # Recursively reconstruct datatypes
-            if "date" in d and isinstance(d["date"], str):
-                d["date"] = datetime.fromisoformat(d["date"])
-
-            results.append(SystemEvent(**d))
+        try:
+            for d in dicts:
+                if "date" in d and isinstance(d["date"], str):
+                    d["date"] = datetime.fromisoformat(d["date"])
+                results.append(SystemEvent(**d))
+        except (TypeError, ValueError, KeyError) as error:
+            logger.warning(
+                "system_events_invalid_record", category=type(error).__name__
+            )
+            raise LogUnavailable("History contains invalid records") from error
         return results

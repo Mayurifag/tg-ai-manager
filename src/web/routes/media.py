@@ -5,7 +5,9 @@ from urllib.parse import quote
 from quart import (
     Blueprint,
     abort,
+    current_app,
     make_response,
+    jsonify,
     redirect,
     request,
     send_from_directory,
@@ -16,8 +18,20 @@ from werkzeug.http import dump_options_header
 from werkzeug.utils import secure_filename
 
 from src.container import _get_tg_adapter, get_chat_interactor
+from src.adapters.telegram.media import MediaBusy, MediaTooLarge
 
 media_bp = Blueprint("media", __name__)
+
+
+@media_bp.errorhandler(MediaBusy)
+async def media_busy(_error):
+    return jsonify({"error": "Media is busy; try again"}), 503
+
+
+@media_bp.errorhandler(MediaTooLarge)
+async def media_too_large(_error):
+    return jsonify({"error": "Media exceeds the in-memory preview limit"}), 413
+
 
 STATIC_DIR = os.path.join(os.getcwd(), "static")
 CSS_DIR = os.path.join(STATIC_DIR, "css")
@@ -93,17 +107,14 @@ async def stream_document(chat_id: int, msg_id: int):
             return response
         start, end = interval
 
-    response = await make_response(
-        adapter.stream_document(chat_id, msg_id, document, start, end - start)
-    )
-    response.status_code = 206 if raw_range else 200
     mime_type = getattr(document, "mime_type", "") or "application/octet-stream"
-    response.mimetype = (
+    response_mimetype = (
         mime_type
         if re.fullmatch(r"(?:video|audio)/[a-zA-Z0-9!#$&^_.+-]+", mime_type)
         else "application/octet-stream"
     )
-    if response.mimetype == "application/octet-stream":
+    content_disposition = None
+    if response_mimetype == "application/octet-stream":
         filename = next(
             (
                 attr.file_name
@@ -121,19 +132,31 @@ async def stream_document(chat_id: int, msg_id: int):
             or "file"
         )
         fallback = secure_filename(filename) or "file"
-        response.headers["Content-Disposition"] = (
+        content_disposition = (
             dump_options_header("attachment", {"filename": fallback})
             + "; filename*=UTF-8''"
             + quote(filename, safe="")
         )
-    response.headers["Content-Length"] = str(end - start)
-    response.headers["Accept-Ranges"] = "bytes"
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    if raw_range:
-        response.headers["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
-    response.timeout = None
-    return response
+    stream = adapter.stream_document(chat_id, msg_id, document, start, end - start)
+    try:
+        # Quart's make_response accepts async generators, but not arbitrary
+        # async iterators such as the lease that owns our stream capacity.
+        response = current_app.response_class(stream)
+        response.status_code = 206 if raw_range else 200
+        response.mimetype = response_mimetype
+        if content_disposition:
+            response.headers["Content-Disposition"] = content_disposition
+        response.headers["Content-Length"] = str(end - start)
+        response.headers["Accept-Ranges"] = "bytes"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        if raw_range:
+            response.headers["Content-Range"] = f"bytes {start}-{end - 1}/{size}"
+        response.timeout = None
+        return response
+    except BaseException:
+        await stream.aclose()
+        raise
 
 
 @media_bp.route("/media/avatar/<int(signed=True):chat_id>")

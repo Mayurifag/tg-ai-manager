@@ -1,6 +1,7 @@
 import traceback
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from html import escape as html_escape
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from telethon import types, utils
@@ -16,13 +17,27 @@ from telethon.tl.types import (
 from src.adapters.telethon_mappers import get_message_action_text
 from src.domain.models import Message, Reaction, SystemEvent
 from src.infrastructure.logging import get_logger
-from src.infrastructure.html import sanitize_html
 
 if TYPE_CHECKING:
     from src.adapters.telegram.media import MediaManager
     from src.adapters.telegram.message_parser import MessageParser
 
 logger = get_logger(__name__)
+
+
+def message_link(
+    chat_id: Optional[int],
+    topic_id: Optional[int] = None,
+    message_id: Optional[int] = None,
+) -> Optional[str]:
+    if not chat_id:
+        return None
+    link = f"/chat/{chat_id}"
+    if topic_id is not None:
+        link += f"/topic/{topic_id}"
+    if message_id is not None:
+        link += f"#msg-{message_id}"
+    return link
 
 
 class EventHandlers:
@@ -32,11 +47,13 @@ class EventHandlers:
         parser: "MessageParser",
         media: "MediaManager",
         get_topic_name_fn: Callable[[int, int], Awaitable[Optional[str]]],
+        invalidate_topic_name_fn: Optional[Callable[[int, int], None]] = None,
     ) -> None:
         self.client = client
         self._parser = parser
         self._media = media
         self._get_topic_name_fn = get_topic_name_fn
+        self._invalidate_topic_name_fn = invalidate_topic_name_fn
         self.listeners: List[Callable[[SystemEvent], Awaitable[None]]] = []
 
     def add_event_listener(
@@ -59,6 +76,19 @@ class EventHandlers:
         if not getattr(chat, "forum", False):
             return None
         return self._parser._extract_topic_id(message)
+
+    def _invalidate_edited_topic(
+        self, chat_id: int, topic_id: Optional[int], message: Any
+    ) -> None:
+        if (
+            topic_id is not None
+            and self._invalidate_topic_name_fn
+            and isinstance(
+                getattr(message, "action", None),
+                (types.MessageActionTopicCreate, types.MessageActionTopicEdit),
+            )
+        ):
+            self._invalidate_topic_name_fn(chat_id, topic_id)
 
     def register_handlers(self, client: Any) -> None:
         """Register all Telethon event handlers on the given client."""
@@ -104,6 +134,7 @@ class EventHandlers:
                 event.message, chat_id=event.chat_id
             )
             topic_id = self._extract_forum_topic_id(chat, event.message)
+            self._invalidate_edited_topic(event.chat_id, topic_id, event.message)
             topic_name = None
             if topic_id:
                 topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
@@ -117,8 +148,10 @@ class EventHandlers:
                 topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
-                link=f"/chat/{event.chat_id}",
+                link=message_link(event.chat_id, topic_id, domain_msg.id),
                 message_model=domain_msg,
+                scope_known=chat is not None
+                and (not getattr(chat, "forum", False) or topic_id is not None),
             )
             await self._dispatch(sys_event)
         except Exception as e:
@@ -149,6 +182,7 @@ class EventHandlers:
             preview = domain_msg.get_preview_text()
 
             topic_id = self._extract_forum_topic_id(chat, event.message)
+            self._invalidate_edited_topic(event.chat_id, topic_id, event.message)
             topic_name = None
             if topic_id:
                 topic_name = await self._get_topic_name_fn(event.chat_id, topic_id)
@@ -160,8 +194,10 @@ class EventHandlers:
                 topic_name=topic_name,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
-                link=f"/chat/{event.chat_id}",
+                link=message_link(event.chat_id, topic_id, domain_msg.id),
                 message_model=domain_msg,
+                scope_known=chat is not None
+                and (not getattr(chat, "forum", False) or topic_id is not None),
             )
             await self._dispatch(sys_event)
         except Exception as e:
@@ -173,52 +209,56 @@ class EventHandlers:
 
     async def _handle_deleted_message(self, event: Any) -> None:
         try:
-            chat_id = getattr(event, "chat_id", None)
-            if not chat_id and event.deleted_ids:
-                for did in event.deleted_ids:
-                    if did in self._parser._msg_id_to_chat_id:
-                        chat_id = self._parser._msg_id_to_chat_id[did]
-                        break
-
-            if not chat_id and hasattr(event, "original_update"):
-                if hasattr(event.original_update, "channel_id"):
-                    chat_id = utils.get_peer_id(
-                        types.PeerChannel(event.original_update.channel_id)
+            known_chat = getattr(event, "chat_id", None)
+            original = getattr(event, "original_update", None)
+            channel_id = getattr(original, "channel_id", None)
+            if channel_id:
+                known_chat = utils.get_peer_id(types.PeerChannel(channel_id))
+            names: dict[int, str] = {}
+            unknown = False
+            for message_id in event.deleted_ids or []:
+                chat_id = known_chat or self._parser._msg_id_to_chat_id.get(message_id)
+                if not chat_id:
+                    unknown = True
+                    continue
+                self._media.invalidate_message(chat_id, message_id)
+                if self._invalidate_topic_name_fn:
+                    self._invalidate_topic_name_fn(chat_id, message_id)
+                if not known_chat:
+                    self._parser._msg_id_to_chat_id.pop(message_id, None)
+                if chat_id not in names:
+                    try:
+                        entity = await self.client.get_entity(chat_id)
+                        names[chat_id] = (
+                            utils.get_display_name(entity) or f"Chat {chat_id}"
+                        )
+                    except Exception:
+                        names[chat_id] = f"Chat {chat_id}"
+                await self._dispatch(
+                    SystemEvent(
+                        type="deleted",
+                        text="Message deleted",
+                        chat_name=names[chat_id],
+                        topic_name=None,
+                        chat_id=chat_id,
+                        link=message_link(chat_id),
+                        message_model=Message(
+                            id=message_id,
+                            text="",
+                            date=datetime.now(),
+                            sender_name="",
+                            is_outgoing=False,
+                        ),
                     )
-
-            if event.deleted_ids:
-                for message_id in event.deleted_ids:
-                    message_chat_id = getattr(event, "chat_id", None) or (
-                        self._parser._msg_id_to_chat_id.get(message_id) or chat_id
-                    )
-                    if message_chat_id:
-                        self._media.invalidate_message(message_chat_id, message_id)
-
-            chat_name = "Unknown"
-            if chat_id:
-                try:
-                    entity = await self.client.get_entity(chat_id)
-                    chat_name = utils.get_display_name(entity)
-                except Exception:
-                    chat_name = f"Chat {chat_id}"
-
-            if chat_id and event.deleted_ids:
-                sys_event = SystemEvent(
-                    type="deleted",
-                    text="Message deleted",
-                    chat_name=chat_name,
-                    topic_name=None,
-                    chat_id=chat_id,
-                    link=f"/chat/{chat_id}" if chat_id else "#",
-                    message_model=Message(
-                        id=event.deleted_ids[0],
-                        text="",
-                        date=datetime.now(),
-                        sender_name="",
-                        is_outgoing=False,
-                    ),
                 )
-                await self._dispatch(sys_event)
+            if unknown:
+                await self._dispatch(
+                    SystemEvent(
+                        type="resync_required",
+                        text="Message identity unavailable",
+                        chat_name="",
+                    )
+                )
 
         except Exception as e:
             logger.error(
@@ -248,12 +288,19 @@ class EventHandlers:
             topic_id = None
             text = "Unknown action"
             action_text = get_message_action_text(event.action_message)
-            if action_text:
+            if action_text or isinstance(
+                action, (types.MessageActionTopicCreate, types.MessageActionTopicEdit)
+            ):
                 msg_model = await self._parser._parse_message(
                     event.action_message, chat_id=event.chat_id
                 )
-                text = sanitize_html(f"{msg_model.sender_name} {action_text}")
                 topic_id = self._extract_forum_topic_id(chat, event.action_message)
+                self._invalidate_edited_topic(
+                    event.chat_id, topic_id, event.action_message
+                )
+                text = html_escape(
+                    f"{msg_model.sender_name} {action_text or 'updated a topic'}"
+                )
 
             sys_event = SystemEvent(
                 type="action",
@@ -262,8 +309,12 @@ class EventHandlers:
                 topic_name=None,
                 chat_id=event.chat_id,
                 topic_id=topic_id,
-                link=f"/chat/{event.chat_id}",
+                link=message_link(
+                    event.chat_id, topic_id, msg_model.id if msg_model else None
+                ),
                 message_model=msg_model,
+                scope_known=chat is not None
+                and (not getattr(chat, "forum", False) or topic_id is not None),
             )
             await self._dispatch(sys_event)
         except Exception as e:
@@ -300,7 +351,7 @@ class EventHandlers:
             return
 
         chat_name = "Unknown"
-        link = f"/chat/{chat_id}"
+        link = message_link(chat_id, message_id=event.msg_id)
         try:
             chat_entity = await self.client.get_entity(chat_id)
             chat_name = utils.get_display_name(chat_entity)

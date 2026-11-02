@@ -4,6 +4,9 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 
+DEFAULT_AUTOREACT_EMOJI = "💩"
+
+
 class RuleType(str, Enum):
     AUTOREAD = "autoread"
     AUTOREACT = "autoreact"

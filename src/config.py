@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     # When set, sync rules from production export URL on startup
     RULES_SYNC_URL: Optional[str] = None
+    RULES_SYNC_TOKEN: Optional[str] = None
+    RULES_EXPORT_TOKEN: Optional[str] = None
 
 
 @lru_cache(maxsize=1)

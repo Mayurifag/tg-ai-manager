@@ -1,10 +1,14 @@
-from src.infrastructure.html import sanitize_html
+from src.infrastructure.html import html_to_text, sanitize_html
 
 
 def test_sanitize_html_allows_basic_formatting():
     assert sanitize_html("<strong>Hello</strong> <em>world</em>") == (
         "<strong>Hello</strong> <em>world</em>"
     )
+
+
+def test_event_preview_is_plain_text_not_browser_html():
+    assert html_to_text("<b>Hello</b> &lt;world&gt;<br>next") == "Hello <world>\nnext"
 
 
 def test_sanitize_html_removes_scriptable_markup():

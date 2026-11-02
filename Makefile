@@ -1,4 +1,4 @@
-.PHONY: all up up-prod down logs clean ci
+.PHONY: all up up-prod down logs clean ci format
 
 # Default target
 all: up
@@ -9,12 +9,12 @@ up:
 
 # Run the production image from registry
 # - Pulls latest image
-# - Maps host port 14123 to container port 8000
-# - --rm ensures container and anonymous volumes are deleted on exit
+# - Loopback-only port and persistent named volume for account data
 up-prod:
 	docker pull ghcr.io/mayurifag/tg-ai-manager:latest
 	docker run --rm -it \
-		-p 14123:8000 \
+		-p 127.0.0.1:14123:8000 \
+		--mount type=volume,src=tg_ai_manager_prod_data,dst=/app_data \
 		--env-file .env \
 		--name tg_ai_manager_prod \
 		ghcr.io/mayurifag/tg-ai-manager:latest
@@ -33,5 +33,12 @@ clean:
 	rm -rf cache/*
 
 ci:
+	uv run --no-sync ruff format --check
+	uv run --no-sync ruff check
+	node --version > /dev/null
+	node scripts/generate-emoji-map.cjs --check
+	uv run --no-sync pytest -q
+
+format:
 	uv run --no-sync ruff format
 	uv run --no-sync ruff check --fix

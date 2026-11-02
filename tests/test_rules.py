@@ -177,6 +177,47 @@ async def test_global_autoread_regex_no_match():
     assert result == ""
 
 
+async def test_regex_uses_raw_telegram_text_not_presentation_markup():
+    svc = make_service(user=User(autoread_regex=r"^hello <world>$"))
+    msg = make_message(text="<strong>hello</strong> &lt;world&gt;")
+    msg.raw_text = "hello <world>"
+    assert await svc.check_global_autoread_rules(msg, unread_count=1) == "global_regex"
+
+
+async def test_disabled_event_uses_one_rules_and_settings_snapshot():
+    svc = make_service(user=User(autoread_bots=""))
+    event = SystemEvent(
+        type="message",
+        text="hi",
+        chat_name="chat",
+        chat_id=100,
+        message_model=make_message(),
+    )
+    await svc.handle_new_message_event(event)
+    svc.rule_repo.get_by_chat_and_topic.assert_awaited_once_with(100, None)
+    svc.user_repo.get_user.assert_awaited_once_with(1)
+
+
+async def test_pathological_regex_times_out_without_blocking_event_loop():
+    import asyncio
+
+    svc = make_service(user=User(autoread_regex=r"(a+)+$"))
+    msg = make_message(text="a" * 8000 + "!")
+    progress = asyncio.Event()
+
+    async def heartbeat():
+        await asyncio.sleep(0.005)
+        progress.set()
+
+    task = asyncio.create_task(heartbeat())
+    result = await asyncio.wait_for(
+        svc.check_global_autoread_rules(msg, unread_count=1), 1
+    )
+    assert progress.is_set()
+    await task
+    assert result == ""
+
+
 # ---------------------------------------------------------------------------
 # apply_autoreact
 # ---------------------------------------------------------------------------
@@ -191,7 +232,7 @@ async def test_apply_autoreact_skips_outgoing():
     svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
     msg = make_message(is_outgoing=True)
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_not_called()
+    chat_repo.send_automatic_reaction.assert_not_called()
 
 
 async def test_apply_autoreact_fires_for_matching_sender():
@@ -208,7 +249,9 @@ async def test_apply_autoreact_fires_for_matching_sender():
     svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
     msg = make_message(sender_id=sender_id)
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_called_once_with(100, msg.id, "💩")
+    args = chat_repo.send_automatic_reaction.await_args.args
+    assert args[:3] == (100, msg.id, "💩")
+    assert await args[3]()
 
 
 async def test_apply_autoreact_skips_nonmatching_sender():
@@ -224,7 +267,7 @@ async def test_apply_autoreact_skips_nonmatching_sender():
     svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
     msg = make_message(sender_id=1)  # different sender
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_not_called()
+    chat_repo.send_automatic_reaction.assert_not_called()
 
 
 async def test_apply_autoreact_fires_for_all_senders_when_no_targets():
@@ -237,7 +280,7 @@ async def test_apply_autoreact_fires_for_all_senders_when_no_targets():
     svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
     msg = make_message(sender_id=12345)
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_called_once_with(100, msg.id, "❤️")
+    assert chat_repo.send_automatic_reaction.await_args.args[:3] == (100, msg.id, "❤️")
 
 
 async def test_apply_autoreact_skips_already_reacted():
@@ -251,7 +294,7 @@ async def test_apply_autoreact_skips_already_reacted():
     reaction = Reaction(emoji="👍", count=1, is_chosen=True)
     msg = make_message(reactions=[reaction])
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_not_called()
+    chat_repo.send_automatic_reaction.assert_not_called()
 
 
 async def test_apply_autoreact_album_dedup():
@@ -270,7 +313,30 @@ async def test_apply_autoreact_album_dedup():
     await svc.apply_autoreact(100, None, msg2)
 
     # Should only react once for the album
-    chat_repo.send_reaction.assert_called_once()
+    chat_repo.send_automatic_reaction.assert_awaited_once()
+
+
+async def test_ineligible_album_part_does_not_suppress_eligible_part():
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(100, RuleType.AUTOREACT, config={"emoji": "👍", "target_users": [42]})
+    ]
+    svc = make_service(rule_repo=rule_repo)
+    await svc.apply_autoreact(100, None, make_message(id=1, grouped_id=7, sender_id=99))
+    await svc.apply_autoreact(100, None, make_message(id=2, grouped_id=7, sender_id=42))
+    assert svc.chat_repo.send_automatic_reaction.await_args.args[:3] == (100, 2, "👍")
+
+
+async def test_failed_album_reaction_allows_another_part_to_retry():
+    rule_repo = AsyncMock()
+    rule_repo.get_by_chat_and_topic.return_value = [
+        make_rule(100, RuleType.AUTOREACT, config={"emoji": "👍"})
+    ]
+    svc = make_service(rule_repo=rule_repo)
+    await svc.apply_autoreact(100, None, make_message(id=1, grouped_id=7))
+    await svc.chat_repo.send_automatic_reaction.await_args.args[4](False)
+    await svc.apply_autoreact(100, None, make_message(id=2, grouped_id=7))
+    assert svc.chat_repo.send_automatic_reaction.await_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -280,21 +346,19 @@ async def test_apply_autoreact_album_dedup():
 
 async def test_toggle_rule_creates_new_rule_when_enabled():
     rule_repo = AsyncMock()
-    rule_repo.get_by_chat_and_topic.return_value = []
-    rule_repo.add.return_value = 1
+    rule_repo.set_scope.return_value = make_rule(100, RuleType.AUTOREAD)
     svc = make_service(rule_repo=rule_repo)
     result = await svc.toggle_autoread(100, None, enabled=True)
-    rule_repo.add.assert_called_once()
+    rule_repo.set_scope.assert_awaited_once()
     assert result is not None
 
 
 async def test_toggle_rule_deletes_existing_when_disabled():
-    existing = make_rule(100, RuleType.AUTOREAD)
     rule_repo = AsyncMock()
-    rule_repo.get_by_chat_and_topic.return_value = [existing]
+    rule_repo.set_scope.return_value = None
     svc = make_service(rule_repo=rule_repo)
     result = await svc.toggle_autoread(100, None, enabled=False)
-    rule_repo.delete.assert_called_once_with(existing.id)
+    rule_repo.set_scope.assert_awaited_once()
     assert result is None
 
 
@@ -334,6 +398,7 @@ async def test_startup_scan_skips_chat_with_no_autoread_rule():
 async def test_startup_scan_marks_read_chat_with_autoread_rule():
     """Non-forum chat with an autoread rule is marked read and logged."""
     chat = make_chat(id=42, unread_count=7)
+    chat.last_message_id = 70
     rule_repo = AsyncMock()
     rule_repo.get_by_chat_and_topic.return_value = [
         make_rule(chat_id=42, rule_type=RuleType.AUTOREAD)
@@ -348,7 +413,12 @@ async def test_startup_scan_marks_read_chat_with_autoread_rule():
 
     await svc.run_startup_scan()
 
-    chat_repo.mark_as_read.assert_called_once_with(42)
+    args, kwargs = chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (42, None, 70)
+    assert kwargs == {"selective": False}
+    assert await args[3]()
+    action_repo.add_log.assert_not_awaited()
+    await args[4]()
     action_repo.add_log.assert_called_once()
     log_call = action_repo.add_log.call_args[0][0]
     assert log_call.action == "startup_read"
@@ -365,10 +435,12 @@ async def test_startup_scan_forum_chat_checks_topics():
     topic_no_rule = make_chat(
         id=20, name="Topic 20", unread_count=1, chat_type=ChatType.TOPIC
     )
+    topic_with_rule.last_message_id = 50
+    topic_rule = make_rule(chat_id=100, rule_type=RuleType.AUTOREAD, topic_id=10)
 
     def rule_side_effect(chat_id, topic_id):
         if chat_id == 100 and topic_id == 10:
-            return [make_rule(chat_id=100, rule_type=RuleType.AUTOREAD, topic_id=10)]
+            return [topic_rule]
         return []
 
     rule_repo = AsyncMock()
@@ -385,7 +457,11 @@ async def test_startup_scan_forum_chat_checks_topics():
     await svc.run_startup_scan()
 
     # Only topic 10 (with rule) should be marked read
-    chat_repo.mark_as_read.assert_called_once_with(100, 10)
+    args, kwargs = chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, 10, 50)
+    assert kwargs == {"selective": False}
+    assert await args[3]()
+    await args[4]()
     action_repo.add_log.assert_called_once()
     log_call = action_repo.add_log.call_args[0][0]
     assert log_call.action == "startup_read"
@@ -418,7 +494,11 @@ async def test_handle_new_message_event_autoread_on_action():
     )
     await svc.handle_new_message_event(event)
 
-    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
+    args, kwargs = chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, None, 42)
+    assert kwargs == {"selective": False}
+    assert event.is_read is False
+    await args[4]()
     assert event.is_read is True
 
 
@@ -444,11 +524,14 @@ async def test_handle_new_message_event_topic_autoread_uses_message_id():
     )
     await svc.handle_new_message_event(event)
 
-    chat_repo.mark_as_read.assert_called_once_with(100, 7, max_id=42)
+    args, kwargs = chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, 7, 42)
+    assert kwargs == {"selective": False}
+    await args[4]()
     assert event.is_read is True
 
 
-async def test_handle_new_message_event_global_rule_marks_only_current_message():
+async def test_handle_new_message_event_queues_guarded_selective_read():
     svc = make_service(user=User(autoread_service_messages=True))
 
     msg = make_message(id=42, is_service=True)
@@ -461,7 +544,11 @@ async def test_handle_new_message_event_global_rule_marks_only_current_message()
     )
     await svc.handle_new_message_event(event)
 
-    svc.chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=42)
+    args, kwargs = svc.chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, None, 42)
+    assert kwargs == {"selective": True}
+    assert event.is_read is False
+    await args[4]()
     assert event.is_read is True
 
 
@@ -475,4 +562,4 @@ async def test_apply_autoreact_skips_service_message():
     svc = make_service(rule_repo=rule_repo, chat_repo=chat_repo)
     msg = make_message(is_service=True)
     await svc.apply_autoreact(100, None, msg)
-    chat_repo.send_reaction.assert_not_called()
+    chat_repo.send_automatic_reaction.assert_not_called()

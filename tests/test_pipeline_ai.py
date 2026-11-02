@@ -1,5 +1,6 @@
 """Tests for AI classification integration in handle_new_message_event (S03)."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.domain.models import SystemEvent
@@ -106,7 +107,12 @@ async def test_ai_classifies_ad_marks_read():
     with patch("src.rules.service.GeminiClassifier", return_value=mock_instance):
         await svc.handle_new_message_event(make_event())
 
-    chat_repo.mark_as_read.assert_called_once_with(100, None, max_id=1)
+    args, kwargs = chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, None, 1)
+    assert kwargs == {"selective": True}
+    assert await args[3]()
+    action_repo.add_log.assert_not_awaited()
+    await args[4]()
     action_repo.add_log.assert_called_once()
     log_call = action_repo.add_log.call_args[0][0]
     assert log_call.reason == "ai_ad_detected"
@@ -233,3 +239,75 @@ async def test_startup_scan_no_ai():
 
     # No AUTOREAD rule, so chat should not have been marked read
     chat_repo.mark_as_read.assert_not_called()
+
+
+def ai_service(classifier):
+    rules = AsyncMock()
+    rules.get_by_chat_and_topic.return_value = [make_rule(100, RuleType.AI_AUTOREAD)]
+    service = make_service(
+        rule_repo=rules, user=User(ai_api_key="key", ai_model="model", autoread_bots="")
+    )
+    service._ai_classifier_factory = lambda user: classifier
+    return service
+
+
+async def test_ai_timeout_does_not_queue_a_read(monkeypatch):
+    monkeypatch.setattr("src.rules.service.AI_TIMEOUT_SECONDS", 0.01)
+    never = asyncio.Event()
+    classifier = MagicMock(classify_is_ad=AsyncMock(side_effect=never.wait))
+    service = ai_service(classifier)
+    await service.handle_new_message_event(make_event())
+    service.chat_repo.mark_automatic_as_read.assert_not_awaited()
+    assert service._ai_active == 0
+
+
+async def test_ai_concurrency_is_bounded_without_an_unbounded_waiting_backlog():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+
+    async def classify(text):
+        nonlocal active
+        active += 1
+        if active == 4:
+            started.set()
+        await release.wait()
+        return False
+
+    classifier = MagicMock(classify_is_ad=AsyncMock(side_effect=classify))
+    service = ai_service(classifier)
+    tasks = [
+        asyncio.create_task(service.handle_new_message_event(make_event()))
+        for _ in range(4)
+    ]
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.wait_for(service.handle_new_message_event(make_event()), 1)
+        assert classifier.classify_is_ad.await_count == 4
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
+    assert service._ai_active == 0
+
+
+async def test_oversized_ai_input_is_not_sent_to_provider():
+    classifier = MagicMock(classify_is_ad=AsyncMock(return_value=True))
+    service = ai_service(classifier)
+    await service.handle_new_message_event(make_event(text="x" * 8001))
+    classifier.classify_is_ad.assert_not_awaited()
+    service.chat_repo.mark_automatic_as_read.assert_not_awaited()
+
+
+async def test_replaced_ai_client_closes_after_active_requests():
+    first = MagicMock(classify_is_ad=AsyncMock(return_value=False), close=AsyncMock())
+    second = MagicMock(classify_is_ad=AsyncMock(return_value=False), close=AsyncMock())
+    service = ai_service(first)
+    service._ai_classifier_factory = service._create_ai_classifier
+    with patch("src.rules.service.GeminiClassifier", side_effect=[first, second]):
+        await service.handle_new_message_event(make_event())
+        service.user_repo.get_user.return_value.ai_api_key = "new-key"
+        await service.handle_new_message_event(make_event())
+        first.close.assert_awaited_once()
+        second.close.assert_not_awaited()
+        await service.retire_account()
+    second.close.assert_awaited_once()

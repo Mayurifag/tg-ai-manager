@@ -1,13 +1,34 @@
-from typing import Optional
+import json
+from typing import Any, Optional
 
 from src.config import get_settings
 from src.infrastructure.db import BaseSqliteRepository
 from src.infrastructure.security import CryptoManager
+from src.rules.models import Rule
 from src.users.models import User
 from src.users.ports import UserRepository
 
 
 class SqliteUserRepository(BaseSqliteRepository, UserRepository):
+    _UPDATE_FIELDS = frozenset(
+        {
+            "username",
+            "session_string",
+            "is_premium",
+            "autoread_service_messages",
+            "autoread_polls",
+            "autoread_self",
+            "autoread_bots",
+            "autoread_regex",
+            "debug_mode",
+            "ai_provider",
+            "ai_model",
+            "ai_api_key",
+            "ai_prompt",
+        }
+    )
+    _SECRET_FIELDS = frozenset({"session_string", "ai_api_key"})
+
     def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
         self.crypto = CryptoManager()
@@ -115,14 +136,92 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                             user.ai_prompt,
                         ),
                     )
-                conn.commit()
 
         await self._execute(_save)
+
+    async def update_fields(
+        self, user_id: int, fields: dict[str, Any], *, expected_session: Optional[str]
+    ) -> bool:
+        if not fields or not fields.keys() <= self._UPDATE_FIELDS:
+            raise ValueError("Invalid user fields")
+        values = {
+            name: self.crypto.encrypt(value) if name in self._SECRET_FIELDS else value
+            for name, value in fields.items()
+        }
+
+        def _update() -> bool:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT session_string FROM users WHERE id = ?", (user_id,)
+                ).fetchone()
+                if (
+                    not row
+                    or self.crypto.decrypt(row["session_string"]) != expected_session
+                ):
+                    return False
+                assignments = ", ".join(f"{field} = ?" for field in values)
+                conn.execute(
+                    f"UPDATE users SET {assignments} WHERE id = ?",
+                    (*values.values(), user_id),
+                )
+                return True
+
+        return await self._execute(_update)
+
+    async def replace_rules_and_settings(
+        self,
+        user_id: int,
+        rules: list[Rule],
+        fields: dict[str, Any],
+        *,
+        expected_session: Optional[str],
+    ) -> bool:
+        allowed = self._UPDATE_FIELDS - self._SECRET_FIELDS - {"username", "is_premium"}
+        if not fields.keys() <= allowed or any(
+            rule.user_id != user_id for rule in rules
+        ):
+            raise ValueError("Invalid import fields")
+
+        def _replace() -> bool:
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT session_string FROM users WHERE id = ?", (user_id,)
+                ).fetchone()
+                if (
+                    not row
+                    or self.crypto.decrypt(row["session_string"]) != expected_session
+                ):
+                    return False
+                conn.execute("DELETE FROM rules WHERE user_id = ?", (user_id,))
+                for rule in rules:
+                    conn.execute(
+                        "INSERT INTO rules (user_id, rule_type, chat_id, topic_id, config, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            user_id,
+                            rule.rule_type.value,
+                            rule.chat_id,
+                            rule.topic_id,
+                            json.dumps(rule.config),
+                            rule.created_at.isoformat(),
+                            rule.updated_at.isoformat(),
+                        ),
+                    )
+                if fields:
+                    assignments = ", ".join(f"{field} = ?" for field in fields)
+                    conn.execute(
+                        f"UPDATE users SET {assignments} WHERE id = ?",
+                        (*fields.values(), user_id),
+                    )
+                return True
+
+        return await self._execute(_replace)
 
     async def delete_user(self, user_id: int) -> None:
         def _delete():
             with self._connect() as conn:
                 conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-                conn.commit()
 
         await self._execute(_delete)

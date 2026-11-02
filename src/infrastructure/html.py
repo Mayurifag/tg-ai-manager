@@ -67,3 +67,24 @@ def sanitize_html(value: str) -> str:
     sanitizer.feed(value)
     sanitizer.close()
     return "".join(sanitizer.parts)
+
+
+def html_to_text(value: str) -> str:
+    """Extract display text without interpreting stored markup in the browser."""
+
+    class TextExtractor(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag.lower() == "br":
+                self.parts.append("\n")
+
+        def handle_data(self, data):
+            self.parts.append(data)
+
+    parser = TextExtractor()
+    parser.feed(value or "")
+    parser.close()
+    return "".join(parser.parts)

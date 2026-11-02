@@ -12,11 +12,10 @@ window.TG.escapeHtml = function (value) {
 window.parseAppleEmojis = function (container) {
   if (!window.twemoji) return;
   twemoji.parse(container, {
-    folder: "svg",
-    ext: ".svg",
     callback: function (icon) {
-      const cleanIcon = icon.replace(/-fe0f/g, "");
-      return "/static/emoji/apple/" + cleanIcon + ".png";
+      const filename = window.TG_APPLE_EMOJI_ASSETS?.[icon];
+      // Returning null preserves native Unicode when no matching file exists.
+      return filename ? "/static/emoji/apple/" + filename : null;
     },
   });
 };
@@ -76,7 +75,9 @@ window.openLightbox = function (element) {
   if (currentLightboxIndex === -1) return;
   lightboxReturnFocus = document.activeElement;
   updateLightboxView();
-  document.getElementById("lightbox").classList.add("active");
+  const lightbox = document.getElementById("lightbox");
+  lightbox.showModal();
+  lightbox.classList.add("active");
   document.querySelector(".lightbox-close").focus();
 };
 
@@ -110,18 +111,22 @@ window.navigateLightbox = function (dir) {
 
 window.closeLightbox = function () {
   const lightbox = document.getElementById("lightbox");
-  if (!lightbox.classList.contains("active")) return;
+  if (lightbox.open) lightbox.close();
+};
+
+document.getElementById("lightbox").addEventListener("close", () => {
+  const lightbox = document.getElementById("lightbox");
   lightbox.classList.remove("active");
   const img = document.getElementById("lightbox-img");
   img.onload = null;
   img.onerror = null;
   img.removeAttribute("src");
-  if (lightboxReturnFocus) lightboxReturnFocus.focus();
-};
+  if (lightboxReturnFocus?.isConnected) lightboxReturnFocus.focus();
+  lightboxReturnFocus = null;
+});
 
 document.addEventListener("keydown", (e) => {
-  if (!document.getElementById("lightbox").classList.contains("active")) return;
-  if (e.key === "Escape") closeLightbox();
+  if (!document.getElementById("lightbox").open) return;
   if (e.key === "ArrowLeft") navigateLightbox(-1);
   if (e.key === "ArrowRight") navigateLightbox(1);
 });
@@ -181,13 +186,46 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const feedContainer = document.getElementById("event-feed-list");
+  const streamStatus = document.getElementById("event-stream-status");
   let evtSource;
 
-  function connectEvents() {
-    evtSource = new EventSource("/api/events/stream");
+  function connectEvents(resyncOnOpen = false) {
+    let needsResync = resyncOnOpen;
+    const params = new URLSearchParams();
+    if (window.TG_CHAT) {
+      params.set("chat_id", window.TG_CHAT.chatId);
+      if (window.TG_CHAT.topicId != null)
+        params.set("topic_id", window.TG_CHAT.topicId);
+    }
+    if (isDebug) params.set("debug", "1");
+    evtSource = new EventSource(`/api/events/stream?${params}`);
+    evtSource.onerror = () => {
+      needsResync = true;
+      if (streamStatus)
+        streamStatus.textContent = "Events: reconnecting; content may be stale";
+    };
+    evtSource.onopen = () => {
+      if (streamStatus) streamStatus.textContent = "Events: connected";
+      if (needsResync) {
+        needsResync = false;
+        document.dispatchEvent(
+          new CustomEvent("tg:event", { detail: { type: "resync_required" } }),
+        );
+      }
+    };
 
     evtSource.onmessage = function (e) {
-      const data = JSON.parse(e.data);
+      let data;
+      try {
+        data = JSON.parse(e.data);
+        if (!data || typeof data.type !== "string")
+          throw new Error("Invalid event");
+      } catch (_) {
+        document.dispatchEvent(
+          new CustomEvent("tg:event", { detail: { type: "resync_required" } }),
+        );
+        return;
+      }
       const customEvent = new CustomEvent("tg:event", { detail: data });
       document.dispatchEvent(customEvent);
 
@@ -221,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     <a href="${window.TG.escapeHtml(linkHref)}" class="event-chat-link" title="${window.TG.escapeHtml(chatLabel)}">${window.TG.escapeHtml(chatLabel)}</a>
                 </div>
                 <div class="event-text-wrapper" data-full-html="${debugJson}">
-                    <div class="event-text">${data.text}</div>
+                    <div class="event-text">${window.TG.escapeHtml(data.text_plain ?? data.text)}</div>
                 </div>
             `;
 
@@ -236,7 +274,7 @@ document.addEventListener("DOMContentLoaded", () => {
   connectEvents();
   window.addEventListener("pagehide", () => evtSource.close());
   window.addEventListener("pageshow", (event) => {
-    if (event.persisted) connectEvents();
+    if (event.persisted) connectEvents(true);
   });
 
   document.addEventListener("click", (event) => {

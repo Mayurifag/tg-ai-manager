@@ -1,7 +1,16 @@
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from src.domain.models import ActionLog, Chat, MediaContent, Message, SystemEvent
+from src.domain.models import (
+    ActionLog,
+    Chat,
+    ForumTopicCursor,
+    ForumTopicPage,
+    MediaContent,
+    Message,
+    MessageContext,
+    SystemEvent,
+)
 
 
 class ChatConnectionPort(ABC):
@@ -41,7 +50,26 @@ class ChatQueryPort(ABC):
         topic_id: Optional[int] = None,
         offset_id: int = 0,
         ids: Optional[List[int]] = None,
+        after_id: Optional[int] = None,
     ) -> List[Message]:
+        pass
+
+    @abstractmethod
+    async def get_message_context(
+        self, chat_id: int, message_id: int
+    ) -> Optional[MessageContext]:
+        pass
+
+    @abstractmethod
+    async def can_selectively_read(
+        self, chat_id: int, topic_id: Optional[int], message_id: int
+    ) -> bool:
+        pass
+
+    @abstractmethod
+    async def first_unread_message_id(
+        self, chat_id: int, topic_id: Optional[int]
+    ) -> Optional[int]:
         pass
 
     @abstractmethod
@@ -57,7 +85,19 @@ class ForumQueryPort(ABC):
         pass
 
     @abstractmethod
-    async def get_unread_topics(self, chat_id: int) -> List[Chat]:
+    async def get_forum_topics_page(
+        self, chat_id: int, cursor: Optional[ForumTopicCursor] = None
+    ) -> ForumTopicPage:
+        pass
+
+    @abstractmethod
+    async def get_forum_topic(self, chat_id: int, topic_id: int) -> Optional[Chat]:
+        pass
+
+    @abstractmethod
+    async def get_unread_topics(
+        self, chat_id: int, topic_ids: Optional[List[int]] = None
+    ) -> List[Chat]:
         pass
 
     @abstractmethod
@@ -98,7 +138,32 @@ class TelegramWritePort(ABC):
         pass
 
     @abstractmethod
+    async def mark_automatic_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int],
+        max_id: int,
+        validate: Callable[[], Awaitable[bool]],
+        on_success: Callable[[], Awaitable[None]],
+        *,
+        selective: bool,
+    ) -> None:
+        """Queue a guarded, bounded automatic read."""
+        pass
+
+    @abstractmethod
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def send_automatic_reaction(
+        self,
+        chat_id: int,
+        msg_id: int,
+        emoji: str,
+        validate: Callable[[], Awaitable[bool]],
+        on_complete: Callable[[bool], Awaitable[None]],
+    ) -> bool:
         pass
 
 

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from src.infrastructure.db import BaseSqliteRepository
 from src.rules.models import Rule, RuleType
-from src.rules.ports import RuleRepository
+from src.rules.ports import InheritedRuleError, RuleRepository
 
 
 class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
@@ -30,6 +30,77 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+
+    async def set_scope(
+        self, rule: Rule, enabled: bool, *, update_config: bool = False
+    ) -> Optional[Rule]:
+        def _set():
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                scope = (
+                    rule.user_id,
+                    rule.rule_type.value,
+                    rule.chat_id,
+                    rule.topic_id,
+                )
+                if enabled:
+                    now = datetime.now().isoformat()
+                    conn.execute(
+                        "INSERT INTO rules (user_id, rule_type, chat_id, topic_id, config, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                        (*scope, json.dumps(rule.config), now, now),
+                    )
+                    if update_config:
+                        conn.execute(
+                            "UPDATE rules SET config = ?, updated_at = ? "
+                            "WHERE user_id = ? AND rule_type = ? AND chat_id = ? AND topic_id IS ?",
+                            (json.dumps(rule.config), now, *scope),
+                        )
+                else:
+                    if (
+                        rule.topic_id is not None
+                        and conn.execute(
+                            "SELECT 1 FROM rules WHERE user_id = ? AND rule_type = ? "
+                            "AND chat_id = ? AND topic_id IS NULL",
+                            scope[:3],
+                        ).fetchone()
+                    ):
+                        raise InheritedRuleError(
+                            "This topic inherits an enabled forum rule; disable the forum rule first."
+                        )
+                    conn.execute(
+                        "DELETE FROM rules WHERE user_id = ? AND rule_type = ? AND chat_id = ? AND topic_id IS ?",
+                        scope,
+                    )
+                row = conn.execute(
+                    "SELECT * FROM rules WHERE user_id = ? AND rule_type = ? AND chat_id = ? "
+                    "AND (topic_id IS ? OR topic_id IS NULL) ORDER BY topic_id DESC NULLS LAST LIMIT 1",
+                    scope,
+                ).fetchone()
+                return self._row_to_rule(row) if row else None
+
+        return await self._execute(_set)
+
+    async def set_forum_autoread(
+        self, user_id: int, chat_id: int, enabled: bool
+    ) -> None:
+        def _set():
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if enabled:
+                    now = datetime.now().isoformat()
+                    conn.execute(
+                        "INSERT INTO rules (user_id, rule_type, chat_id, topic_id, config, created_at, updated_at) "
+                        "VALUES (?, ?, ?, NULL, ?, ?, ?) ON CONFLICT DO NOTHING",
+                        (user_id, RuleType.AUTOREAD.value, chat_id, "{}", now, now),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM rules WHERE user_id = ? AND chat_id = ? AND rule_type = ?",
+                        (user_id, chat_id, RuleType.AUTOREAD.value),
+                    )
+
+        await self._execute(_set)
 
     async def get_by_chat_and_topic(
         self, chat_id: int, topic_id: Optional[int] = None
@@ -104,7 +175,6 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                         rule.updated_at.isoformat(),
                     ),
                 )
-                conn.commit()
                 if cursor.lastrowid is None:
                     raise ValueError("Database insert failed: no ID returned")
                 return cursor.lastrowid
@@ -121,7 +191,6 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 """,
                     (datetime.now().isoformat(), json.dumps(rule.config), rule.id),
                 )
-                conn.commit()
 
         await self._execute(_update)
 
@@ -129,7 +198,6 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
         def _delete():
             with self._connect() as conn:
                 conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
-                conn.commit()
 
         await self._execute(_delete)
 
@@ -137,6 +205,5 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
         def _delete_all():
             with self._connect() as conn:
                 conn.execute("DELETE FROM rules")
-                conn.commit()
 
         await self._execute(_delete_all)

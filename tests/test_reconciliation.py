@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from telethon import types
+import pytest
+from telethon import errors, types
 
 from src.adapters.telegram.chat_query_ops import ChatQueryOps
 from src.domain.models import Chat, ChatType
@@ -23,6 +24,7 @@ def make_reconciliation_service(rules, chats):
     chat_repo.get_all_unread_chats = AsyncMock(return_value=chats)
     chat_repo.get_unread_topics = AsyncMock(return_value=[])
     chat_repo.mark_as_read = AsyncMock()
+    chat_repo.mark_automatic_as_read = AsyncMock()
     return make_service(rule_repo=rule_repo, chat_repo=chat_repo)
 
 
@@ -36,7 +38,10 @@ async def test_reconciliation_only_queries_explicit_autoread_rules():
     svc = make_reconciliation_service(rules, [chat])
     await svc.reconcile_autoread()
     svc.chat_repo.get_all_unread_chats.assert_awaited_once_with([100])
-    svc.chat_repo.mark_as_read.assert_awaited_once_with(100, max_id=99)
+    args, kwargs = svc.chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, None, 99)
+    assert kwargs == {"selective": False}
+    assert await args[3]()
 
 
 async def test_reconciliation_does_not_clear_sibling_topics():
@@ -47,7 +52,29 @@ async def test_reconciliation_does_not_clear_sibling_topics():
         Chat(6, "Not allowed", 2, ChatType.TOPIC, last_message_id=60),
     ]
     await svc.reconcile_autoread()
-    svc.chat_repo.mark_as_read.assert_awaited_once_with(100, 5, max_id=50)
+    svc.chat_repo.get_unread_topics.assert_awaited_once_with(100, [5])
+    args, kwargs = svc.chat_repo.mark_automatic_as_read.await_args
+    assert args[:3] == (100, 5, 50)
+    assert kwargs == {"selective": False}
+
+
+async def test_reconciliation_isolates_a_broken_forum_and_propagates_flood_wait():
+    rules = [make_rule(100, RuleType.AUTOREAD), make_rule(200, RuleType.AUTOREAD)]
+    svc = make_reconciliation_service(
+        rules,
+        [
+            Chat(100, "Broken", 2, ChatType.FORUM),
+            Chat(200, "Other", 2, ChatType.GROUP, last_message_id=20),
+        ],
+    )
+    svc.chat_repo.get_unread_topics.side_effect = RuntimeError("unavailable")
+    await svc.reconcile_autoread()
+    assert svc.chat_repo.mark_automatic_as_read.await_args.args[:3] == (200, None, 20)
+    svc.chat_repo.get_unread_topics.side_effect = errors.FloodWaitError(
+        request=None, capture=12
+    )
+    with pytest.raises(errors.FloodWaitError):
+        await svc.reconcile_autoread()
 
 
 async def test_reconciliation_rechecks_rules_disabled_during_query():
@@ -58,7 +85,7 @@ async def test_reconciliation_rechecks_rules_disabled_during_query():
     svc.rule_repo.get_by_chat_and_topic.side_effect = None
     svc.rule_repo.get_by_chat_and_topic.return_value = []
     await svc.reconcile_autoread()
-    svc.chat_repo.mark_as_read.assert_not_awaited()
+    svc.chat_repo.mark_automatic_as_read.assert_not_awaited()
 
 
 async def test_reconciliation_without_rules_does_not_query_telegram():
@@ -106,10 +133,13 @@ async def test_recovery_reconnects_then_reconciles_and_stops_cleanly():
     shutdown = asyncio.Event()
     svc = MagicMock()
     svc.chat_repo.is_connected.side_effect = [False, True]
+    svc.chat_repo._source_session_string = "session"
     svc.chat_repo.connect = AsyncMock()
     svc.reconcile_autoread = AsyncMock(side_effect=shutdown.set)
     user_repo = AsyncMock()
-    user_repo.get_user.return_value = SimpleNamespace(is_authenticated=lambda: True)
+    user_repo.get_user.return_value = SimpleNamespace(
+        is_authenticated=lambda: True, session_string="session"
+    )
     with patch("src.infrastructure.maintenance.TELEGRAM_RECOVERY_INTERVAL", 0.001):
         await asyncio.wait_for(job_telegram_recovery(svc, user_repo, shutdown), 1)
     svc.chat_repo.connect.assert_awaited_once()

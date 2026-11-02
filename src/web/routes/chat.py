@@ -3,7 +3,15 @@ import asyncio
 from quart import Blueprint, abort, jsonify, render_template, request
 
 from src.application.interactors import ChatSnapshotExpired
-from src.container import get_chat_interactor, get_rule_service, get_user_repo
+from src.domain.errors import LogUnavailable
+from src.container import (
+    _get_tg_adapter,
+    get_chat_interactor,
+    get_rule_service,
+    get_user_repo,
+)
+from src.infrastructure.telegram_queue import WriteQueueFull
+from src.requests import optional_int
 from src.rules.models import RuleType
 from src.web.requests import BadRequest, MarkReadRequest, ReactionRequest
 
@@ -12,6 +20,11 @@ chat_bp = Blueprint("chat", __name__)
 
 def bad_request(error: BadRequest):
     return jsonify({"error": str(error)}), 400
+
+
+def account_id_for_view() -> str | None:
+    account_id = getattr(_get_tg_adapter(), "_self_id", None)
+    return str(account_id) if type(account_id) is int and account_id > 0 else None
 
 
 @chat_bp.route("/")
@@ -48,7 +61,12 @@ async def api_chats():
 @chat_bp.route("/actions")
 async def actions_view():
     interactor = get_chat_interactor()
-    logs = await interactor.get_action_logs()
+    try:
+        logs = await asyncio.wait_for(interactor.get_action_logs(), timeout=2.0)
+    except (LogUnavailable, asyncio.TimeoutError):
+        return await render_template(
+            "actions/log.html.j2", logs=[], logs_unavailable=True
+        ), 503
     return await render_template("actions/log.html.j2", logs=logs)
 
 
@@ -68,8 +86,8 @@ async def chat_view(chat_id: int):
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
 
-    autoread_enabled = await rule_service.is_autoread_enabled(chat_id)
-    ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id)
+    autoread_rule = await rule_service.get_rule(chat_id, None, RuleType.AUTOREAD)
+    ai_autoread_rule = await rule_service.get_rule(chat_id, None, RuleType.AI_AUTOREAD)
 
     # Determine Autoreact Status
     react_rule = await rule_service.get_rule(chat_id, None, RuleType.AUTOREACT)
@@ -86,8 +104,9 @@ async def chat_view(chat_id: int):
         chat=chat,
         chat_id=chat_id,
         topic_id=None,
-        autoread_enabled=autoread_enabled,
-        ai_autoread_enabled=ai_autoread_enabled,
+        account_id=account_id_for_view(),
+        autoread_enabled=bool(autoread_rule),
+        ai_autoread_enabled=bool(ai_autoread_rule),
         autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
@@ -105,8 +124,10 @@ async def topic_view(chat_id: int, topic_id: int):
     )
     if not chat:
         abort(404)
-    autoread_enabled = await rule_service.is_autoread_enabled(chat_id, topic_id)
-    ai_autoread_enabled = await rule_service.is_ai_autoread_enabled(chat_id, topic_id)
+    autoread_rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREAD)
+    ai_autoread_rule = await rule_service.get_rule(
+        chat_id, topic_id, RuleType.AI_AUTOREAD
+    )
 
     user = await user_repo.get_user(1)
     is_premium = user.is_premium if user else False
@@ -126,22 +147,64 @@ async def topic_view(chat_id: int, topic_id: int):
         chat=chat,
         chat_id=chat_id,
         topic_id=topic_id,
-        autoread_enabled=autoread_enabled,
-        ai_autoread_enabled=ai_autoread_enabled,
+        account_id=account_id_for_view(),
+        autoread_enabled=bool(autoread_rule),
+        ai_autoread_enabled=bool(ai_autoread_rule),
+        autoread_inherited=bool(autoread_rule and autoread_rule.topic_id is None),
+        ai_autoread_inherited=bool(
+            ai_autoread_rule and ai_autoread_rule.topic_id is None
+        ),
         autoreact_status=autoreact_status,
         is_premium=is_premium,
     )
 
 
+@chat_bp.route("/api/chat/<int(signed=True):chat_id>/first-unread")
+async def api_first_unread(chat_id: int):
+    try:
+        topic_id = optional_int(request.args.to_dict(), "topic_id")
+    except BadRequest as e:
+        return bad_request(e)
+    message_id = await get_chat_interactor().first_unread_message_id(chat_id, topic_id)
+    return jsonify({"message_id": message_id})
+
+
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/history")
 async def api_chat_history(chat_id: int):
     interactor = get_chat_interactor()
-    offset_id = request.args.get("offset_id", type=int, default=0)
-    topic_id = request.args.get("topic_id", type=int, default=None)
-
-    messages = await interactor.get_chat_messages(
-        chat_id, topic_id=topic_id, offset_id=offset_id
-    )
+    modes = [
+        key for key in ("offset_id", "around_id", "after_id") if key in request.args
+    ]
+    if len(modes) > 1 or any(len(request.args.getlist(key)) > 1 for key in modes):
+        return jsonify({"error": "Invalid history offset"}), 400
+    mode = modes[0] if modes else "offset_id"
+    raw_offset = request.args.get(mode, "0")
+    if (
+        not raw_offset.isascii()
+        or not raw_offset.isdecimal()
+        or len(raw_offset) > 10
+        or int(raw_offset) >= 2**31
+        or (mode != "offset_id" and int(raw_offset) == 0)
+        or len(request.args.getlist("topic_id")) > 1
+    ):
+        return jsonify({"error": "Invalid history offset"}), 400
+    try:
+        topic_id = optional_int(request.args.to_dict(), "topic_id")
+    except BadRequest as e:
+        return bad_request(e)
+    offset = int(raw_offset)
+    if mode == "around_id":
+        messages = await interactor.get_message_window(chat_id, topic_id, offset)
+        if messages is None:
+            return jsonify({"error": "Message unavailable in this chat or topic"}), 404
+    elif mode == "after_id":
+        messages = await interactor.get_chat_messages(
+            chat_id, topic_id=topic_id, after_id=offset
+        )
+    else:
+        messages = await interactor.get_chat_messages(
+            chat_id, topic_id=topic_id, offset_id=offset
+        )
     html_content = await render_template(
         "chat/messages_partial.html.j2", messages=messages, chat_id=chat_id
     )
@@ -157,8 +220,13 @@ async def mark_read(chat_id: int):
     except BadRequest as e:
         return bad_request(e)
 
-    await interactor.mark_chat_as_read(chat_id, topic_id=body.topic_id)
-    return jsonify({"status": "ok"})
+    try:
+        await interactor.mark_chat_as_read(chat_id, topic_id=body.topic_id)
+    except WriteQueueFull:
+        return jsonify(
+            {"error": "Telegram is busy; the read was not queued. Try again."}
+        ), 503
+    return jsonify({"status": "queued"}), 202
 
 
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/authors")
@@ -171,7 +239,7 @@ async def api_get_authors(chat_id: int):
 @chat_bp.route("/api/chat/<int(signed=True):chat_id>/card")
 async def api_get_chat_card(chat_id: int):
     interactor = get_chat_interactor()
-    chat = await interactor.get_chat(chat_id)
+    chat = await interactor.get_chat(chat_id, refresh=True)
     if not chat:
         return "Chat not found", 404
 
@@ -206,7 +274,12 @@ async def toggle_reaction(chat_id: int, msg_id: int):
     except BadRequest as e:
         return bad_request(e)
 
-    success = await interactor.toggle_reaction(chat_id, msg_id, body.reaction)
+    try:
+        success = await interactor.toggle_reaction(chat_id, msg_id, body.reaction)
+    except WriteQueueFull:
+        return jsonify(
+            {"error": "Telegram is busy; the reaction was not queued. Try again."}
+        ), 503
     if success:
-        return jsonify({"status": "ok"})
+        return jsonify({"status": "queued"}), 202
     return jsonify({"error": "Failed to set reaction"}), 500

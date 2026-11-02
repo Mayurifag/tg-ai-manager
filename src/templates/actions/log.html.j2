@@ -9,6 +9,7 @@
 {% block content %}
 <div class="header">
     <h1>Action Log</h1>
+    <p>History normally lasts about three hours and is limited to 10,000 actions. Busy periods may shorten retention.</p>
 </div>
 
 <div class="logs-container">
@@ -75,7 +76,11 @@
         }
     </style>
 
-    {% if logs %}
+    {% if logs_unavailable %}
+    <div role="status" style="text-align: center; padding: 40px;">
+        Action history is unavailable. Try again later; actions during a storage outage may not have been recorded.
+    </div>
+    {% elif logs %}
     <table class="logs-table">
         <thead>
             <tr>
@@ -114,7 +119,7 @@
     </table>
     {% else %}
     <div style="text-align: center; color: #777; padding: 40px;">
-        No actions recorded yet.
+        No actions retained. History normally lasts around three hours.
     </div>
     {% endif %}
 </div>

@@ -11,9 +11,10 @@ from src.adapters.telegram.forum_ops import ForumOps
 from src.adapters.telegram.write_ops import WriteOps
 from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
+from src.adapters.telegram.query_errors import unavailable
 from src.adapters.telegram.recovering_client import RecoveringTelegramClient
 from src.adapters.telegram.types import ITelethonClient
-from src.domain.models import MediaContent, SystemEvent
+from src.domain.models import ForumTopicCursor, MediaContent, SystemEvent
 from src.domain.ports import ChatRepository
 from src.infrastructure.logging import get_logger
 from src.infrastructure.telegram_queue import TelegramWriteQueue
@@ -29,6 +30,7 @@ class TelethonAdapter(ChatRepository):
         api_hash: Optional[str],
     ):
         self.session = StringSession(session_string or "")
+        self._source_session_string = session_string
         self.api_id = api_id
         self.api_hash = api_hash
         self.client: Optional[ITelethonClient] = None
@@ -43,11 +45,15 @@ class TelethonAdapter(ChatRepository):
             logger.info("adapter_initialized_no_credentials")
 
         self._event_handler_registered = False
+        self._retired = False
         self._is_connected_flag = False
         self._connect_lock = asyncio.Lock()
 
         # QR Login State
         self._qr_login: Any = None
+        self._login_finalized = False
+        self._login_attempt_id: Optional[str] = None
+        self._expected_login_account_id: Optional[int] = None
         self._qr_task: Optional[asyncio.Task] = None
         self._qr_status = (
             "none"  # none, waiting, authorized, needs_password, expired, error
@@ -75,12 +81,14 @@ class TelethonAdapter(ChatRepository):
             parser=self._parser,
             media=self._media,
             get_topic_name_fn=self._forum_ops.get_topic_name,
+            invalidate_topic_name_fn=self._forum_ops.invalidate_topic_name,
         )
         self._write_ops.set_dispatch_fn(self._event_handlers._dispatch)
 
     def is_connected(self) -> bool:
         return (
-            self._is_connected_flag
+            not self._retired
+            and self._is_connected_flag
             and self.client is not None
             and self.client.is_connected()
             and self._event_handler_registered
@@ -132,11 +140,14 @@ class TelethonAdapter(ChatRepository):
             self._event_handler_registered = True
 
     async def disconnect(self):
+        self._retired = True
         if self._qr_task:
             self._qr_task.cancel()
+            await asyncio.gather(self._qr_task, return_exceptions=True)
             self._qr_task = None
-        await self._media.close()
+        await self._write_ops.close()
         await self._write_queue.stop()
+        await self._media.close()
         if self.client and self.client.is_connected():
             await self.client.disconnect()
         self._is_connected_flag = False
@@ -161,9 +172,7 @@ class TelethonAdapter(ChatRepository):
             logger.info("2fa_attempt")
             await self.client.sign_in(password=password)
             await self._fetch_self_id()
-            self._is_connected_flag = True
-            await self._write_queue.start()
-            self._register_handlers()
+            self._qr_status = "authorized"
             logger.info("2fa_success")
         except Exception as e:
             logger.error("2fa_failed", error=str(e))
@@ -179,6 +188,7 @@ class TelethonAdapter(ChatRepository):
             await self.client.connect()
 
         if await self.client.is_user_authorized():
+            await self._fetch_self_id()
             self._qr_status = "authorized"
             return "authorized"
 
@@ -203,9 +213,6 @@ class TelethonAdapter(ChatRepository):
             await self._qr_login.wait()
             await self._fetch_self_id()
             self._qr_status = "authorized"
-            self._is_connected_flag = True
-            await self._write_queue.start()
-            self._register_handlers()
             logger.info("qr_login_success")
         except SessionPasswordNeededError:
             self._qr_status = "needs_password"
@@ -219,6 +226,13 @@ class TelethonAdapter(ChatRepository):
 
     def get_qr_status(self) -> str:
         return self._qr_status
+
+    async def activate_login(self, session_string: str) -> None:
+        """Enable account operations only after the login identity is persisted."""
+        self._source_session_string = session_string
+        await self._write_queue.start()
+        self._register_handlers()
+        self._is_connected_flag = True
 
     def get_session_string(self) -> str:
         return self.session.save()
@@ -241,10 +255,36 @@ class TelethonAdapter(ChatRepository):
         topic_id: Optional[int] = None,
         offset_id: int = 0,
         ids: Optional[List[int]] = None,
+        after_id: Optional[int] = None,
     ):
-        return await self._chat_query_ops.get_messages(
-            chat_id, limit=limit, topic_id=topic_id, offset_id=offset_id, ids=ids
-        )
+        kwargs = {
+            "limit": limit,
+            "topic_id": topic_id,
+            "offset_id": offset_id,
+            "ids": ids,
+        }
+        if after_id is not None:
+            kwargs["after_id"] = after_id
+        return await self._chat_query_ops.get_messages(chat_id, **kwargs)
+
+    async def get_message_context(self, chat_id: int, message_id: int):
+        return await self._chat_query_ops.get_message_context(chat_id, message_id)
+
+    async def can_selectively_read(
+        self, chat_id: int, topic_id: Optional[int], message_id: int
+    ) -> bool:
+        try:
+            return await self._write_ops.can_selectively_read(
+                chat_id, topic_id, message_id
+            )
+        except Exception as error:
+            raise unavailable(error) from error
+
+    async def first_unread_message_id(self, chat_id: int, topic_id: Optional[int]):
+        try:
+            return await self._write_ops.first_unread_message_id(chat_id, topic_id)
+        except Exception as error:
+            raise unavailable(error) from error
 
     async def get_recent_authors(self, chat_id: int, limit: int = 100):
         return await self._chat_query_ops.get_recent_authors(chat_id, limit)
@@ -252,8 +292,18 @@ class TelethonAdapter(ChatRepository):
     async def get_forum_topics(self, chat_id: int, limit: int = 20):
         return await self._forum_ops.get_forum_topics(chat_id, limit)
 
-    async def get_unread_topics(self, chat_id: int):
-        return await self._forum_ops.get_unread_topics(chat_id)
+    async def get_forum_topics_page(
+        self, chat_id: int, cursor: Optional[ForumTopicCursor] = None
+    ):
+        return await self._forum_ops.get_forum_topics_page(chat_id, cursor)
+
+    async def get_forum_topic(self, chat_id: int, topic_id: int):
+        return await self._forum_ops.get_forum_topic(chat_id, topic_id)
+
+    async def get_unread_topics(
+        self, chat_id: int, topic_ids: Optional[List[int]] = None
+    ):
+        return await self._forum_ops.get_unread_topics(chat_id, topic_ids)
 
     async def get_topic_name(self, chat_id: int, topic_id: int):
         return await self._forum_ops.get_topic_name(chat_id, topic_id)
@@ -266,8 +316,34 @@ class TelethonAdapter(ChatRepository):
     ) -> None:
         return await self._write_ops.mark_as_read(chat_id, topic_id, max_id)
 
+    async def mark_automatic_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int],
+        max_id: int,
+        validate: Callable[[], Awaitable[bool]],
+        on_success: Callable[[], Awaitable[None]],
+        *,
+        selective: bool,
+    ) -> None:
+        await self._write_ops.mark_automatic_as_read(
+            chat_id, topic_id, max_id, validate, on_success, selective=selective
+        )
+
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
         return await self._write_ops.send_reaction(chat_id, msg_id, emoji)
+
+    async def send_automatic_reaction(
+        self,
+        chat_id: int,
+        msg_id: int,
+        emoji: str,
+        validate: Callable[[], Awaitable[bool]],
+        on_complete: Callable[[bool], Awaitable[None]],
+    ) -> bool:
+        return await self._write_ops.send_automatic_reaction(
+            chat_id, msg_id, emoji, validate, on_complete
+        )
 
     async def get_self_premium_status(self) -> bool:
         return await self._chat_query_ops.get_self_premium_status()
@@ -299,4 +375,6 @@ class TelethonAdapter(ChatRepository):
     def stream_document(
         self, chat_id: int, message_id: int, document: Any, start: int, length: int
     ):
-        return self._media.iter_document(chat_id, message_id, document, start, length)
+        return self._media.open_document_stream(
+            chat_id, message_id, document, start, length
+        )

@@ -32,7 +32,7 @@ RUN mkdir -p /app_data/valkey && \
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv python install
 # Install ONLY main dependencies (no dev/watchfiles)
-RUN uv sync --no-install-project --no-dev
+RUN uv sync --locked --no-install-project --no-dev
 
 # Copy Application Code
 COPY src ./src
@@ -46,13 +46,13 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Install project
-RUN uv sync --no-dev
+RUN uv sync --locked --no-dev
 
 EXPOSE 8000
 VOLUME ["/app_data"]
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/api/health || exit 1
+  CMD curl -f http://localhost:8000/api/live || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
