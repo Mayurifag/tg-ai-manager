@@ -1,4 +1,5 @@
 from quart import Quart
+import asyncio
 
 from src.adapters.telegram.client import TelethonAdapter
 from src.application.interactors import ChatInteractor
@@ -7,6 +8,7 @@ from src.infrastructure.event_bus import EventBus
 from src.infrastructure.tasks import BackgroundTasks
 from src.rules.service import RuleService
 from src.users.ports import UserRepository
+from src.web.sse import EventBroadcaster
 
 
 class TypedQuart(Quart):
@@ -18,3 +20,6 @@ class TypedQuart(Quart):
     chat_interactor: ChatInteractor
     event_bus: EventBus
     managed_tasks: BackgroundTasks
+    login_lock: asyncio.Lock
+    sse: EventBroadcaster
+    shutdown_event: asyncio.Event

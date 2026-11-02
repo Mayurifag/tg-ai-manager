@@ -1,7 +1,14 @@
 const chatList = document.getElementById("chat-list-container");
 const loadMoreButton = document.getElementById("load-more-chats");
 const listStatus = document.getElementById("chat-list-status");
-const updateTimeouts = new Map();
+const cardRefreshes = new Map();
+const CARD_REFRESH_INTERVAL = 500;
+const MAX_CARD_REFRESHES = 4;
+const MAX_DIRTY_CARDS = 512;
+let cardRefreshTimer = null;
+let activeCardRefreshes = 0;
+let listGeneration = 0;
+let refreshingList = false;
 let loadingChats = false;
 let chatObserver = null;
 let initialLoad = false;
@@ -30,6 +37,10 @@ function findCard(chatId) {
 async function loadMoreChats() {
   if (loadingChats || loadMoreButton.hidden) return;
   loadingChats = true;
+  if (initialLoad) {
+    refreshingList = true;
+    listGeneration++;
+  }
   loadMoreButton.disabled = true;
   listStatus.textContent = "Loading chats…";
   if (chatObserver) chatObserver.unobserve(loadMoreButton);
@@ -76,6 +87,8 @@ async function loadMoreChats() {
     listStatus.textContent = "Could not load more chats. Try again.";
   } finally {
     loadingChats = false;
+    refreshingList = false;
+    scheduleCardRefresh();
     loadMoreButton.disabled = false;
     chatList.setAttribute("aria-busy", "false");
   }
@@ -105,6 +118,8 @@ if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
 window.addEventListener("pageshow", async (event) => {
   if (!event.persisted || loadingChats) return;
   loadingChats = true;
+  refreshingList = true;
+  listGeneration++;
   loadMoreButton.disabled = true;
   if (chatObserver) chatObserver.unobserve(loadMoreButton);
   const anchor = Array.from(chatList.children).find(
@@ -167,6 +182,8 @@ window.addEventListener("pageshow", async (event) => {
     console.error("Could not refresh chats after returning:", error);
   } finally {
     loadingChats = false;
+    refreshingList = false;
+    scheduleCardRefresh();
     loadMoreButton.disabled = false;
     if (chatObserver && !loadMoreButton.hidden)
       chatObserver.observe(loadMoreButton);
@@ -186,18 +203,19 @@ chatList.addEventListener("click", async (event) => {
   try {
     const response = await fetch(`/api/chat/${chatId}/read`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
       body: JSON.stringify({ topic_id: button.dataset.topicId || null }),
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    const wrapper = button.closest(".chat-card-wrapper");
-    if (wrapper) {
-      wrapper.querySelector(".unread")?.remove();
-      button.remove();
-      wrapper.dataset.isUnread = "false";
-      insertCard(wrapper, true);
-    }
+    if (
+      !response.ok ||
+      !response.headers.get("content-type")?.includes("application/json")
+    )
+      throw new Error(`HTTP ${response.status}`);
+    button.textContent = "queued";
+    listStatus.textContent = "Read queued; waiting for Telegram.";
   } catch (error) {
     console.error("Error marking chat as read:", error);
     listStatus.textContent = "Could not mark chat as read. Try again.";
@@ -205,47 +223,136 @@ chatList.addEventListener("click", async (event) => {
   }
 });
 
+function scheduleCardRefresh() {
+  if (
+    cardRefreshTimer !== null ||
+    refreshingList ||
+    activeCardRefreshes >= MAX_CARD_REFRESHES
+  )
+    return;
+  if (
+    !Array.from(cardRefreshes.values()).some(
+      (state) => state.dirty && !state.inFlight,
+    )
+  )
+    return;
+  cardRefreshTimer = setTimeout(flushCardRefreshes, CARD_REFRESH_INTERVAL);
+}
+
 function reloadCard(chatId) {
   if (!chatId) return;
-  clearTimeout(updateTimeouts.get(chatId));
-  updateTimeouts.set(
-    chatId,
-    setTimeout(async () => {
-      updateTimeouts.delete(chatId);
-      try {
-        const response = await fetch(
-          `/api/chat/${chatId}/card?t=${Date.now()}`,
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const fragment = document.createElement("div");
-        fragment.innerHTML = await response.text();
-        const newCard = fragment.firstElementChild;
-        if (!newCard) return;
+  const id = String(chatId);
+  let state = cardRefreshes.get(id);
+  if (!state) {
+    if (cardRefreshes.size >= MAX_DIRTY_CARDS) {
+      listStatus.textContent = "Too many chat updates. Refresh the list.";
+      return;
+    }
+    state = { revision: 0, dirty: false, inFlight: false };
+    cardRefreshes.set(id, state);
+  }
+  state.revision++;
+  state.dirty = true;
+  scheduleCardRefresh();
+}
 
-        const current = findCard(chatId);
-        if (current && cardGroup(current) === cardGroup(newCard)) {
-          current.replaceWith(newCard);
-        } else {
-          if (current) current.remove();
-          insertCard(newCard, true);
-        }
-        window.parseAppleEmojis(newCard);
-      } catch (error) {
-        console.error("Error updating chat card:", error);
-      }
-    }, 500),
-  );
+function flushCardRefreshes() {
+  cardRefreshTimer = null;
+  if (refreshingList) return;
+  for (const [chatId, state] of cardRefreshes) {
+    if (activeCardRefreshes >= MAX_CARD_REFRESHES) break;
+    if (!state.dirty || state.inFlight) continue;
+    state.dirty = false;
+    state.inFlight = true;
+    activeCardRefreshes++;
+    void fetchCard(chatId, state);
+  }
+}
+
+async function fetchCard(chatId, state) {
+  const revision = state.revision;
+  const generation = listGeneration;
+  try {
+    const response = await fetch(`/api/chat/${chatId}/card?t=${Date.now()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const html = await response.text();
+    // Never overwrite newer events or a fresh list with an older request.
+    if (
+      state.revision !== revision ||
+      listGeneration !== generation ||
+      refreshingList
+    ) {
+      state.dirty = true;
+      return;
+    }
+    const fragment = document.createElement("div");
+    fragment.innerHTML = html;
+    const newCard = fragment.firstElementChild;
+    if (!newCard) return;
+
+    const current = findCard(chatId);
+    const focused =
+      current &&
+      document.activeElement &&
+      current.contains(document.activeElement);
+    const focusReadButton =
+      focused && document.activeElement.classList.contains("mark-read-btn");
+    if (current && cardGroup(current) === cardGroup(newCard)) {
+      current.replaceWith(newCard);
+    } else {
+      if (current) current.remove();
+      insertCard(newCard, true);
+    }
+    window.parseAppleEmojis(newCard);
+    if (focused) {
+      const target =
+        (focusReadButton && newCard.querySelector(".mark-read-btn")) ||
+        newCard.querySelector(".chat-card-link");
+      target?.focus({ preventScroll: true });
+    }
+  } catch (error) {
+    console.error("Error updating chat card:", error);
+    listStatus.textContent =
+      "Some chat updates are unavailable. Refresh to retry.";
+  } finally {
+    state.inFlight = false;
+    activeCardRefreshes--;
+    if (!state.dirty) cardRefreshes.delete(chatId);
+    scheduleCardRefresh();
+  }
 }
 
 document.addEventListener("tg:event", (event) => {
   const data = event.detail;
-  if (initialLoad) return;
+  if (data.type === "resync_required") {
+    window.location.reload();
+    return;
+  }
   if (!data.chat_id) return;
+  if (
+    refreshingList &&
+    ["message", "action", "edited", "deleted", "read"].includes(data.type)
+  ) {
+    reloadCard(data.chat_id);
+    return;
+  }
+
+  if (data.type === "read_failed") {
+    const button = findCard(data.chat_id)?.querySelector(".mark-read-btn");
+    if (button) {
+      button.disabled = false;
+      button.textContent = "mark read";
+    }
+    listStatus.textContent =
+      "Telegram could not mark the chat as read. Try again.";
+    return;
+  }
 
   if (
     data.type === "read" ||
     data.type === "deleted" ||
-    data.type === "edited"
+    data.type === "edited" ||
+    data.type === "action"
   ) {
     if (findCard(data.chat_id)) reloadCard(data.chat_id);
     return;
@@ -259,12 +366,13 @@ document.addEventListener("tg:event", (event) => {
     return;
   }
 
+  // A message patched in place is newer than any pending card response.
+  if (cardRefreshes.has(String(data.chat_id))) reloadCard(data.chat_id);
+
   const previousGroup = cardGroup(wrapper);
   const preview = card.querySelector(".preview");
   if (preview) {
-    const plainText = document.createElement("div");
-    plainText.innerHTML = data.text;
-    preview.textContent = plainText.textContent;
+    preview.textContent = data.text_plain ?? data.text;
     window.parseAppleEmojis(preview);
   }
 
@@ -283,15 +391,14 @@ document.addEventListener("tg:event", (event) => {
       badge.className = "unread";
       badge.textContent = "1";
       meta.appendChild(badge);
-      const header = card.querySelector(".chat-header");
-      if (header && !header.querySelector(".mark-read-btn")) {
+      if (!card.querySelector(".mark-read-btn")) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "mark-read-btn";
         button.dataset.chatId = wrapper.dataset.chatId;
         button.title = "Mark as Read";
         button.textContent = "mark read";
-        header.appendChild(button);
+        card.appendChild(button);
       }
     }
     wrapper.dataset.isUnread = "true";

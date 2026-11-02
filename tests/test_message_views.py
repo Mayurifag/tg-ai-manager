@@ -3,11 +3,12 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from quart import Quart
 from telethon import TelegramClient, errors, types
 from telethon.sessions import StringSession
 
-from src.adapters.telegram.media import MediaManager
+from src.adapters.telegram.media import MediaBusy, MediaManager, MediaTooLarge
 from src.application.message_views import group_messages_into_albums
 from src.domain.models import MediaContent, Message
 from src.web.routes import media as media_routes
@@ -24,6 +25,16 @@ def make_message(id: int, text: str = "", grouped_id: int | None = None) -> Mess
     )
 
 
+def download_bytes(data):
+    def download(*args, file, **kwargs):
+        if data is None:
+            return None
+        file.write(data)
+        return file
+
+    return download
+
+
 def test_group_messages_into_albums_does_not_mutate_source_messages():
     first = make_message(2, grouped_id=10)
     second = make_message(1, text="caption", grouped_id=10)
@@ -35,17 +46,31 @@ def test_group_messages_into_albums_does_not_mutate_source_messages():
     assert [part.id for part in grouped[0].album_parts] == [1, 2]
 
 
+def test_group_messages_into_albums_keeps_interleaved_messages():
+    newest = make_message(103, grouped_id=10)
+    between = make_message(102, text="separate message")
+    oldest = make_message(101, text="album caption", grouped_id=10)
+
+    grouped = group_messages_into_albums([newest, between, oldest])
+
+    assert [message.id for message in grouped] == [103, 102]
+    assert [part.id for part in grouped[0].album_parts] == [101, 103]
+    assert grouped[0].text == "album caption"
+    assert grouped[1] is between
+
+
 async def test_preloaded_photo_is_in_memory_and_reused(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     raw = SimpleNamespace(id=12, media=types.MessageMediaPhoto())
     client = MagicMock()
-    client.download_media = AsyncMock(return_value=b"image")
+    client.download_media = AsyncMock(side_effect=download_bytes(b"image"))
     manager = MediaManager(client)
     manager.prefetch_previews(42, [raw], [])
     await manager._preview_queue.join()
     result = await manager.download_media(42, 12)
     assert result == MediaContent(data=b"image", mime_type="image/jpeg")
-    client.download_media.assert_awaited_once_with(raw, file=bytes, thumb="m")
+    assert client.download_media.await_args.args == (raw,)
+    assert client.download_media.await_args.kwargs["thumb"] == "m"
     client.get_entity.assert_not_called()
     client.get_messages.assert_not_called()
     assert list(tmp_path.iterdir()) == []
@@ -61,14 +86,13 @@ async def test_avatar_download_reuses_the_entity_returned_by_telegram():
     )
     client = MagicMock()
     client.get_entity = AsyncMock(side_effect=ValueError("Entity not in cache"))
-    client.download_profile_photo = AsyncMock(return_value=b"avatar")
+    client.download_profile_photo = AsyncMock(side_effect=download_bytes(b"avatar"))
     manager = MediaManager(client)
     assert await manager._get_chat_image(entity, 42) == "/media/avatar/42"
     assert await manager.get_chat_avatar(42) == b"avatar"
     client.get_entity.assert_not_awaited()
-    client.download_profile_photo.assert_awaited_once_with(
-        entity, file=bytes, download_big=False
-    )
+    assert client.download_profile_photo.await_args.args == (entity,)
+    assert client.download_profile_photo.await_args.kwargs["download_big"] is False
     manager.clear_chat_avatar(42)
     assert 42 not in manager._avatar_entities
     await manager.close()
@@ -79,10 +103,11 @@ async def test_concurrent_photo_requests_share_download_when_one_is_cancelled():
     raw = SimpleNamespace(id=12, media=types.MessageMediaPhoto())
     client = MagicMock()
 
-    async def download(*args, **kwargs):
+    async def download(*args, file, **kwargs):
         started.set()
         await finish.wait()
-        return b"image"
+        file.write(b"image")
+        return file
 
     client.download_media = AsyncMock(side_effect=download)
     manager = MediaManager(client)
@@ -107,12 +132,12 @@ async def test_queued_image_is_available_to_foreground_without_lookup():
 
     async def download(message, *, file, **kwargs):
         nonlocal count
-        assert file is bytes
         count += 1
         if count >= 3:
             three_started.set()
         await finish.wait()
-        return b"image"
+        file.write(b"image")
+        return file
 
     client = MagicMock()
     client.download_media = AsyncMock(side_effect=download)
@@ -152,11 +177,12 @@ async def test_edited_media_invalidates_inflight_and_cached_downloads():
     new = SimpleNamespace(id=12, media=types.MessageMediaPhoto(), version="new")
     client = MagicMock()
 
-    async def download(message, **kwargs):
+    async def download(message, *, file, **kwargs):
         if message.version == "old":
             started.set()
             await finish.wait()
-        return message.version.encode()
+        file.write(message.version.encode())
+        return file
 
     client.download_media = AsyncMock(side_effect=download)
     manager = MediaManager(client)
@@ -179,7 +205,13 @@ async def test_edited_media_invalidates_inflight_and_cached_downloads():
 async def test_photo_preview_without_medium_size_never_downloads_full_image():
     raw = SimpleNamespace(id=12, media=types.MessageMediaPhoto())
     client = MagicMock()
-    client.download_media = AsyncMock(side_effect=[None, b"thumbnail"])
+
+    def download(message, *, file, thumb):
+        return download_bytes(None if thumb == "m" else b"thumbnail")(
+            message, file=file
+        )
+
+    client.download_media = AsyncMock(side_effect=download)
     manager = MediaManager(client)
     manager.remember_messages(42, [raw])
     assert (await manager.download_media(42, 12)).data == b"thumbnail"
@@ -188,6 +220,66 @@ async def test_photo_preview_without_medium_size_never_downloads_full_image():
         "x",
     ]
     await manager.close()
+
+
+async def test_oversized_photo_is_rejected_before_full_download(monkeypatch):
+    monkeypatch.setattr("src.adapters.telegram.media.MAX_DOWNLOAD_BYTES", 10)
+    raw = SimpleNamespace(id=12, media=types.MessageMediaPhoto())
+    client = MagicMock()
+    calls = []
+
+    async def download(message, *, file, **kwargs):
+        file.write(b"123456")
+        calls.append("first")
+        file.write(b"78901")
+        calls.append("second")
+        return file
+
+    client.download_media = AsyncMock(side_effect=download)
+    manager = MediaManager(client)
+    manager.remember_messages(42, [raw])
+    try:
+        with pytest.raises(MediaTooLarge):
+            await manager.download_media(42, 12, size_type="full")
+        assert calls == ["first"]
+        assert not manager._cache
+    finally:
+        await manager.close()
+
+
+async def test_inflight_downloads_are_bounded_and_existing_requests_share(monkeypatch):
+    monkeypatch.setattr("src.adapters.telegram.media.MAX_ACTIVE_DOWNLOADS", 1)
+    started, release = asyncio.Event(), asyncio.Event()
+    client = MagicMock()
+
+    async def download(message, *, file, **kwargs):
+        started.set()
+        await release.wait()
+        file.write(b"image")
+        return file
+
+    client.download_media = AsyncMock(side_effect=download)
+    manager = MediaManager(client)
+    manager.remember_messages(
+        42,
+        [
+            SimpleNamespace(id=12, media=types.MessageMediaPhoto()),
+            SimpleNamespace(id=13, media=types.MessageMediaPhoto()),
+        ],
+    )
+    first = asyncio.create_task(manager.download_media(42, 12))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        with pytest.raises(MediaBusy):
+            await manager.download_media(42, 13)
+        shared = asyncio.create_task(manager.download_media(42, 12))
+        release.set()
+        assert (await first).data == (await shared).data == b"image"
+        assert client.download_media.await_count == 1
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await manager.close()
 
 
 async def test_document_stream_refreshes_expired_reference_after_partial_data():
@@ -261,6 +353,112 @@ async def test_document_stream_uses_telethon_for_unaligned_ranges():
     assert b"".join(chunks) == payload[start : start + length]
     assert client._call.await_count >= 2
     await manager.close()
+
+
+async def test_document_stream_slot_is_released_even_before_first_chunk(monkeypatch):
+    monkeypatch.setattr("src.adapters.telegram.media.MAX_ACTIVE_STREAMS", 1)
+    manager = MediaManager(MagicMock())
+    document = SimpleNamespace(size=10)
+    first = manager.open_document_stream(42, 12, document, 0, 10)
+    with pytest.raises(MediaBusy):
+        manager.open_document_stream(42, 13, document, 0, 10)
+    await first.aclose()
+    second = manager.open_document_stream(42, 13, document, 0, 10)
+    await second.aclose()
+    assert not manager._stream_leases
+    await manager.close()
+
+
+async def test_manager_close_cancels_active_stream(monkeypatch):
+    monkeypatch.setattr("src.adapters.telegram.media.MAX_ACTIVE_STREAMS", 1)
+    started = asyncio.Event()
+
+    class BlockingDownload:
+        _sender = True
+
+        def __init__(self):
+            self.close = AsyncMock()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            started.set()
+            await asyncio.Event().wait()
+
+    download = BlockingDownload()
+    client = MagicMock()
+    client.iter_download.return_value = download
+    manager = MediaManager(client)
+    stream = manager.open_document_stream(42, 12, SimpleNamespace(size=10), 0, 10)
+    consumer = asyncio.create_task(anext(stream))
+    await asyncio.wait_for(started.wait(), 1)
+    await asyncio.wait_for(manager.close(), 1)
+    assert consumer.cancelled()
+    download.close.assert_awaited_once()
+    assert not manager._stream_leases
+
+
+async def test_stream_overload_returns_503_before_sending_a_response(monkeypatch):
+    monkeypatch.setattr("src.adapters.telegram.media.MAX_ACTIVE_STREAMS", 1)
+    document = SimpleNamespace(size=10, mime_type="video/mp4", attributes=[])
+    manager = MediaManager(MagicMock())
+    held = manager.open_document_stream(42, 12, document, 0, 10)
+    app = Quart(__name__)
+    app.tg_adapter = SimpleNamespace(
+        get_stream_document=AsyncMock(return_value=document),
+        stream_document=manager.open_document_stream,
+    )
+    app.register_blueprint(media_routes.media_bp)
+    try:
+        response = await app.test_client().get("/media/stream/42/13")
+        assert response.status_code == 503
+        assert "busy" in (await response.get_json())["error"]
+    finally:
+        await held.aclose()
+        await manager.close()
+
+
+async def test_route_streams_actual_media_manager_lease_and_releases_it():
+    document = SimpleNamespace(size=6, mime_type="video/mp4", attributes=[])
+
+    class Download:
+        _sender = True
+
+        def __init__(self, offset):
+            self.chunks = iter([b"abcdef"[offset:]])
+            self.close = AsyncMock()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            chunk = next(self.chunks, None)
+            if chunk is None:
+                raise StopAsyncIteration
+            return chunk
+
+    client = MagicMock()
+    client.iter_download.side_effect = lambda document, offset, **kwargs: Download(
+        offset
+    )
+    manager = MediaManager(client)
+    app = Quart(__name__)
+    app.tg_adapter = SimpleNamespace(
+        get_stream_document=AsyncMock(return_value=document),
+        stream_document=manager.open_document_stream,
+    )
+    app.register_blueprint(media_routes.media_bp)
+    try:
+        response = await app.test_client().get(
+            "/media/stream/42/12", headers={"Range": "bytes=1-3"}
+        )
+        assert response.status_code == 206
+        assert response.headers["Content-Range"] == "bytes 1-3/6"
+        assert await response.get_data() == b"bcd"
+        assert not manager._stream_leases
+    finally:
+        await manager.close()
 
 
 async def test_media_routes_use_ram_and_stream_ranges_without_caching():

@@ -10,7 +10,8 @@ from src.adapters.telethon_mappers import (
     format_message_preview,
     map_telethon_dialog_to_chat_type,
 )
-from src.domain.models import Chat, ChatType, Message
+from src.adapters.telegram.query_errors import unavailable
+from src.domain.models import Chat, ChatType, Message, MessageContext
 from src.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
@@ -36,7 +37,11 @@ class ChatQueryOps:
         self._unavailable_chats: Dict[int, float] = {}
 
     async def get_chats(self) -> list[Chat]:
-        dialogs = await self.client.get_dialogs(limit=None)
+        try:
+            dialogs = await self.client.get_dialogs(limit=None)
+        except Exception as error:
+            logger.warning("get_chats_failed", category=type(error).__name__)
+            raise unavailable(error) from error
         results = []
         for d in dialogs:
             chat_type = map_telethon_dialog_to_chat_type(d)
@@ -89,11 +94,14 @@ class ChatQueryOps:
                             name=d.name,
                             unread_count=d.unread_count,
                             type=chat_type,
+                            last_message_id=getattr(d.message, "id", None),
                         )
                         results.append(chat)
 
-        except Exception as e:
-            logger.error("get_all_unread_chats_failed", error=str(e))
+        except Exception as error:
+            logger.warning("get_all_unread_chats_failed", category=type(error).__name__)
+            # Partial results must not look like a successful complete scan.
+            raise
 
         return results
 
@@ -177,47 +185,36 @@ class ChatQueryOps:
 
             image_url = await self._media._get_chat_image(entity, chat_id)
 
-            unread_count = 0
             unread_topics_count = None
-            last_message_preview = None
-            is_pinned = False
-
-            try:
-                input_peer = utils.get_input_peer(entity)
-                res = await self.client(
-                    GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])  # type: ignore
-                )
-                if res.dialogs:
-                    dialog = res.dialogs[0]
-                    unread_count = dialog.unread_count
-                    is_pinned = dialog.pinned
-                    latest_msg = next(
-                        (msg for msg in res.messages if msg.id == dialog.top_message),
-                        None,
-                    )
-                    if latest_msg:
-                        self._parser._cache_message_chat(latest_msg.id, chat_id)
-                    last_message_preview = format_message_preview(
-                        latest_msg, c_type, {}
-                    )
-            except Exception as e:
-                logger.warning(
-                    "fetch_dialog_stats_failed", chat_id=chat_id, error=str(e)
-                )
+            input_peer = utils.get_input_peer(entity)
+            res = await self.client(
+                GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])  # type: ignore
+            )
+            if not res.dialogs:
+                raise LookupError("Telegram did not return dialog state")
+            dialog = res.dialogs[0]
+            latest_msg = next(
+                (msg for msg in res.messages if msg.id == dialog.top_message), None
+            )
+            if latest_msg:
+                self._parser._cache_message_chat(latest_msg.id, chat_id)
+            last_message_preview = format_message_preview(latest_msg, c_type, {})
 
             return Chat(
                 id=chat_id,
                 name=name,
-                unread_count=unread_count,
+                unread_count=dialog.unread_count,
                 type=c_type,
                 unread_topics_count=unread_topics_count,
                 image_url=image_url,
                 last_message_preview=last_message_preview,
-                is_pinned=is_pinned,
+                is_pinned=dialog.pinned,
             )
-        except Exception as e:
-            logger.error("get_chat_failed", chat_id=chat_id, error=str(e))
-            return None
+        except Exception as error:
+            logger.warning(
+                "get_chat_failed", chat_id=chat_id, category=type(error).__name__
+            )
+            raise unavailable(error) from error
 
     async def get_messages(
         self,
@@ -226,12 +223,23 @@ class ChatQueryOps:
         topic_id: Optional[int] = None,
         offset_id: int = 0,
         ids: Optional[List[int]] = None,
+        after_id: Optional[int] = None,
     ) -> List[Message]:
+        if after_id is not None and (offset_id or ids is not None):
+            raise ValueError("Newer history cannot be combined with an offset or IDs")
         try:
             entity = await self.client.get_input_entity(chat_id)
-            messages = await self.client.get_messages(
-                entity, limit=limit, reply_to=topic_id, offset_id=offset_id, ids=ids
-            )
+            options = {
+                "limit": limit,
+                "reply_to": topic_id,
+                "offset_id": offset_id,
+                "ids": ids,
+            }
+            if after_id is not None:
+                options.update(min_id=after_id, reverse=True)
+            messages = await self.client.get_messages(entity, **options)
+            if after_id is not None:
+                messages = list(reversed(messages))
             reply_ids = []
             for msg in messages:
                 if not msg:
@@ -270,9 +278,37 @@ class ChatQueryOps:
                     "preview_prefetch_failed", chat_id=chat_id, error=repr(error)
                 )
             return result_messages
-        except Exception as e:
-            logger.error("get_messages_failed", chat_id=chat_id, error=str(e))
-            return []
+        except Exception as error:
+            logger.warning(
+                "get_messages_failed", chat_id=chat_id, category=type(error).__name__
+            )
+            raise unavailable(error) from error
+
+    async def get_message_context(
+        self, chat_id: int, message_id: int
+    ) -> Optional[MessageContext]:
+        """Fetch one message and its actual forum scope for a dry run."""
+        try:
+            entity = await self.client.get_entity(chat_id)
+            if entity is None:
+                raise LookupError("Telegram did not return the chat")
+            messages = await self.client.get_messages(entity, ids=[message_id])
+            message = next((item for item in messages if item), None)
+            if message is None:
+                return None
+            is_forum = bool(getattr(entity, "forum", False))
+            topic_id = self._parser._extract_topic_id(message) if is_forum else None
+            parsed = await self._parser._parse_message(message, chat_id=chat_id)
+            return MessageContext(
+                parsed, topic_id, not is_forum or topic_id is not None
+            )
+        except Exception as error:
+            logger.warning(
+                "get_message_context_failed",
+                chat_id=chat_id,
+                category=type(error).__name__,
+            )
+            raise unavailable(error) from error
 
     async def get_recent_authors(
         self, chat_id: int, limit: int = 100
@@ -307,22 +343,26 @@ class ChatQueryOps:
                     )
 
             return authors
-        except Exception as e:
-            logger.error("get_recent_authors_failed", chat_id=chat_id, error=str(e))
-            return []
+        except Exception as error:
+            logger.warning(
+                "get_recent_authors_failed",
+                chat_id=chat_id,
+                category=type(error).__name__,
+            )
+            raise unavailable(error) from error
 
     async def get_self_premium_status(self) -> bool:
         try:
             if not self.client:
-                return False
+                raise LookupError("Telegram client unavailable")
             from telethon import functions
 
             users = await self.client(
                 functions.users.GetUsersRequest(id=[types.InputUserSelf()])
             )
-            if users:
-                return getattr(users[0], "premium", False)
-            return False
-        except Exception as e:
-            logger.error("get_premium_status_failed", error=str(e))
-            return False
+            if not users or not isinstance(users[0], types.User):
+                raise LookupError("Telegram did not return the account")
+            return bool(users[0].premium)
+        except Exception as error:
+            logger.warning("get_premium_status_failed", category=type(error).__name__)
+            raise unavailable(error) from error

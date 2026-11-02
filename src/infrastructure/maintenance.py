@@ -28,6 +28,10 @@ async def job_telegram_recovery(rule_service, user_repo, shutdown_event):
             if not user or not user.is_authenticated():
                 continue
             adapter = rule_service.chat_repo
+            if adapter._source_session_string != user.session_string:
+                # A fresh QR attempt is not the saved account, even if it is
+                # already authorized by Telegram but not yet finalized.
+                continue
             if not adapter.is_connected():
                 await asyncio.wait_for(adapter.connect(), timeout=20)
             if adapter.is_connected():
@@ -59,9 +63,13 @@ async def job_background_maintenance(
 
                 is_premium = await interactor.get_self_premium_status()
                 if user.is_premium != is_premium:
-                    user.is_premium = is_premium
-                    await user_repo.save_user(user)
-                    logger.info("premium_status_updated", status=is_premium)
+                    updated = await user_repo.update_fields(
+                        user.id,
+                        {"is_premium": is_premium},
+                        expected_session=user.session_string,
+                    )
+                    if updated:
+                        logger.info("premium_status_updated", status=is_premium)
             else:
                 logger.info("maintenance_skipped_no_authenticated_user")
 

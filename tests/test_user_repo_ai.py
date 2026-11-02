@@ -1,5 +1,6 @@
 """Tests for User AI fields round-trip via SqliteUserRepository."""
 
+import asyncio
 import os
 import sqlite3
 import tempfile
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.infrastructure.security import SecretStorageError
 from src.users.models import User
 from src.users.sqlite_repo import SqliteUserRepository
 
@@ -175,3 +177,61 @@ async def test_ai_api_key_encrypted_at_rest(repo, db_path):
     # Confirm decrypted value matches plaintext
     result = await repo.get_user(user_id=1)
     assert result.ai_api_key == plaintext_key
+
+
+@pytest.mark.asyncio
+async def test_encryption_failure_never_persists_plaintext(repo, db_path):
+    await repo.save_user(
+        User(id=1, session_string="original-session", ai_api_key="original-key")
+    )
+    with patch.object(
+        repo.crypto._cipher, "encrypt", side_effect=RuntimeError("failed")
+    ):
+        with pytest.raises(SecretStorageError):
+            await repo.save_user(
+                User(id=1, session_string="new-session", ai_api_key="new-key")
+            )
+    user = await repo.get_user(1)
+    assert user.session_string == "original-session"
+    assert user.ai_api_key == "original-key"
+
+
+@pytest.mark.asyncio
+async def test_corrupted_ciphertext_is_not_treated_as_missing(repo, db_path):
+    await repo.save_user(User(id=1, session_string="session", ai_api_key="key"))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE users SET ai_api_key = ? WHERE id = 1", ("corrupt",))
+    with pytest.raises(SecretStorageError):
+        await repo.get_user(1)
+    with sqlite3.connect(db_path) as conn:
+        assert (
+            conn.execute("SELECT ai_api_key FROM users WHERE id = 1").fetchone()[0]
+            == "corrupt"
+        )
+
+
+async def test_concurrent_field_updates_do_not_overwrite_each_other(repo):
+    await repo.save_user(
+        User(id=1, session_string="session", is_premium=True, ai_api_key="key")
+    )
+    await asyncio.gather(
+        repo.update_fields(1, {"debug_mode": True}, expected_session="session"),
+        repo.update_fields(1, {"autoread_polls": True}, expected_session="session"),
+    )
+    user = await repo.get_user(1)
+    assert user.debug_mode and user.autoread_polls and user.is_premium
+    assert user.ai_api_key == "key"
+
+
+async def test_stale_updates_do_not_recreate_or_modify_replaced_account(repo):
+    await repo.save_user(User(id=1, session_string="old-session"))
+    await repo.delete_user(1)
+    assert not await repo.update_fields(
+        1, {"is_premium": True}, expected_session="old-session"
+    )
+    assert await repo.get_user(1) is None
+    await repo.save_user(User(id=1, session_string="new-session"))
+    assert not await repo.update_fields(
+        1, {"is_premium": True}, expected_session="old-session"
+    )
+    assert not (await repo.get_user(1)).is_premium

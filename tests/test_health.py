@@ -5,6 +5,8 @@ import pytest
 from quart import Quart
 
 from src.web.routes import register_routes
+from src.users.models import User
+from src.web.sse import EventBroadcaster
 
 
 class _Conn:
@@ -24,6 +26,7 @@ class _Conn:
 @pytest.fixture
 def app():
     _app = Quart(__name__)
+    _app.sse = EventBroadcaster()
     register_routes(_app)
 
     client = MagicMock()
@@ -34,12 +37,16 @@ def app():
     _app.tg_adapter.client = client
     _app.tg_adapter.is_connected.return_value = True
     _app.tg_adapter.connect = AsyncMock()
+    _app.tg_adapter._self_id = 123
     _app.tg_adapter._write_queue.queue_size.return_value = 0
     _app.tg_adapter._write_queue.is_running.return_value = True
     client.reconnect_count = 0
 
     _app.user_repo = MagicMock()
     _app.user_repo._connect.return_value = _Conn()
+    _app.user_repo.get_user = AsyncMock(
+        return_value=User(session_string="session", api_id=1, api_hash="hash")
+    )
 
     _app.action_repo = MagicMock()
     _app.action_repo.redis.ping = AsyncMock(return_value=True)
@@ -65,7 +72,7 @@ async def test_api_health_returns_ok(app, client):
     assert data["telegram_client_exists"] is True
     assert data["telegram_connected"] is True
     assert data["telegram_authorized"] is True
-    assert data["telegram_authenticated_call"] is True
+    assert data["telegram_authenticated_call"] is None
     assert data["write_queue_running"] is True
     assert data["telegram_reconnect_count"] == 0
 
@@ -79,21 +86,20 @@ async def test_api_health_returns_503_when_telegram_is_disconnected(app, client)
     data = await response.get_json()
     assert data["status"] == "unhealthy"
     assert data["telegram_connected"] is False
-    app.tg_adapter.connect.assert_awaited_once()
+    app.tg_adapter.connect.assert_not_awaited()
+    app.tg_adapter.client.get_me.assert_not_awaited()
+    app.tg_adapter.client.is_user_authorized.assert_not_awaited()
 
 
-async def test_api_health_recovers_disconnected_telegram(app, client):
-    app.tg_adapter.is_connected.side_effect = [False, True]
-
-    response = await client.get("/api/health")
-
-    assert response.status_code == 200
-    data = await response.get_json()
-    assert data["status"] == "ok"
-    assert data["telegram_connected"] is True
-    assert data["telegram_authorized"] is True
-    assert data["telegram_authenticated_call"] is True
-    app.tg_adapter.connect.assert_awaited_once()
+async def test_liveness_is_available_without_an_account(app, client):
+    app.user_repo.get_user.return_value = None
+    app.tg_adapter.is_connected.return_value = False
+    live = await client.get("/api/live")
+    ready = await client.get("/api/health")
+    assert live.status_code == 200
+    assert ready.status_code == 503
+    assert (await ready.get_json())["account_configured"] is False
+    app.tg_adapter.connect.assert_not_awaited()
 
 
 async def test_api_health_returns_503_when_db_fails(app, client):

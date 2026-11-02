@@ -13,3 +13,4 @@ class ReadDecision:
 class ReactDecision:
     should_react: bool
     emoji: str = ""
+    reason: str = ""

@@ -4,7 +4,25 @@ from typing import List, Optional
 from src.rules.models import Rule
 
 
+class InheritedRuleError(ValueError):
+    """A topic cannot be disabled while its parent rule remains enabled."""
+
+
 class RuleRepository(ABC):
+    @abstractmethod
+    async def set_scope(
+        self, rule: Rule, enabled: bool, *, update_config: bool = False
+    ) -> Optional[Rule]:
+        """Atomically change one scope and return its effective rule."""
+        pass
+
+    @abstractmethod
+    async def set_forum_autoread(
+        self, user_id: int, chat_id: int, enabled: bool
+    ) -> None:
+        """Atomically enable the parent or disable every topic in the forum."""
+        pass
+
     @abstractmethod
     async def get_by_chat_and_topic(
         self, chat_id: int, topic_id: Optional[int] = None

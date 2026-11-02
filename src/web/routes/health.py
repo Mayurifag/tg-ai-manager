@@ -1,6 +1,6 @@
 import asyncio
 
-from quart import Blueprint, jsonify
+from quart import Blueprint, current_app, jsonify
 
 from src.container import _get_tg_adapter, get_action_repo, get_event_bus, get_user_repo
 
@@ -36,32 +36,17 @@ async def _check_valkey() -> bool:
         return False
 
 
-async def _check_telegram(adapter) -> tuple[bool, bool, bool, bool]:
-    client_exists = adapter.client is not None
-    connected = adapter.is_connected()
-    authorized = False
-    authenticated_call = False
+async def _check_account() -> bool:
+    try:
+        user = await asyncio.wait_for(get_user_repo().get_user(1), timeout=2.0)
+        return bool(user and user.is_authenticated())
+    except Exception:
+        return False
 
-    if client_exists and not connected:
-        try:
-            await asyncio.wait_for(adapter.connect(), timeout=5.0)
-            connected = adapter.is_connected()
-        except Exception:
-            connected = False
 
-    if client_exists and connected:
-        try:
-            authorized = bool(
-                await asyncio.wait_for(adapter.client.is_user_authorized(), timeout=2.0)
-            )
-            authenticated_call = bool(
-                await asyncio.wait_for(adapter.client.get_me(), timeout=2.0)
-            )
-        except Exception:
-            authorized = False
-            authenticated_call = False
-
-    return client_exists, connected, authorized, authenticated_call
+@health_bp.route("/api/live")
+async def liveness():
+    return jsonify({"status": "ok"})
 
 
 @health_bp.route("/api/health")
@@ -69,26 +54,28 @@ async def health():
     adapter = _get_tg_adapter()
     bus = get_event_bus()
 
-    db_ok, valkey_ok = await asyncio.gather(_check_sqlite(), _check_valkey())
-    client_exists, connected, authorized, authenticated_call = await _check_telegram(
-        adapter
+    db_ok, valkey_ok, account_configured = await asyncio.gather(
+        _check_sqlite(), _check_valkey(), _check_account()
     )
+    client_exists = adapter.client is not None
+    connected = bool(adapter.is_connected())
+    # This is cached state from the adapter's last successful authentication,
+    # not a fresh Telegram RPC. Recovery belongs to the background worker.
+    authorized = bool(account_configured and connected and adapter._self_id)
 
     queue_size = adapter._write_queue.queue_size()
     queue_running = adapter._write_queue.is_running()
     subscriber_count = len(bus._subscribers)
 
-    from src.web.sse import connected_queues
-
-    sse_clients = len(connected_queues)
+    sse_clients = current_app.sse.client_count
 
     healthy = (
         db_ok
         and valkey_ok
+        and account_configured
         and client_exists
         and connected
         and authorized
-        and authenticated_call
         and queue_running
     )
     status = "ok" if healthy else "unhealthy"
@@ -99,10 +86,11 @@ async def health():
             "web": True,
             "db": db_ok,
             "cache": valkey_ok,
+            "account_configured": account_configured,
             "telegram_client_exists": client_exists,
             "telegram_connected": connected,
             "telegram_authorized": authorized,
-            "telegram_authenticated_call": authenticated_call,
+            "telegram_authenticated_call": None,
             "write_queue_depth": queue_size,
             "write_queue_running": bool(queue_running),
             "telegram_reconnect_count": int(

@@ -9,7 +9,7 @@ from telethon import errors, types
 
 from src.adapters.telegram.write_ops import WriteOps
 import src.infrastructure.telegram_queue as tq_module
-from src.infrastructure.telegram_queue import TelegramWriteQueue
+from src.infrastructure.telegram_queue import TelegramWriteQueue, WriteQueueFull
 
 
 async def test_reaction_toggle_preserves_other_chosen_reactions():
@@ -38,6 +38,53 @@ async def test_reaction_toggle_preserves_other_chosen_reactions():
     request = client.await_args.args[0]
     assert len(request.reaction) == 1
     assert request.reaction[0].document_id == 123
+
+
+async def test_automatic_reaction_is_desired_state_not_toggle():
+    current = types.MessageReactions(
+        results=[
+            types.ReactionCount(
+                reaction=types.ReactionEmoji(emoticon="👍"), count=1, chosen_order=0
+            )
+        ]
+    )
+    client = AsyncMock()
+    client.get_entity.return_value = "peer"
+    client.get_messages.return_value = [SimpleNamespace(reactions=current)]
+    queue = SimpleNamespace(items=[])
+
+    async def enqueue(operation, *, automatic=False):
+        queue.items.append(operation)
+
+    queue.enqueue = enqueue
+    ops = WriteOps(client, MagicMock(), queue, None, AsyncMock())
+    validate = AsyncMock(return_value=True)
+    complete = AsyncMock()
+    assert await ops.send_automatic_reaction(1, 1, "👍", validate, complete)
+    assert not await ops.send_automatic_reaction(1, 1, "👍", validate, complete)
+    await queue.items.pop()()
+    client.assert_not_awaited()
+    complete.assert_awaited_once_with(True)
+
+
+async def test_automatic_reaction_is_dropped_if_rule_was_disabled():
+    client = AsyncMock()
+    client.get_entity.return_value = "peer"
+    client.get_messages.return_value = [SimpleNamespace(reactions=None)]
+    queue = SimpleNamespace(items=[])
+
+    async def enqueue(operation, *, automatic=False):
+        queue.items.append(operation)
+
+    queue.enqueue = enqueue
+    ops = WriteOps(client, MagicMock(), queue, None, AsyncMock())
+    validate = AsyncMock(return_value=False)
+    complete = AsyncMock()
+    assert await ops.send_automatic_reaction(1, 1, "👍", validate, complete)
+    await queue.items.pop()()
+    client.get_entity.assert_not_awaited()
+    client.assert_not_awaited()
+    complete.assert_awaited_once_with(False)
 
 
 async def test_reaction_flood_wait_reaches_write_queue():
@@ -188,3 +235,78 @@ async def test_enqueue_before_start_drains_after_start():
     await queue.stop()
 
     assert results == [1]
+
+
+async def test_stop_drops_pending_work_and_closes_queue():
+    queue = TelegramWriteQueue()
+    started = asyncio.Event()
+    blocker = asyncio.Event()
+    ran = []
+
+    async def blocking():
+        started.set()
+        await blocker.wait()
+
+    async def pending():
+        ran.append(True)
+
+    await queue.start()
+    await queue.enqueue(blocking)
+    await asyncio.wait_for(started.wait(), 1)
+    await queue.enqueue(pending)
+    await queue.stop()
+    assert queue.queue_size() == 0
+    await asyncio.wait_for(queue._queue.join(), 1)
+    assert not ran
+    with pytest.raises(RuntimeError):
+        await queue.enqueue(pending)
+    with pytest.raises(RuntimeError):
+        await queue.start()
+
+
+async def test_queue_limits_automatic_work_and_reserves_manual_capacity():
+    queue = TelegramWriteQueue(max_pending=3, manual_reserve=1)
+    op = AsyncMock()
+    await queue.enqueue(op, automatic=True)
+    await queue.enqueue(op, automatic=True)
+    with pytest.raises(WriteQueueFull):
+        await queue.enqueue(op, automatic=True)
+    await queue.enqueue(op)
+    with pytest.raises(WriteQueueFull):
+        await queue.enqueue(op)
+    assert queue.queue_size() == 3
+    await queue.stop()
+    await asyncio.wait_for(queue._queue.join(), 1)
+
+
+async def test_flood_retry_does_not_deadlock_when_pending_queue_is_full():
+    class FakeFloodWait(Exception):
+        seconds = 0
+
+    queue = TelegramWriteQueue(max_pending=1, manual_reserve=0)
+    first_attempt = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+    finished = []
+
+    async def retry():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_attempt.set()
+            await release.wait()
+            raise FakeFloodWait()
+        finished.append("retry")
+
+    async def manual():
+        finished.append("manual")
+
+    with patch.object(tq_module, "FloodWaitError", FakeFloodWait):
+        await queue.start()
+        await queue.enqueue(retry, automatic=True)
+        await asyncio.wait_for(first_attempt.wait(), 1)
+        await queue.enqueue(manual)
+        release.set()
+        await asyncio.wait_for(queue._queue.join(), 1)
+        await queue.stop()
+    assert finished == ["retry", "manual"]

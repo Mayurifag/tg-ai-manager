@@ -27,6 +27,8 @@ class WriteOps:
         self._parser = parser
         self._write_queue = write_queue
         self._dispatch_fn = dispatch_fn  # patched after EventHandlers is built
+        self._pending_automatic_reactions: set[tuple[int, int, str]] = set()
+        self._closed = False
         self._read_ops = ReadOps(
             client=client,
             write_queue=write_queue,
@@ -40,6 +42,11 @@ class WriteOps:
         self._dispatch_fn = dispatch_fn
         self._read_ops.set_dispatch_fn(dispatch_fn)
 
+    async def close(self) -> None:
+        self._closed = True
+        self._pending_automatic_reactions.clear()
+        await self._read_ops.close()
+
     async def mark_as_read(
         self,
         chat_id: int,
@@ -48,122 +55,175 @@ class WriteOps:
     ) -> None:
         await self._read_ops.mark_as_read(chat_id, topic_id, max_id)
 
+    async def mark_automatic_as_read(
+        self,
+        chat_id: int,
+        topic_id: Optional[int],
+        max_id: int,
+        validate: Callable[[], Awaitable[bool]],
+        on_success: Callable[[], Awaitable[None]],
+        *,
+        selective: bool,
+    ) -> None:
+        await self._read_ops.mark_automatic_as_read(
+            chat_id, topic_id, max_id, validate, on_success, selective=selective
+        )
+
+    async def can_selectively_read(
+        self, chat_id: int, topic_id: Optional[int], message_id: int
+    ) -> bool:
+        return await self._read_ops.can_selectively_read(chat_id, topic_id, message_id)
+
+    async def first_unread_message_id(
+        self, chat_id: int, topic_id: Optional[int]
+    ) -> Optional[int]:
+        return await self._read_ops.first_unread_message_id(chat_id, topic_id)
+
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:
         async def _do() -> None:
-            try:
-                entity = await self.client.get_entity(chat_id)
-
-                target_reaction = None
-                if emoji.isdigit():
-                    target_reaction = types.ReactionCustomEmoji(document_id=int(emoji))
-                else:
-                    target_reaction = types.ReactionEmoji(emoticon=emoji)
-
-                msgs = await self.client.get_messages(entity, ids=[msg_id])
-                if not msgs:
-                    return
-                msg = msgs[0]
-
-                current_my_reactions = []
-                if hasattr(msg, "reactions") and msg.reactions:
-                    for rc in msg.reactions.results:
-                        if getattr(rc, "chosen_order", None) is not None:
-                            current_my_reactions.append(rc.reaction)
-
-                new_reactions_list = []
-                found = False
-
-                for r in current_my_reactions:
-                    is_same = False
-                    if isinstance(r, types.ReactionEmoji) and isinstance(
-                        target_reaction, types.ReactionEmoji
-                    ):
-                        if r.emoticon == target_reaction.emoticon:
-                            is_same = True
-                    elif isinstance(r, types.ReactionCustomEmoji) and isinstance(
-                        target_reaction, types.ReactionCustomEmoji
-                    ):
-                        if r.document_id == target_reaction.document_id:
-                            is_same = True
-
-                    if is_same:
-                        found = True
-                    else:
-                        new_reactions_list.append(r)
-
-                if not found:
-                    new_reactions_list.append(target_reaction)
-
-                success = False
+            success = await self._send_reaction(chat_id, msg_id, emoji)
+            if not success and self._dispatch_fn:
                 try:
-                    await self.client(
-                        functions.messages.SendReactionRequest(
-                            peer=entity,
-                            msg_id=msg_id,
-                            reaction=new_reactions_list,  # type: ignore
-                            add_to_recent=True,
-                        )
-                    )
-                    success = True
-                except errors.FloodWaitError:
-                    raise
-                except errors.ReactionInvalidError:
-                    logger.info(
-                        "reaction_stack_failed_fallback_replace",
-                        chat_id=chat_id,
-                        msg_id=msg_id,
-                    )
-                    fallback_list = []
-                    if not found:
-                        fallback_list = [target_reaction]
+                    from src.domain.models import Message
+                    from datetime import datetime
 
-                    await self.client(
-                        functions.messages.SendReactionRequest(
-                            peer=entity,
-                            msg_id=msg_id,
-                            reaction=fallback_list,  # type: ignore
-                            add_to_recent=True,
-                        )
-                    )
-                    success = True
-                except Exception as e:
-                    logger.error("send_reaction_exception", error=str(e))
-
-                if success:
-                    try:
-                        updated_msgs = await self.client.get_messages(
-                            entity, ids=[msg_id]
-                        )
-                        if updated_msgs:
-                            updated_msg = updated_msgs[0]
-                            parsed_msg = await self._parser._parse_message(
-                                updated_msg, chat_id=chat_id
-                            )
-                            event = SystemEvent(
-                                type="reaction_update",
+                    await self._dispatch_fn(
+                        SystemEvent(
+                            type="reaction_failed",
+                            text="Reaction failed",
+                            chat_name="",
+                            chat_id=chat_id,
+                            message_model=Message(
+                                id=msg_id,
                                 text="",
-                                chat_name="",
-                                chat_id=chat_id,
-                                message_model=parsed_msg,
-                            )
-                            if self._dispatch_fn:
-                                await self._dispatch_fn(event)
-                    except Exception as ex:
-                        logger.error(
-                            "post_reaction_fetch_failed",
-                            error=repr(ex),
-                            traceback=traceback.format_exc(),
+                                date=datetime.now(),
+                                sender_name="",
+                                is_outgoing=False,
+                            ),
                         )
-
-            except errors.FloodWaitError:
-                raise
-            except Exception as e:
-                logger.error(
-                    "send_reaction_failed",
-                    error=str(e),
-                    chat_id=chat_id,
-                    msg_id=msg_id,
-                )
+                    )
+                except Exception:
+                    logger.exception(
+                        "reaction_failure_dispatch_failed", chat_id=chat_id
+                    )
 
         await self._write_queue.enqueue(_do)
+        return True
+
+    async def send_automatic_reaction(
+        self,
+        chat_id: int,
+        msg_id: int,
+        emoji: str,
+        validate: Callable[[], Awaitable[bool]],
+        on_complete: Callable[[bool], Awaitable[None]],
+    ) -> bool:
+        if self._closed:
+            raise RuntimeError("Write operations are closed")
+        key = (chat_id, msg_id, emoji)
+        if key in self._pending_automatic_reactions:
+            return False
+        self._pending_automatic_reactions.add(key)
+
+        async def _do() -> None:
+            retry = False
+            success = False
+            try:
+                success = await self._send_reaction(
+                    chat_id, msg_id, emoji, validate=validate
+                )
+            except errors.FloodWaitError:
+                retry = True
+                raise
+            finally:
+                if not retry:
+                    self._pending_automatic_reactions.discard(key)
+                    try:
+                        await on_complete(success)
+                    except Exception:
+                        logger.exception(
+                            "automatic_reaction_completion_failed", chat_id=chat_id
+                        )
+
+        try:
+            await self._write_queue.enqueue(_do, automatic=True)
+        except BaseException:
+            self._pending_automatic_reactions.discard(key)
+            raise
+        return True
+
+    async def _send_reaction(
+        self,
+        chat_id: int,
+        msg_id: int,
+        emoji: str,
+        *,
+        validate: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> bool:
+        try:
+            if validate and (self._closed or not await validate()):
+                return False
+            entity = await self.client.get_entity(chat_id)
+            target = (
+                types.ReactionCustomEmoji(document_id=int(emoji))
+                if emoji.isdigit()
+                else types.ReactionEmoji(emoticon=emoji)
+            )
+            msgs = await self.client.get_messages(entity, ids=[msg_id])
+            if not msgs or not msgs[0]:
+                return False
+            msg = msgs[0]
+            chosen = [
+                rc.reaction
+                for rc in getattr(getattr(msg, "reactions", None), "results", [])
+                if getattr(rc, "chosen_order", None) is not None
+            ]
+            found = target in chosen
+            if validate and found:
+                # Automatic reactions express desired state; never toggle it off.
+                return True
+            new_reactions = [reaction for reaction in chosen if reaction != target]
+            if not found:
+                new_reactions.append(target)
+            if validate and (self._closed or not await validate()):
+                return False
+            await self.client(
+                functions.messages.SendReactionRequest(
+                    peer=entity,
+                    msg_id=msg_id,
+                    reaction=new_reactions,
+                    add_to_recent=True,
+                )
+            )
+        except errors.FloodWaitError:
+            raise
+        except Exception as exc:
+            # Never replace other chosen reactions when Telegram rejects this one.
+            logger.error(
+                "send_reaction_failed",
+                chat_id=chat_id,
+                msg_id=msg_id,
+                category=type(exc).__name__,
+            )
+            return False
+
+        try:
+            updated = await self.client.get_messages(entity, ids=[msg_id])
+            if updated and updated[0] and self._dispatch_fn:
+                parsed = await self._parser._parse_message(updated[0], chat_id=chat_id)
+                await self._dispatch_fn(
+                    SystemEvent(
+                        type="reaction_update",
+                        text="",
+                        chat_name="",
+                        chat_id=chat_id,
+                        message_model=parsed,
+                    )
+                )
+        except Exception as ex:
+            logger.error(
+                "post_reaction_fetch_failed",
+                error=repr(ex),
+                traceback=traceback.format_exc(),
+            )
         return True

@@ -10,10 +10,11 @@
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
     <script src="/static/libs/twemoji/twemoji.min.js"></script>
+    <script src="/static/js/apple-emoji-map.js?t={{ 'static/js/apple-emoji-map.js' | file_mtime }}"></script>
     {% block head_extra %}{% endblock %}
 </head>
 
-<body{% if current_user and current_user.debug_mode %} class="debug-layout"{% endif %}>
+<body class="{% block body_class %}{% endblock %}{% if current_user and current_user.debug_mode %} debug-layout{% endif %}">
     <div class="app-container">
         <!-- LEFT SIDEBAR -->
         <aside class="sidebar left-sidebar">
@@ -29,6 +30,7 @@
 
             <!-- Navigation Links -->
             <div class="sidebar-nav">
+                <div id="event-stream-status" class="setting-option" role="status" aria-live="polite">Events: connecting</div>
                 <a href="/settings" class="setting-option">
                     ⚙️ Settings
                 </a>
@@ -63,8 +65,11 @@
         <aside class="sidebar right-sidebar">
             <div class="sidebar-feed">
                 <div class="settings-header" style="color: #6ab7ff;">Live Events (Debug)</div>
+                <p>Stored event history normally lasts about three hours, up to 10,000 events.</p>
                 <div id="event-feed-list">
-                    {% if recent_events %}
+                    {% if recent_events_unavailable %}
+                    <div class="event-history-warning" role="status">Event history is unavailable. Live events may still appear.</div>
+                    {% elif recent_events %}
                     {% for event in recent_events %}
                     {% if event.type not in ['read', 'edited', 'raw'] %}
                     <div class="event-item type-{{ event.type }}">
@@ -89,7 +94,7 @@
                         -->
                         <div class="event-text-wrapper" data-full-html="{{ event | to_json | escape }}">
                             <div class="event-text">
-                                {{ event.text | safe }}
+                                {{ event.text | plain_text }}
                             </div>
                         </div>
                     </div>
@@ -108,13 +113,13 @@
     <div id="global-tooltip"></div>
 
     <!-- Lightbox Modal -->
-    <div id="lightbox" onclick="closeLightbox()">
+    <dialog id="lightbox" aria-label="Photo viewer" onclick="closeLightbox()">
         <button type="button" class="lightbox-close" onclick="closeLightbox()" aria-label="Close photo">&times;</button>
         <button type="button" class="lightbox-nav nav-prev" onclick="event.stopPropagation(); navigateLightbox(-1)" aria-label="Previous photo">&#10094;</button>
         <button type="button" class="lightbox-nav nav-next" onclick="event.stopPropagation(); navigateLightbox(1)" aria-label="Next photo">&#10095;</button>
         <div id="lightbox-loading">Loading full size...</div>
         <img id="lightbox-img" alt="Full View" onclick="event.stopPropagation()">
-    </div>
+    </dialog>
 
     <script>
         window.TG_CONFIG = { debug: {{ 'true' if current_user and current_user.debug_mode else 'false' }} };

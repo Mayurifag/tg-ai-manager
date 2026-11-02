@@ -19,9 +19,7 @@ from telethon.tl.types import (
     MessageMediaPoll,
 )
 from telethon import utils
-from html import unescape as html_unescape
 from src.domain.models import ChatType
-from src.infrastructure.html import sanitize_html
 
 
 def map_telethon_dialog_to_chat_type(d: Any) -> ChatType:
@@ -143,7 +141,6 @@ def format_message_preview(
     elif not text and not media_text:
         text = "Media/Sticker"
 
-    text = html_unescape(text)  # UNESCAPE HTML entities like &quot;
     text = text.replace("\n", " ")
 
     # Removed MAX_LENGTH truncation to allow full message on frontend
@@ -170,4 +167,5 @@ def format_message_preview(
             name = utils.get_display_name(sender)
             prefix = f"{name}: "
 
-    return sanitize_html(f"{prefix}{text}")
+    # Previews are plain Telegram text, not HTML. The card template escapes them.
+    return f"{prefix}{text}"

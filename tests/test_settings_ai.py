@@ -1,5 +1,7 @@
 """Tests for AI settings backend: PATCH /api/settings AI fields + POST /api/rules/ai_autoread/toggle."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -7,6 +9,7 @@ from quart import Quart
 
 from src.users.models import User
 from src.web.routes import register_routes
+from src.web import create_app
 
 
 # ---------------------------------------------------------------------------
@@ -18,6 +21,7 @@ from src.web.routes import register_routes
 def app():
     """Minimal Quart app with routes registered and mock services attached."""
     _app = Quart(__name__)
+    _app.login_lock = asyncio.Lock()
     register_routes(_app)
 
     _app.user_repo = AsyncMock()
@@ -38,17 +42,36 @@ def client(app):
 # ---------------------------------------------------------------------------
 
 
+async def test_settings_dialogs_and_toggles_have_accessible_controls():
+    app = create_app()
+    app.tg_adapter = SimpleNamespace(is_connected=lambda: True)
+    app.user_repo = SimpleNamespace(get_user=AsyncMock(return_value=User()))
+    app.chat_interactor = SimpleNamespace(get_recent_events=AsyncMock())
+
+    response = await app.test_client().get("/settings")
+    html = await response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert html.count('<dialog id="modal-') == 5
+    assert html.count('class="modal-close"') == 5
+    assert html.count('class="modal-status" role="status"') == 5
+    assert "onchange=\"toggleSetting('autoread_polls')\"" in html
+    assert 'onclick="toggleSetting(' not in html
+    assert 'id="settings-status" role="status"' in html
+
+
 async def test_patch_settings_with_ai_fields(app, client):
     """PATCH /api/settings with AI fields → save_user called with those values."""
     current_user = User(id=1)
     app.user_repo.get_user.return_value = current_user
-    app.user_repo.save_user.return_value = None
+    app.user_repo.update_fields.return_value = True
 
     response = await client.patch(
         "/api/settings",
+        headers={"X-Requested-With": "XMLHttpRequest"},
         json={
-            "ai_provider": "openai",
-            "ai_model": "gpt-4o",
+            "ai_provider": "gemini",
+            "ai_model": "gemini-test",
             "ai_api_key": "sk-test-key",
             "ai_prompt": "You are helpful.",
         },
@@ -58,12 +81,16 @@ async def test_patch_settings_with_ai_fields(app, client):
     data = await response.get_json()
     assert data["status"] == "ok"
 
-    app.user_repo.save_user.assert_called_once()
-    saved_user = app.user_repo.save_user.call_args[0][0]
-    assert saved_user.ai_provider == "openai"
-    assert saved_user.ai_model == "gpt-4o"
-    assert saved_user.ai_api_key == "sk-test-key"
-    assert saved_user.ai_prompt == "You are helpful."
+    app.user_repo.update_fields.assert_awaited_once_with(
+        1,
+        {
+            "ai_provider": "gemini",
+            "ai_model": "gemini-test",
+            "ai_api_key": "sk-test-key",
+            "ai_prompt": "You are helpful.",
+        },
+        expected_session=None,
+    )
 
 
 async def test_patch_settings_preserves_ai_fields_when_absent(app, client):
@@ -76,24 +103,19 @@ async def test_patch_settings_preserves_ai_fields_when_absent(app, client):
         ai_prompt="Existing prompt.",
     )
     app.user_repo.get_user.return_value = current_user
-    app.user_repo.save_user.return_value = None
+    app.user_repo.update_fields.return_value = True
 
     response = await client.patch(
         "/api/settings",
+        headers={"X-Requested-With": "XMLHttpRequest"},
         json={"debug_mode": True},
     )
 
     assert response.status_code == 200
 
-    app.user_repo.save_user.assert_called_once()
-    saved_user = app.user_repo.save_user.call_args[0][0]
-    # AI fields must be preserved from current_user
-    assert saved_user.ai_provider == "anthropic"
-    assert saved_user.ai_model == "claude-3-opus"
-    assert saved_user.ai_api_key == "existing-key"
-    assert saved_user.ai_prompt == "Existing prompt."
-    # The changed field
-    assert saved_user.debug_mode is True
+    app.user_repo.update_fields.assert_awaited_once_with(
+        1, {"debug_mode": True}, expected_session=None
+    )
 
 
 async def test_toggle_ai_autoread_enable(app, client):
@@ -102,6 +124,7 @@ async def test_toggle_ai_autoread_enable(app, client):
 
     response = await client.post(
         "/api/rules/ai_autoread/toggle",
+        headers={"X-Requested-With": "XMLHttpRequest"},
         json={"chat_id": 100, "enabled": True},
     )
 
@@ -118,6 +141,7 @@ async def test_toggle_ai_autoread_disable(app, client):
 
     response = await client.post(
         "/api/rules/ai_autoread/toggle",
+        headers={"X-Requested-With": "XMLHttpRequest"},
         json={"chat_id": 100, "enabled": False},
     )
 
@@ -132,6 +156,7 @@ async def test_toggle_ai_autoread_missing_chat_id(app, client):
     """POST /api/rules/ai_autoread/toggle with no chat_id → 400 response."""
     response = await client.post(
         "/api/rules/ai_autoread/toggle",
+        headers={"X-Requested-With": "XMLHttpRequest"},
         json={},
     )
 

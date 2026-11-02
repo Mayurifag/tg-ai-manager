@@ -1,37 +1,31 @@
 """Startup rules sync: fetches production rules export and applies them locally."""
 
+import json
+import ipaddress
+from urllib.parse import urlsplit
+
 import httpx
 
 from src.infrastructure.logging import get_logger
 from src.rules.models import Rule, RuleType
 from src.rules.ports import RuleRepository
 from src.users.ports import UserRepository
+from src.requests import AutoreactConfigRequest, SettingsPatch
 
 logger = get_logger(__name__)
 
 _TIMEOUT = 10.0
-
-# Fields from the export's user_settings block that map 1-to-1 to User attributes.
-_USER_SETTINGS_FIELDS = frozenset(
-    {
-        "autoread_service_messages",
-        "autoread_polls",
-        "autoread_self",
-        "autoread_bots",
-        "autoread_regex",
-        "debug_mode",
-        "ai_provider",
-        "ai_model",
-        "ai_api_key",
-        "ai_prompt",
-    }
-)
+_MAX_IMPORT_BYTES = 2 * 1024 * 1024
+_MAX_RULES = 10_000
 
 
 async def sync_rules_from_remote(
     url: str,
     rule_repo: RuleRepository,
     user_repo: UserRepository,
+    *,
+    expected_account_id: int | None = None,
+    token: str | None = None,
 ) -> None:
     """Fetch the production rules export and full-replace local rules.
 
@@ -42,59 +36,133 @@ async def sync_rules_from_remote(
     startup continues normally (R011).  The full URL is never logged
     because it may contain auth tokens.
     """
+    if type(expected_account_id) is not int or expected_account_id <= 0:
+        logger.info("rules_sync_skipped", reason="account_identity_unavailable")
+        return
     try:
-        await _do_sync(url, rule_repo, user_repo)
+        await _do_sync(url, rule_repo, user_repo, expected_account_id, token)
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "rules_sync_failed", category="http_status", status=exc.response.status_code
+        )
+    except httpx.RequestError:
+        logger.warning("rules_sync_failed", category="network")
     except Exception as exc:
-        logger.warning("rules_sync_failed", error=str(exc))
+        # Exception strings may contain request URLs, tokens, or response bodies.
+        logger.warning("rules_sync_failed", category=type(exc).__name__)
 
 
 async def _do_sync(
     url: str,
     rule_repo: RuleRepository,
     user_repo: UserRepository,
+    expected_account_id: int,
+    token: str | None,
 ) -> None:
+    # Bind the import to the account that initiated it, not whichever user
+    # happens to exist after a potentially slow network request.
+    user = await user_repo.get_user(1)
+    if not user or not user.is_authenticated():
+        logger.info("rules_sync_skipped", reason="no_authenticated_account")
+        return
+    expected_session = user.session_string
+
     # Phase: fetch
+    parsed = urlsplit(url)
+    if token and parsed.scheme != "https":
+        host = parsed.hostname or ""
+        try:
+            local = host == "localhost" or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = False
+        if parsed.scheme != "http" or not local:
+            raise ValueError("Authenticated sync requires HTTPS or loopback")
+    content = bytearray()
+    headers = {"Accept-Encoding": "identity"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        response = await client.get(url)
-        response.raise_for_status()
+        async with client.stream("GET", url, headers=headers) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                if len(content) + len(chunk) > _MAX_IMPORT_BYTES:
+                    raise ValueError("Import is too large")
+                content.extend(chunk)
 
-    # Phase: parse
-    data = response.json()
-    remote_rules: list = data.get("rules", [])
-    remote_user_settings: dict | None = data.get("user_settings")
+    # Validate the entire document before touching storage.
+    data = json.loads(content)
+    if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
+        raise ValueError("Import must contain a rules list")
+    if (
+        type(data.get("account_id")) is not int
+        or data["account_id"] != expected_account_id
+    ):
+        raise ValueError("Import account does not match the active account")
+    remote_rules = data["rules"]
+    if len(remote_rules) > _MAX_RULES:
+        raise ValueError("Too many rules")
+    remote_settings = data.get("user_settings", {})
+    if not isinstance(remote_settings, dict) or "ai_api_key" in remote_settings:
+        raise ValueError("Invalid import settings")
+    settings = (
+        SettingsPatch.from_json(remote_settings).values if remote_settings else {}
+    )
 
-    # Phase: apply rules — full replace (delete_all then re-insert)
-    await rule_repo.delete_all()
+    rules = []
+    scopes = set()
     for raw in remote_rules:
-        rule = Rule(
-            id=None,
-            user_id=1,
-            rule_type=RuleType(raw["rule_type"]),
-            chat_id=raw["chat_id"],
-            topic_id=raw.get("topic_id"),
-            # config is already a dict in the export JSON
-            config=raw.get("config", {}),
+        if not isinstance(raw, dict) or not raw.keys() <= {
+            "rule_type",
+            "chat_id",
+            "topic_id",
+            "config",
+        }:
+            raise ValueError("Invalid rule")
+        chat_id, topic_id = raw.get("chat_id"), raw.get("topic_id")
+        if type(chat_id) is not int or chat_id == 0 or not -(2**63) <= chat_id < 2**63:
+            raise ValueError("Invalid chat ID")
+        if topic_id is not None and (
+            type(topic_id) is not int or not 0 < topic_id < 2**31
+        ):
+            raise ValueError("Invalid topic ID")
+        rule_type = RuleType(raw["rule_type"])
+        config = raw.get("config", {})
+        if not isinstance(config, dict):
+            raise ValueError("Invalid rule config")
+        if rule_type == RuleType.AUTOREACT:
+            AutoreactConfigRequest.from_json(
+                {
+                    "chat_id": chat_id,
+                    "topic_id": topic_id,
+                    "enabled": True,
+                    "config": config,
+                }
+            )
+        elif config:
+            raise ValueError("Invalid rule config")
+        scope = (chat_id, topic_id, rule_type)
+        if scope in scopes:
+            raise ValueError("Duplicate rule scope")
+        scopes.add(scope)
+        rules.append(
+            Rule(
+                user_id=1,
+                rule_type=rule_type,
+                chat_id=chat_id,
+                topic_id=topic_id,
+                config=config,
+            )
         )
-        await rule_repo.add(rule)
 
-    # Phase: apply user settings overlay — only if user row already exists
-    settings_synced = False
-    if remote_user_settings:
-        user = await user_repo.get_user(1)
-        if user is not None:
-            for field_name, value in remote_user_settings.items():
-                if field_name in _USER_SETTINGS_FIELDS and hasattr(user, field_name):
-                    current = getattr(user, field_name)
-                    # Preserve attribute type: cast booleans explicitly
-                    if isinstance(current, bool):
-                        setattr(user, field_name, bool(value))
-                    else:
-                        setattr(user, field_name, value)
-            await user_repo.save_user(user)
-            settings_synced = True
+    replaced = await user_repo.replace_rules_and_settings(
+        user.id, rules, settings, expected_session=expected_session
+    )
+    if not replaced:
+        logger.warning("rules_sync_skipped", reason="account_changed")
+        return
 
     logger.info(
         "rules_sync_completed",
-        rule_count=len(remote_rules),
-        settings_synced=settings_synced,
+        rule_count=len(rules),
+        settings_synced=bool(settings),
     )

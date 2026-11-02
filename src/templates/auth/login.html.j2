@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="dark">
     <title>Login - Telegram Manager</title>
     <link rel="stylesheet" href="/static/css/base.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         body {
             display: flex;
@@ -119,6 +119,9 @@
             <input type="password" id="password" placeholder="Cloud Password">
             <button onclick="verifyPassword()">Verify Password</button>
         </div>
+        {% if current_user and current_user.session_string %}
+        <button id="forget-account" type="button">Forget saved account</button>
+        {% endif %}
     </div>
 
     <script src="/static/js/login.js?t={{ 'static/js/login.js' | file_mtime }}"></script>

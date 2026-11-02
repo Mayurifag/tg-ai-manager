@@ -1,5 +1,7 @@
 {% extends "base.html.j2" %}
 
+{% block body_class %}chat-page{% endblock %}
+
 {% block title %}
 {% if chat %}
 {{ chat.name }}
@@ -35,12 +37,12 @@ Messages
     <p>{{ chat.type.value | title }}</p>
 </div>
 
-<div class="chat-actions-container">
-    <div class="actions-header">Actions</div>
+<details class="chat-actions-container" id="chat-controls" open>
+    <summary class="actions-header">Chat controls</summary>
     <div class="actions-grid">
-        <button type="button" class="action-item" id="btn-toggle-autoread" title="Toggle Autoread" aria-pressed="{{ 'true' if autoread_enabled else 'false' }}">
+        <button type="button" class="action-item" id="btn-toggle-autoread" title="{{ 'Inherited from forum; disable the forum rule first' if autoread_inherited else 'Toggle Autoread' }}" aria-pressed="{{ 'true' if autoread_enabled else 'false' }}">
             <span class="icon">👀</span>
-            <span class="label">Autoread</span>
+            <span class="label">Autoread{% if autoread_inherited %} (forum){% endif %}</span>
             <span class="status-indicator {{ 'on' if autoread_enabled else 'off' }}" aria-hidden="true"></span>
         </button>
 
@@ -50,9 +52,9 @@ Messages
             <span class="status-indicator status-{{ autoreact_status }}" id="autoreact-indicator" aria-hidden="true"></span>
         </button>
 
-        <button type="button" class="action-item" id="btn-toggle-ai-autoread" title="Toggle AI Autoread" aria-pressed="{{ 'true' if ai_autoread_enabled else 'false' }}">
+        <button type="button" class="action-item" id="btn-toggle-ai-autoread" title="{{ 'Inherited from forum; disable the forum rule first' if ai_autoread_inherited else 'Toggle AI Autoread' }}" aria-pressed="{{ 'true' if ai_autoread_enabled else 'false' }}">
             <span class="icon">🤖</span>
-            <span class="label">AI Read</span>
+            <span class="label">AI Read{% if ai_autoread_inherited %} (forum){% endif %}</span>
             <span class="status-indicator {{ 'on' if ai_autoread_enabled else 'off' }}" aria-hidden="true"></span>
         </button>
 
@@ -68,7 +70,7 @@ Messages
         </button>
         {% endif %}
     </div>
-</div>
+</details>
 {% endif %}
 {% endblock %}
 
@@ -77,14 +79,18 @@ Messages
 
 {% block content %}
 <div id="loading-indicator" class="history-status" role="status" aria-live="polite" hidden>Loading older messages…</div>
+<div id="reading-position-status" class="history-status" role="status" aria-live="polite" hidden></div>
 <div class="messages-container" id="messages-container">
     {% include "chat/messages_partial.html.j2" %}
     {% if not messages %}<p class="empty-messages">No messages to show.</p>{% endif %}
 </div>
+<button type="button" id="load-newer-messages" class="history-more" hidden>Load newer messages</button>
+<button type="button" id="jump-to-latest" class="jump-to-latest" hidden></button>
+<button type="button" id="return-to-reading" class="jump-to-latest return-to-reading" hidden>Return to previous position</button>
 
 <div id="toast"></div>
 
-<div id="autoreact-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="autoreact-title" hidden>
+<dialog id="autoreact-modal" class="modal-overlay" aria-labelledby="autoreact-title">
     <div class="modal-content">
         <div class="modal-header">
             <h3 id="autoreact-title">Autoreact Configuration</h3>
@@ -99,19 +105,20 @@ Messages
 
             <div class="section-label">Reaction Emoji</div>
             <div class="emoji-selector" id="emoji-selector">
-                <div class="emoji-opt selected" data-emoji="💩">💩</div>
-                <div class="emoji-opt" data-emoji="🤡">🤡</div>
-                <div class="emoji-opt" data-emoji="❤️">❤️</div>
-                <input type="text" id="custom-emoji-input" placeholder="Custom" maxlength="4">
+                <button type="button" class="emoji-opt selected" data-emoji="💩" aria-label="React with 💩" aria-pressed="true">💩</button>
+                <button type="button" class="emoji-opt" data-emoji="🤡" aria-label="React with 🤡" aria-pressed="false">🤡</button>
+                <button type="button" class="emoji-opt" data-emoji="❤️" aria-label="React with ❤️" aria-pressed="false">❤️</button>
+                <input type="text" id="custom-emoji-input" aria-label="Custom reaction" placeholder="Custom" maxlength="4">
             </div>
 
             <div id="ar-user-section" style="display: {{ 'none' if chat.type.value == 'channel' else 'block' }};">
                 <div class="section-label">Target Users (Optional)</div>
                 <div class="user-selector-wrapper">
-                    <div class="user-selector-display" id="user-display" onclick="toggleUserDropdown()">
+                    <div class="user-selector-display" id="user-display">
                         <span style="color: #666; font-style: italic;">Loading...</span>
                     </div>
-                    <div class="user-dropdown" id="user-dropdown">
+                    <button type="button" class="user-selector-toggle" id="user-dropdown-toggle" aria-expanded="false" aria-controls="user-dropdown" onclick="toggleUserDropdown()">Choose users</button>
+                    <div class="user-dropdown" id="user-dropdown" hidden>
                         <div style="padding: 10px; color: #aaa; font-style: italic;">Loading users...</div>
                     </div>
                 </div>
@@ -133,7 +140,7 @@ Messages
             <button class="btn-save" id="save-ar-btn">Save Configuration</button>
         </div>
     </div>
-</div>
+</dialog>
 
 {% endblock %}
 
@@ -142,6 +149,7 @@ Messages
     window.TG_CHAT = {
         chatId: {{ chat_id }},
         topicId: {{ topic_id if topic_id is not none else 'null' }},
+        accountId: {{ account_id | tojson }},
         isPremium: {{ 'true' if is_premium else 'false' }},
         isChannel: {{ 'true' if chat.type.value == 'channel' else 'false' }}
     };

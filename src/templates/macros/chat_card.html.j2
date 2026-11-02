@@ -7,8 +7,9 @@
 {% set link = "/chat/" ~ parent_id ~ "/topic/" ~ chat.id %}
 {% endif %}
 
-<a href="{{ link }}" class="chat-card" data-chat-type="{{ chat.type.value }}" {% if chat.is_pinned
+<div class="chat-card" data-chat-type="{{ chat.type.value }}" {% if chat.is_pinned
     %}data-is-pinned="true" {% endif %}>
+    <a href="{{ link }}" class="chat-card-link">
     <div class="chat-content">
         {# --- Avatar/Icon --- #}
         {% if chat.type.value == 'topic' %}
@@ -35,30 +36,16 @@
                 {% endif %}
                 <span class="badge">{{ chat.type.value }}</span>
 
-                {# "Mark Read" Button moved to header line #}
-                {% if chat.unread_count > 0 %}
-                <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
-                    data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
-                    mark read
-                </button>
-                {% endif %}
             </div>
             {% else %}
             <div class="chat-header">
                 <span class="chat-name" title="{{ chat.name }}">{{ chat.name }}</span>
 
-                {# "Mark Read" Button for topics #}
-                {% if chat.unread_count > 0 %}
-                <button class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
-                    data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
-                    mark read
-                </button>
-                {% endif %}
             </div>
             {% endif %}
 
             <div class="preview">
-                {{ (chat.last_message_preview or 'No messages') | safe }}
+                {{ chat.last_message_preview or 'No messages' }}
             </div>
         </div>
     </div>
@@ -71,5 +58,12 @@
         </div>
     </div>
     {% endif %}
-</a>
+    </a>
+    {% if chat.unread_count > 0 %}
+    <button type="button" class="mark-read-btn" data-chat-id="{{ parent_id if chat.type.value == 'topic' else chat.id }}"
+        data-topic-id="{{ chat.id if chat.type.value == 'topic' else '' }}" title="Mark as Read">
+        mark read
+    </button>
+    {% endif %}
+</div>
 {% endmacro %}

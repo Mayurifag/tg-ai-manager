@@ -37,9 +37,9 @@ Forum Topics
 {% endblock %}
 
 {% block settings %}
-<div class="setting-option" id="btn-read-forum" style="color: #2e7d32; font-weight: 500;">
+<button type="button" class="setting-option" id="btn-read-forum" style="color: #2e7d32; font-weight: 500;">
     ✅ Read All Topics
-</div>
+</button>
 {% endblock %}
 
 {% block content %}
@@ -55,9 +55,17 @@ Forum Topics
 
 <div class="chat-list" id="topic-list-container">
     {% for topic in chats %}
-    {{ cards.render_chat_card(topic, parent_id=chat.id) }}
+    {% include "forum/topic_card_partial.html.j2" %}
     {% endfor %}
 </div>
+<p id="topic-list-status" role="status" aria-live="polite"></p>
+{% if not chats %}<p>No more topics.</p>{% endif %}
+<nav aria-label="Topic pages">
+    {% if has_cursor %}<a href="{{ url_for('forum.forum_view', chat_id=chat.id) }}">First topics</a>{% endif %}
+    {% if next_cursor %}
+    <a href="{{ url_for('forum.forum_view', chat_id=chat.id, **next_cursor) }}">Next topics</a>
+    {% endif %}
+</nav>
 
 {% endblock %}
 

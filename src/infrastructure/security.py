@@ -1,10 +1,14 @@
 import base64
 import hashlib
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 from src.infrastructure.logging import get_logger
 from src.config import get_settings
 
 logger = get_logger(__name__)
+
+
+class SecretStorageError(RuntimeError):
+    """Stored credentials could not be encrypted or decrypted safely."""
 
 
 class CryptoManager:
@@ -25,18 +29,15 @@ class CryptoManager:
             return None
         try:
             return self._cipher.encrypt(plaintext.encode()).decode()
-        except Exception as e:
-            logger.error("encryption_failed", error=str(e))
-            return plaintext
+        except Exception as exc:
+            logger.error("encryption_failed")
+            raise SecretStorageError("Failed to encrypt stored credential") from exc
 
     def decrypt(self, ciphertext: str | None) -> str | None:
         if not ciphertext:
             return None
         try:
             return self._cipher.decrypt(ciphertext.encode()).decode()
-        except InvalidToken:
-            logger.warning("decryption_failed_invalid_token")
-            return None
-        except Exception as e:
-            logger.error("decryption_failed", error=str(e))
-            return None
+        except Exception as exc:
+            logger.error("decryption_failed")
+            raise SecretStorageError("Failed to decrypt stored credential") from exc

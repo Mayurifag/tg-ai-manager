@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import time
 from collections import OrderedDict
@@ -17,6 +18,70 @@ from src.infrastructure.logging import get_logger
 logger = get_logger(__name__)
 MESSAGE_REFERENCE_TTL = 300
 AVATAR_TTL = 24 * 60 * 60
+MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024
+MAX_ACTIVE_DOWNLOADS = 16
+MAX_ACTIVE_STREAMS = 8
+
+
+class MediaTooLarge(ValueError):
+    """An in-memory preview exceeded the per-download budget."""
+
+
+class MediaBusy(RuntimeError):
+    """No in-memory download slots are currently available."""
+
+
+class _BoundedBytesIO(io.BytesIO):
+    def write(self, data: bytes) -> int:
+        if self.tell() + len(data) > MAX_DOWNLOAD_BYTES:
+            raise MediaTooLarge("Media exceeds the in-memory download limit")
+        return super().write(data)
+
+
+async def _download_bytes(download, *args, **kwargs) -> Optional[bytes]:
+    with _BoundedBytesIO() as output:
+        result = await download(*args, file=output, **kwargs)
+        return output.getvalue() if result is not None else None
+
+
+class _StreamLease:
+    """Own a stream slot even if the response is closed before iteration."""
+
+    def __init__(self, iterator: AsyncIterator[bytes], release) -> None:
+        self._iterator = iterator
+        self._release = release
+        self._closed = False
+        self._driver: Optional[asyncio.Task] = None
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._closed:
+            raise StopAsyncIteration
+        self._driver = asyncio.current_task()
+        try:
+            return await self._iterator.__anext__()
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._iterator.aclose()
+        finally:
+            self._release(self)
+
+    async def cancel(self) -> None:
+        driver = self._driver
+        if driver and not driver.done() and driver is not asyncio.current_task():
+            driver.cancel()
+            await asyncio.gather(driver, return_exceptions=True)
+        if not self._closed:
+            await self.aclose()
 
 
 class MediaManager:
@@ -36,6 +101,8 @@ class MediaManager:
         )
         self._preview_pending: set[tuple[int, Optional[int]]] = set()
         self._preview_workers: set[asyncio.Task[None]] = set()
+        self._stream_leases: set[_StreamLease] = set()
+        self._closed = False
 
     def _get(self, key: tuple) -> Optional[MediaContent]:
         cached = self._cache.get(key)
@@ -65,6 +132,10 @@ class MediaManager:
             return cached
         task = self._downloads.get(key)
         if task is None:
+            if self._closed:
+                raise RuntimeError("Media manager is closed")
+            if len(self._download_tasks) >= MAX_ACTIVE_DOWNLOADS:
+                raise MediaBusy("Too many media downloads")
 
             async def run() -> Optional[MediaContent]:
                 item = await download()
@@ -73,6 +144,8 @@ class MediaManager:
                 return item
 
             def finished(completed: asyncio.Task[Optional[MediaContent]]) -> None:
+                if not completed.cancelled():
+                    completed.exception()  # A shielded caller may have disconnected.
                 self._download_tasks.discard(completed)
                 if self._downloads.get(key) is completed:
                     self._downloads.pop(key, None)
@@ -148,11 +221,13 @@ class MediaManager:
                 entity = self._avatar_entities.get(chat_id)
                 if entity is None:
                     entity = await self.client.get_entity(chat_id)
-                data = await self.client.download_profile_photo(
-                    entity, file=bytes, download_big=False
+                data = await _download_bytes(
+                    self.client.download_profile_photo, entity, download_big=False
                 )
                 if isinstance(data, bytes) and data:
                     return MediaContent(data=data, mime_type="image/jpeg")
+            except MediaTooLarge:
+                raise
             except Exception as error:
                 logger.warning(
                     "avatar_download_failed", chat_id=chat_id, error=str(error)
@@ -208,6 +283,8 @@ class MediaManager:
                     await self.get_chat_avatar(chat_id)
                 else:
                     await self.download_media(chat_id, message_id)
+            except (MediaBusy, MediaTooLarge):
+                logger.info("preview_prefetch_skipped", chat_id=chat_id)
             finally:
                 self._preview_pending.discard((chat_id, message_id))
                 self._preview_queue.task_done()
@@ -242,21 +319,25 @@ class MediaManager:
                         getattr(document, "mime_type", None)
                         or "application/octet-stream"
                     )
-                    data = await self.client.download_media(current, file=bytes)
+                    data = await _download_bytes(self.client.download_media, current)
                 else:
                     mime_type = "image/jpeg"
                     if size_type == "full":
-                        data = await self.client.download_media(current, file=bytes)
+                        data = await _download_bytes(
+                            self.client.download_media, current
+                        )
                     else:
                         data = None
                         for thumb in ("m", "x", "s", 0):
-                            data = await self.client.download_media(
-                                current, file=bytes, thumb=thumb
+                            data = await _download_bytes(
+                                self.client.download_media, current, thumb=thumb
                             )
                             if data:
                                 break
                 if isinstance(data, bytes) and data:
                     return MediaContent(data=data, mime_type=mime_type)
+            except MediaTooLarge:
+                raise
             except Exception as error:
                 logger.warning(
                     "download_media_failed",
@@ -327,6 +408,20 @@ class MediaManager:
                 if getattr(iterator, "_sender", None):
                     await iterator.close()
 
+    def open_document_stream(
+        self, chat_id: int, message_id: int, document: Any, start: int, length: int
+    ) -> _StreamLease:
+        if self._closed:
+            raise RuntimeError("Media manager is closed")
+        if len(self._stream_leases) >= MAX_ACTIVE_STREAMS:
+            raise MediaBusy("Too many document streams")
+        lease = _StreamLease(
+            self.iter_document(chat_id, message_id, document, start, length),
+            self._stream_leases.discard,
+        )
+        self._stream_leases.add(lease)
+        return lease
+
     async def get_custom_emoji_media(self, document_id: int) -> Optional[MediaContent]:
         key = ("emoji", document_id)
 
@@ -339,12 +434,14 @@ class MediaManager:
                 )
                 if documents:
                     document = documents[0]
-                    data = await self.client.download_media(document, file=bytes)
+                    data = await _download_bytes(self.client.download_media, document)
                     if isinstance(data, bytes) and data:
                         return MediaContent(
                             data=data,
                             mime_type=document.mime_type or "application/octet-stream",
                         )
+            except MediaTooLarge:
+                raise
             except Exception as error:
                 logger.warning(
                     "download_custom_emoji_failed", doc_id=document_id, error=str(error)
@@ -358,6 +455,11 @@ class MediaManager:
         return None
 
     async def close(self) -> None:
+        self._closed = True
+        if self._stream_leases:
+            await asyncio.gather(
+                *(lease.cancel() for lease in tuple(self._stream_leases))
+            )
         tasks = [*self._preview_workers, *self._download_tasks]
         for task in tasks:
             task.cancel()

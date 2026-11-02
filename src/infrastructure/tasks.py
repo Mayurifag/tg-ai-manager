@@ -34,4 +34,9 @@ class BackgroundTasks:
             return
         for task in list(self._tasks):
             task.cancel()
-        await asyncio.wait(self._tasks, timeout=timeout)
+        _, pending = await asyncio.wait(self._tasks, timeout=timeout)
+        if pending:
+            self._logger.error(
+                "background_tasks_shutdown_timed_out",
+                task_names=sorted(task.get_name() for task in pending),
+            )

@@ -7,13 +7,14 @@ import pytest
 from telethon import functions
 
 from src.adapters.telegram.read_ops import ReadOps
+from src.infrastructure.telegram_queue import TelegramWriteQueue, WriteQueueFull
 
 
 class ManualQueue:
     def __init__(self):
         self.items = []
 
-    async def enqueue(self, coro_fn):
+    async def enqueue(self, coro_fn, *, automatic=False):
         self.items.append(coro_fn)
 
     async def run_next(self):
@@ -47,6 +48,20 @@ class FakeClient:
 
 async def get_topic_name(chat_id, topic_id):
     return f"Topic {topic_id}"
+
+
+async def test_close_cancels_delayed_reads_and_rejects_new_work():
+    queue = ManualQueue()
+    ops = make_ops(FakeClient(), queue, coalesce_delay=60)
+    await ops.mark_as_read(100, max_id=1)
+    await ops.close()
+    await ops.close()
+    assert not ops._enqueue_tasks
+    assert not ops._pending
+    assert not ops._active_keys
+    assert not queue.items
+    with pytest.raises(RuntimeError):
+        await ops.mark_as_read(100, max_id=2)
 
 
 def make_ops(client, queue, dispatch=None, coalesce_delay=0):
@@ -135,6 +150,21 @@ async def test_mark_chat_read_enqueues_immediately_by_default():
     assert len(queue.items) == 1
 
 
+async def test_rejected_read_does_not_leave_a_stuck_pending_key():
+    queue = TelegramWriteQueue(max_pending=1, manual_reserve=0)
+    await queue.enqueue(AsyncMock())
+    ops = make_ops(FakeClient(), queue)
+    with pytest.raises(WriteQueueFull):
+        await ops.mark_as_read(100, max_id=10)
+    assert not ops._active_keys and not ops._pending
+    await queue.start()
+    await asyncio.wait_for(queue._queue.join(), 1)
+    await ops.mark_as_read(100, max_id=10)
+    await asyncio.wait_for(queue._queue.join(), 1)
+    await ops.close()
+    await queue.stop()
+
+
 async def test_mark_topic_read_coalesces_pending_max_ids():
     queue = ManualQueue()
     client = FakeClient()
@@ -213,11 +243,12 @@ async def test_permanent_read_failure_does_not_emit_success_or_stick_chat():
     await ops.mark_as_read(100, max_id=10)
     with pytest.raises(ValueError, match="invalid peer"):
         await queue.run_next()
-    dispatch.assert_not_awaited()
+    assert dispatch.await_args.args[0].type == "read_failed"
     assert not ops._active_keys
     await ops.mark_as_read(100, max_id=20)
     await queue.run_next()
-    dispatch.assert_awaited_once()
+    assert dispatch.await_count == 2
+    assert dispatch.await_args.args[0].type == "read"
 
 
 async def test_invalid_topic_is_not_reported_as_read():
@@ -230,5 +261,5 @@ async def test_invalid_topic_is_not_reported_as_read():
     await ops.mark_as_read(100, topic_id=10, max_id=50)
     with pytest.raises(ValueError, match="TOPIC_ID_INVALID"):
         await queue.run_next()
-    dispatch.assert_not_awaited()
+    assert dispatch.await_args.args[0].type == "read_failed"
     assert not ops._active_keys

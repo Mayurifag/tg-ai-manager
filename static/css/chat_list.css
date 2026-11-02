@@ -30,6 +30,16 @@
   background: #262628;
 }
 
+.chat-card-link {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-decoration: none;
+  color: inherit;
+}
+
 .chat-content {
   flex: 1;
   min-width: 0;
@@ -114,8 +124,7 @@
     color 0.2s;
   padding: 2px 4px;
 
-  /* Positioned at end of flex line in header */
-  margin-left: auto;
+  margin-left: 0.5rem;
 }
 
 .chat-card:hover .mark-read-btn,

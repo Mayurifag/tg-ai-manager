@@ -13,8 +13,12 @@ from src.adapters.telegram import TelethonAdapter
 from src.adapters.valkey_repo import ValkeyActionRepository, ValkeyEventRepository
 from src.application.interactors import ChatInteractor
 from src.config import get_settings
+from src.container import bind_adapter_events
 from src.infrastructure.event_bus import EventBus
+from src.infrastructure.html import html_to_text
 from src.infrastructure.logging import configure_logging, get_logger
+from src.infrastructure.security import SecretStorageError
+from src.domain.errors import LogUnavailable
 from src.infrastructure.tasks import BackgroundTasks
 from src.jinja_filters import file_mtime_filter
 from src.rules.service import RuleService
@@ -27,7 +31,7 @@ from src.infrastructure.maintenance import (
 )
 from src.web.routes import register_routes
 from src.web.serializers import json_serializer
-from src.web.sse import broadcast_event, connected_queues, shutdown_event
+from src.web.sse import EventBroadcaster
 
 logger = get_logger(__name__)
 
@@ -56,8 +60,13 @@ async def _build_tg_adapter(settings, user_repo) -> TelethonAdapter:
         user = await user_repo.get_user(1)
         if user:
             session_string = user.session_string
+    except SecretStorageError:
+        # Do not silently start as a new account when persisted credentials are unreadable.
+        raise
     except Exception as e:
-        logger.warning("session_load_failed", error=str(e))
+        # A database failure is not evidence that no saved account exists.
+        logger.error("session_load_failed", category=type(e).__name__)
+        raise
 
     return TelethonAdapter(
         session_string=session_string,
@@ -74,6 +83,9 @@ def create_app() -> TypedQuart:
     root_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 
     app = TypedQuart(__name__, root_path=root_path, template_folder="src/templates")
+    app.login_lock = asyncio.Lock()
+    app.sse = EventBroadcaster()
+    app.shutdown_event = asyncio.Event()
     # Quart's default recognizes .html, but not the project's .html.j2 files.
     app.jinja_env.autoescape = select_autoescape(
         enabled_extensions=("html", "htm", "xml", "xhtml", "svg", "html.j2")
@@ -81,6 +93,7 @@ def create_app() -> TypedQuart:
 
     # Register filters
     file_mtime_filter(app)
+    app.jinja_env.filters["plain_text"] = html_to_text
 
     @app.template_filter("to_json")
     def to_json_filter(obj):
@@ -97,24 +110,13 @@ def create_app() -> TypedQuart:
         run_migrations(root_path)
 
         # 2. Reset shutdown event
-        shutdown_event.clear()
+        app.shutdown_event.clear()
 
         # 3. Create repositories
         settings = get_settings()
         action_repo = ValkeyActionRepository(settings.VALKEY_URL)
         event_repo = ValkeyEventRepository(settings.VALKEY_URL)
         user_repo = SqliteUserRepository(db_path=settings.DB_PATH)
-
-        # 3a. Sync rules from remote production instance (if configured)
-        rule_repo_for_sync = SqliteRuleRepository(db_path=settings.DB_PATH)
-        if settings.RULES_SYNC_URL:
-            await sync_rules_from_remote(
-                url=settings.RULES_SYNC_URL,
-                rule_repo=rule_repo_for_sync,
-                user_repo=user_repo,
-            )
-        else:
-            logger.info("rules_sync_skipped", reason="RULES_SYNC_URL not set")
 
         # 4. Create Telegram adapter
         tg_adapter = await _build_tg_adapter(settings, user_repo)
@@ -133,33 +135,49 @@ def create_app() -> TypedQuart:
         app.chat_interactor = interactor
         app.managed_tasks = BackgroundTasks(logger)
 
-        # 7. Create event bus and register subscribers in order:
-        #    - event_repo first (persistence)
-        #    - rule_service second (sets is_read before SSE renders)
-        #    - SSE broadcast last
+        # Present arrival data before optional AI and persistence work. A queued
+        # action is not a completed action and is reported separately.
         bus = EventBus()
-        bus.subscribe(event_repo.add_event)
-        bus.subscribe(rule_service.handle_new_message_event)
         bus.subscribe(interactor.handle_event)
 
         async def _sse_broadcast(event):
             async with app.app_context():
-                await broadcast_event(event)
+                await app.sse.broadcast(event)
 
         bus.subscribe(_sse_broadcast)
+
+        async def _persist_event(event):
+            await asyncio.wait_for(event_repo.add_event(event), timeout=2.0)
+
+        # Persist the same arrival state presented to viewers, before any
+        # asynchronous automation can complete and mutate its old event.
+        bus.subscribe(_persist_event)
+        bus.subscribe(rule_service.handle_new_message_event)
         app.event_bus = bus
 
-        # 8. Connect adapter and wire event bus as its sole listener
+        # Register before connecting so initial updates cannot miss the bus.
+        bind_adapter_events(app, tg_adapter)
         await interactor.initialize()
-        tg_adapter.add_event_listener(bus.dispatch)
+
+        # Sync only after Telegram has identified the authenticated account.
+        if settings.RULES_SYNC_URL:
+            await sync_rules_from_remote(
+                settings.RULES_SYNC_URL,
+                rule_repo,
+                user_repo,
+                expected_account_id=tg_adapter._self_id,
+                token=settings.RULES_SYNC_TOKEN,
+            )
+        else:
+            logger.info("rules_sync_skipped", reason="RULES_SYNC_URL not set")
 
         # 9. Background tasks
         app.managed_tasks.create(rule_service.run_startup_scan(), "startup_scan")
         app.managed_tasks.create(
-            interactor.run_cache_warmer(shutdown_event), "chat_cache_warmer"
+            interactor.run_cache_warmer(app.shutdown_event), "chat_cache_warmer"
         )
         app.managed_tasks.create(
-            job_telegram_recovery(rule_service, user_repo, shutdown_event),
+            job_telegram_recovery(rule_service, user_repo, app.shutdown_event),
             "telegram_recovery",
         )
         app.managed_tasks.create(
@@ -168,7 +186,7 @@ def create_app() -> TypedQuart:
                 event_repo=event_repo,
                 interactor=interactor,
                 user_repo=user_repo,
-                shutdown_event=shutdown_event,
+                shutdown_event=app.shutdown_event,
             ),
             "maintenance",
         )
@@ -176,8 +194,11 @@ def create_app() -> TypedQuart:
     @app.after_serving
     async def shutdown():
         logger.info("application_shutdown")
-        shutdown_event.set()
+        app.shutdown_event.set()
+        app.tg_adapter._retired = True
+        app.sse.close()
         await app.managed_tasks.shutdown(timeout=3.0)
+        await app.rule_service.retire_account()
 
         # Allow SSE generators to exit gracefully
         await asyncio.sleep(0.1)
@@ -190,7 +211,6 @@ def create_app() -> TypedQuart:
         except Exception as e:
             logger.error("shutdown_error", error=str(e))
 
-        connected_queues.clear()
         for repo in (app.action_repo, app.event_repo):
             close = getattr(repo, "close", None)
             if close:
@@ -209,10 +229,20 @@ def create_app() -> TypedQuart:
         user_repo = typed_app.user_repo
 
         user = await user_repo.get_user(1)
-        events = (
-            await interactor.get_recent_events() if user and user.debug_mode else []
-        )
+        events = []
+        events_unavailable = False
+        if user and user.debug_mode:
+            try:
+                events = await asyncio.wait_for(
+                    interactor.get_recent_events(), timeout=2.0
+                )
+            except (LogUnavailable, asyncio.TimeoutError):
+                events_unavailable = True
 
-        return {"recent_events": events, "current_user": user}
+        return {
+            "recent_events": events,
+            "recent_events_unavailable": events_unavailable,
+            "current_user": user,
+        }
 
     return app

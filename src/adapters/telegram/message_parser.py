@@ -30,28 +30,54 @@ if TYPE_CHECKING:
     from src.adapters.telegram.media import MediaManager
 
 
+def media_dimensions(value: Any) -> tuple[Optional[int], Optional[int]]:
+    width = getattr(value, "w", None)
+    height = getattr(value, "h", None)
+    if (
+        type(width) is int
+        and type(height) is int
+        and 0 < width <= 100_000
+        and 0 < height <= 100_000
+    ):
+        return width, height
+    return None, None
+
+
 class MessageParser:
     def __init__(self, client: Any, media: "MediaManager") -> None:
         self.client = client
         self._media = media
-        self._msg_id_to_chat_id: Dict[int, int] = {}
+        # Only non-channel message IDs are account-scoped. Channel IDs can
+        # collide with each other and with private/basic-group message IDs.
+        self._msg_id_to_chat_id: Dict[int, Optional[int]] = {}
         self.self_id: Optional[int] = None
 
     def _extract_topic_id(self, message: Any) -> Optional[int]:
+        """Identify a topic for a message already known to belong to a forum."""
+        if isinstance(getattr(message, "action", None), types.MessageActionTopicCreate):
+            return getattr(message, "id", None)
         reply_header = getattr(message, "reply_to", None)
-        if reply_header:
-            # Strictly use reply_to_top_id.
-            # Using reply_to_msg_id here causes basic group replies to be treated as topics,
-            # which breaks mark_as_read (it tries to use ReadDiscussionRequest).
-            return getattr(reply_header, "reply_to_top_id", None)
-        return None
+        if reply_header and getattr(reply_header, "forum_topic", False):
+            return getattr(reply_header, "reply_to_top_id", None) or getattr(
+                reply_header, "reply_to_msg_id", None
+            )
+        # Telegram's General topic has ID 1 and does not carry the forum flag.
+        return 1
 
     def _cache_message_chat(self, msg_id: int, chat_id: int):
+        if utils.resolve_id(chat_id)[1] is PeerChannel:
+            return
         if len(self._msg_id_to_chat_id) > 15000:
             # Evict the oldest 5000 entries rather than clearing everything.
             for key in list(self._msg_id_to_chat_id.keys())[:5000]:
                 del self._msg_id_to_chat_id[key]
-        self._msg_id_to_chat_id[msg_id] = chat_id
+        if (
+            msg_id in self._msg_id_to_chat_id
+            and self._msg_id_to_chat_id[msg_id] != chat_id
+        ):
+            self._msg_id_to_chat_id[msg_id] = None
+        else:
+            self._msg_id_to_chat_id[msg_id] = chat_id
 
     def _get_sender_color(self, sender: Any, sender_id: int) -> str:
         peer_color = getattr(sender, "color", None)
@@ -160,8 +186,10 @@ class MessageParser:
 
         if isinstance(msg, types.MessageService):
             is_service = True
-            text = sanitize_html(get_message_action_text(msg) or "Service message")
+            raw_text = get_message_action_text(msg) or "Service message"
+            text = html_escape(raw_text)
         else:
+            raw_text = getattr(msg, "message", "") or ""
             text = self._extract_text(msg)
 
         media = getattr(msg, "media", None)
@@ -180,6 +208,7 @@ class MessageParser:
         poll_question = None
         poll_options = []
         is_photo = isinstance(media, MessageMediaPhoto)
+        media_width = media_height = None
         is_document = False
         file_name = None
         file_size = None
@@ -188,7 +217,18 @@ class MessageParser:
         webpage_description = None
 
         if has_media:
-            if isinstance(media, MessageMediaPoll):
+            if is_photo:
+                sizes = getattr(getattr(media, "photo", None), "sizes", []) or []
+                dimensions = []
+                for size in sizes:
+                    width, height = media_dimensions(size)
+                    if width is not None and height is not None:
+                        dimensions.append((width, height))
+                if dimensions:
+                    media_width, media_height = max(
+                        dimensions, key=lambda size: size[0] * size[1]
+                    )
+            elif isinstance(media, MessageMediaPoll):
                 is_poll = True
                 poll = media.poll
                 poll_question = getattr(poll.question, "text", "Poll")
@@ -219,6 +259,7 @@ class MessageParser:
                 for attr in getattr(document, "attributes", []):
                     if isinstance(attr, DocumentAttributeVideo):
                         is_video = True
+                        media_width, media_height = media_dimensions(attr)
                     elif isinstance(attr, DocumentAttributeSticker):
                         is_sticker = True
                         sticker_emoji = attr.alt
@@ -310,6 +351,8 @@ class MessageParser:
             has_media=has_media,
             is_photo=is_photo,
             is_video=is_video,
+            media_width=media_width,
+            media_height=media_height,
             is_sticker=is_sticker,
             sticker_emoji=sticker_emoji,
             is_document=is_document,
@@ -330,4 +373,5 @@ class MessageParser:
             is_service=is_service,
             reactions=reactions,
             grouped_id=grouped_id,
+            raw_text=raw_text,
         )
