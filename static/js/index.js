@@ -5,14 +5,23 @@ const cardRefreshes = new Map();
 const CARD_REFRESH_INTERVAL = 500;
 const MAX_CARD_REFRESHES = 4;
 const MAX_DIRTY_CARDS = 512;
+const LIST_REFRESH_INTERVAL = 60_000;
+const LIST_RETRY_INTERVAL = 5_000;
+const LIST_REQUEST_TIMEOUT = 15_000;
 let cardRefreshTimer = null;
 let activeCardRefreshes = 0;
 let listGeneration = 0;
 let refreshingList = false;
 let loadingChats = false;
 let chatObserver = null;
-let initialLoad = false;
-let forceRefresh = false;
+let listRefreshTimer = null;
+let listRefreshPending = false;
+let listRefreshForced = false;
+let listRetryDelay = LIST_RETRY_INTERVAL;
+let listPageActive = true;
+let listEventVersion = 0;
+let listSnapshotEventVersion = 0;
+let listRequestController = null;
 
 function cardGroup(card) {
   const unread = card.dataset.isUnread === "true";
@@ -37,10 +46,6 @@ function findCard(chatId) {
 async function loadMoreChats() {
   if (loadingChats || loadMoreButton.hidden) return;
   loadingChats = true;
-  if (initialLoad) {
-    refreshingList = true;
-    listGeneration++;
-  }
   loadMoreButton.disabled = true;
   listStatus.textContent = "Loading chats…";
   if (chatObserver) chatObserver.unobserve(loadMoreButton);
@@ -51,18 +56,9 @@ async function loadMoreChats() {
       params.set("snapshot", loadMoreButton.dataset.snapshot);
       params.set("offset", loadMoreButton.dataset.nextOffset);
     }
-    if (forceRefresh) params.set("refresh", "1");
-    let response = await fetch(`/api/chats?${params}`);
+    let page = await fetchListPage(`/api/chats?${params}`, true);
     // A restart or an expired snapshot should not strand a long-lived page.
-    if (response.status === 410) response = await fetch("/api/chats");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    const page = await response.json();
-    forceRefresh = false;
-    if (initialLoad) {
-      chatList.replaceChildren();
-      initialLoad = false;
-    }
+    if (page === null) page = await fetchListPage("/api/chats");
     const fragment = document.createElement("div");
     fragment.innerHTML = page.html;
     for (const card of Array.from(fragment.children)) {
@@ -87,22 +83,14 @@ async function loadMoreChats() {
     listStatus.textContent = "Could not load more chats. Try again.";
   } finally {
     loadingChats = false;
-    refreshingList = false;
     scheduleCardRefresh();
     loadMoreButton.disabled = false;
     chatList.setAttribute("aria-busy", "false");
+    if (listRefreshPending) void reconcileChatList();
   }
 }
 
 loadMoreButton.addEventListener("click", loadMoreChats);
-document.getElementById("refresh-chats").addEventListener("click", () => {
-  if (loadingChats) return;
-  initialLoad = true;
-  forceRefresh = true;
-  loadMoreButton.dataset.snapshot = "";
-  loadMoreButton.hidden = false;
-  loadMoreChats();
-});
 if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
   chatObserver = new IntersectionObserver(
     (entries) => {
@@ -113,24 +101,61 @@ if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
   chatObserver.observe(loadMoreButton);
 }
 
-// Restore the existing list immediately from the browser's back/forward cache,
-// then reconcile in the background without throwing away scroll position.
-window.addEventListener("pageshow", async (event) => {
-  if (!event.persisted || loadingChats) return;
+function scheduleListRefresh(delay = LIST_REFRESH_INTERVAL) {
+  if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
+  listRefreshTimer = null;
+  if (!listPageActive || document.hidden) return;
+  listRefreshTimer = setTimeout(() => {
+    listRefreshTimer = null;
+    requestListRefresh();
+  }, delay);
+}
+
+function requestListRefresh(force = false) {
+  if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
+  listRefreshTimer = null;
+  listRefreshPending = true;
+  listRefreshForced ||= force;
+  return reconcileChatList();
+}
+
+async function fetchListPage(url, allowExpired = false) {
+  const controller = (listRequestController = new AbortController());
+  const timeout = setTimeout(() => controller.abort(), LIST_REQUEST_TIMEOUT);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (allowExpired && response.status === 410) return null;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+    if (listRequestController === controller) listRequestController = null;
+  }
+}
+
+// Keep the existing list visible while reconciling its loaded pages.
+async function reconcileChatList() {
+  if (!listRefreshPending || loadingChats || !listPageActive || document.hidden)
+    return;
+  listRefreshPending = false;
+  // A warmed snapshot from before a live event must not overwrite the
+  // newer card with stale preview or unread data.
+  const eventVersion = listEventVersion;
+  const force = listRefreshForced || eventVersion !== listSnapshotEventVersion;
+  listRefreshForced = false;
   loadingChats = true;
   refreshingList = true;
   listGeneration++;
   loadMoreButton.disabled = true;
   if (chatObserver) chatObserver.unobserve(loadMoreButton);
-  const anchor = Array.from(chatList.children).find(
-    (card) => card.getBoundingClientRect().bottom > 0,
-  );
-  const anchorTop = anchor?.getBoundingClientRect().top;
   const loadedCount = chatList.children.length;
+  let failed = false;
   try {
-    let response = await fetch("/api/chats?refresh=1");
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    let page = await response.json();
+    // Normal background checks reuse the server's warmed cache. A reconnect
+    // forces one fresh snapshot because events may have been missed.
+    let page = await fetchListPage(
+      force ? "/api/chats?refresh=1" : "/api/chats",
+    );
     const updated = [];
     while (true) {
       const fragment = document.createElement("div");
@@ -141,10 +166,26 @@ window.addEventListener("pageshow", async (event) => {
         snapshot: page.snapshot,
         offset: page.next_offset,
       });
-      response = await fetch(`/api/chats?${params}`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      page = await response.json();
+      page = await fetchListPage(`/api/chats?${params}`);
     }
+    if (!listPageActive || document.hidden) {
+      listRefreshPending = true;
+      listRefreshForced ||= force;
+      return;
+    }
+    // Capture the position at commit time, not before the network requests:
+    // the user may have scrolled while the refresh was in flight.
+    const anchor = Array.from(chatList.children).find(
+      (card) => card.getBoundingClientRect().bottom > 0,
+    );
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    const active = document.activeElement;
+    const focusedCard =
+      active &&
+      Array.from(chatList.children).find((card) => card.contains(active));
+    const focusSelector = active?.classList.contains("mark-read-btn")
+      ? ".mark-read-btn"
+      : ".chat-card-link";
     const seen = new Set();
     for (const card of updated) {
       seen.add(card.dataset.chatId);
@@ -178,8 +219,18 @@ window.addEventListener("pageshow", async (event) => {
           restoredAnchor.getBoundingClientRect().top - anchorTop,
         );
     }
+    if (focusedCard) {
+      findCard(focusedCard.dataset.chatId)
+        ?.querySelector(focusSelector)
+        ?.focus({ preventScroll: true });
+    }
+    listSnapshotEventVersion = eventVersion;
+    listRetryDelay = LIST_RETRY_INTERVAL;
   } catch (error) {
-    console.error("Could not refresh chats after returning:", error);
+    console.error("Could not refresh chats:", error);
+    listStatus.textContent = "Could not update chats. Retrying automatically.";
+    listRefreshForced ||= force;
+    failed = true;
   } finally {
     loadingChats = false;
     refreshingList = false;
@@ -187,8 +238,36 @@ window.addEventListener("pageshow", async (event) => {
     loadMoreButton.disabled = false;
     if (chatObserver && !loadMoreButton.hidden)
       chatObserver.observe(loadMoreButton);
+    if (listRefreshPending && listPageActive && !document.hidden) {
+      void reconcileChatList();
+    } else {
+      scheduleListRefresh(failed ? listRetryDelay : LIST_REFRESH_INTERVAL);
+      if (failed)
+        listRetryDelay = Math.min(listRetryDelay * 2, LIST_REFRESH_INTERVAL);
+    }
+  }
+}
+
+window.addEventListener("pagehide", () => {
+  listPageActive = false;
+  listRequestController?.abort();
+  if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
+  listRefreshTimer = null;
+});
+window.addEventListener("pageshow", (event) => {
+  listPageActive = true;
+  if (event.persisted) return requestListRefresh(true);
+  scheduleListRefresh();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
+    listRefreshTimer = null;
+  } else {
+    void requestListRefresh();
   }
 });
+scheduleListRefresh();
 
 chatList.addEventListener("click", async (event) => {
   const button = event.target.closest(".mark-read-btn");
@@ -245,7 +324,8 @@ function reloadCard(chatId) {
   let state = cardRefreshes.get(id);
   if (!state) {
     if (cardRefreshes.size >= MAX_DIRTY_CARDS) {
-      listStatus.textContent = "Too many chat updates. Refresh the list.";
+      listStatus.textContent = "Catching up on chat updates…";
+      void requestListRefresh(true);
       return;
     }
     state = { revision: 0, dirty: false, inFlight: false };
@@ -313,7 +393,9 @@ async function fetchCard(chatId, state) {
   } catch (error) {
     console.error("Error updating chat card:", error);
     listStatus.textContent =
-      "Some chat updates are unavailable. Refresh to retry.";
+      "Some chat updates are unavailable. Retrying automatically.";
+    listRefreshForced = true;
+    scheduleListRefresh(LIST_RETRY_INTERVAL);
   } finally {
     state.inFlight = false;
     activeCardRefreshes--;
@@ -325,10 +407,12 @@ async function fetchCard(chatId, state) {
 document.addEventListener("tg:event", (event) => {
   const data = event.detail;
   if (data.type === "resync_required") {
-    window.location.reload();
+    void requestListRefresh(true);
     return;
   }
   if (!data.chat_id) return;
+  if (["message", "action", "edited", "deleted", "read"].includes(data.type))
+    listEventVersion++;
   if (
     refreshingList &&
     ["message", "action", "edited", "deleted", "read"].includes(data.type)

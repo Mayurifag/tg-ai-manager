@@ -139,8 +139,17 @@ class ChatInteractor:
         # Serve the previous list while the background refresh is in flight.
         if self._warmer_running and not refresh and self._chat_list is not None:
             return self._chat_list[1]
+        observed = self._chat_list
         while True:
             async with self._chat_list_lock:
+                # Simultaneous explicit refreshes share the scan that finished
+                # while they waited, rather than each fetching all dialogs.
+                if (
+                    refresh
+                    and self._chat_list is not None
+                    and self._chat_list is not observed
+                ):
+                    return self._chat_list[1]
                 if (
                     refresh
                     or self._chat_list is None

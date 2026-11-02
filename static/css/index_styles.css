@@ -62,7 +62,6 @@
   margin: 0.35rem 0 0;
   font-size: 0.9rem;
 }
-.secondary-button,
 .load-more-chats {
   background: var(--surface-bg);
   color: var(--text-primary);
@@ -71,7 +70,6 @@
   padding: 0.55rem 0.9rem;
   cursor: pointer;
 }
-.secondary-button:hover,
 .load-more-chats:hover {
   background: var(--surface-raised);
 }

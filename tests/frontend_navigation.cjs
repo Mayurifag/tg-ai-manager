@@ -109,7 +109,6 @@ async function testIndexRetainsRenderedCardsOnReturn() {
     "chat-list-container": list,
     "load-more-chats": button,
     "chat-list-status": element(),
-    "refresh-chats": element(),
   };
   let requests = 0;
   let completeRequest;
@@ -121,7 +120,8 @@ async function testIndexRetainsRenderedCardsOnReturn() {
     },
   };
   const context = {
-    ...winEvents, document, URLSearchParams, console, setTimeout, clearTimeout,
+    ...winEvents, document, URLSearchParams, AbortController, console,
+    setTimeout() { return 1; }, clearTimeout() {},
     parseAppleEmojis() {}, scrollBy() {},
     fetch() { requests++; return new Promise(resolve => { completeRequest = resolve; }); },
   };
@@ -137,6 +137,230 @@ async function testIndexRetainsRenderedCardsOnReturn() {
   assert.equal(list.children[0], card, "unchanged cards are not replaced after revalidation");
 }
 
+function indexAutoRefreshHarness(fetch) {
+  const winEvents = listeners(), docEvents = listeners();
+  const timers = new Map(), scrolls = [];
+  let now = 0, nextTimer = 0, viewportOffset = 0;
+  const list = element(), button = element(), status = element();
+  button.hidden = true;
+  button.dataset = {snapshot: "initial", nextOffset: ""};
+  const elements = {
+    "chat-list-container": list,
+    "load-more-chats": button,
+    "chat-list-status": status,
+  };
+  const document = {
+    ...docEvents, activeElement: null, hidden: false,
+    getElementById: id => elements[id] || null,
+    createElement() {
+      return {
+        children: [],
+        set innerHTML(value) { this.children = JSON.parse(value).map(([id, label]) => makeCard(id, label)); },
+        get firstElementChild() { return this.children[0] || null; },
+      };
+    },
+  };
+  function makeCard(id, label) {
+    const link = {
+      classList: {contains: () => false},
+      focus() { document.activeElement = link; },
+    };
+    const card = {
+      dataset: {chatId: String(id), isUnread: "false", isPinned: "false"},
+      label, outerHTML: `${id}:${label}`,
+      contains: node => node === link,
+      querySelector: selector => selector === ".chat-card-link" ? link : null,
+      getBoundingClientRect() {
+        const top = list.children.indexOf(card) * 80 + viewportOffset;
+        return {top, bottom: top + 80};
+      },
+      remove() { list.children = list.children.filter(item => item !== card); },
+      replaceWith(other) {
+        const index = list.children.indexOf(card);
+        if (index >= 0) list.children[index] = other;
+      },
+    };
+    return card;
+  }
+  list.children = [makeCard("42", "initial")];
+  list.querySelector = selector => {
+    const id = selector.match(/data-chat-id="([^"]+)"/)?.[1];
+    return list.children.find(card => card.dataset.chatId === id) || null;
+  };
+  list.append = card => {
+    list.children = list.children.filter(item => item !== card);
+    list.children.push(card);
+  };
+  list.insertBefore = (card, next) => {
+    list.children = list.children.filter(item => item !== card);
+    const index = list.children.indexOf(next);
+    if (index < 0) list.children.push(card);
+    else list.children.splice(index, 0, card);
+  };
+  const context = {
+    ...winEvents, document, URLSearchParams, AbortController, fetch,
+    console: {error() {}},
+    location: {reload() { throw Error("automatic updates must not reload the page"); }},
+    parseAppleEmojis() {},
+    scrollBy(_x, delta) { scrolls.push(delta); viewportOffset -= delta; },
+    setTimeout(callback, delay) {
+      const id = ++nextTimer;
+      timers.set(id, {at: now + delay, callback});
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync("static/js/index.js", "utf8"), context);
+  async function settle() { for (let i = 0; i < 16; i++) await Promise.resolve(); }
+  async function advance(ms) {
+    const end = now + ms;
+    for (;;) {
+      const next = [...timers.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next || next[1].at > end) break;
+      now = next[1].at;
+      timers.delete(next[0]);
+      next[1].callback();
+      await settle();
+    }
+    now = end;
+    await settle();
+  }
+  return {context, document, list, button, status, scrolls, makeCard, advance, settle,
+    setViewportOffset(value) { viewportOffset = value; }};
+}
+
+function listResponse(cards, nextOffset = null) {
+  return {ok: true, async json() {
+    return {html: JSON.stringify(cards), snapshot: "new", next_offset: nextOffset};
+  }};
+}
+
+async function testChatListUpdatesAutomaticallyWithoutARefreshButton() {
+  const requests = [];
+  const fixture = indexAutoRefreshHarness(async url => {
+    requests.push(url);
+    return listResponse([["42", "fresh"], ["43", "new"]]);
+  });
+  assert.equal(fixture.document.getElementById("refresh-chats"), null);
+  await fixture.advance(60_000);
+  assert.deepEqual(requests, ["/api/chats"]);
+  assert.deepEqual(fixture.list.children.map(card => card.label), ["fresh", "new"]);
+
+  fixture.document.emit("tg:event", {detail: {type: "resync_required"}});
+  await fixture.settle();
+  assert.equal(requests[1], "/api/chats?refresh=1");
+  fixture.document.hidden = true;
+  fixture.document.emit("visibilitychange", {});
+  await fixture.advance(120_000);
+  assert.equal(requests.length, 2, "hidden pages do not keep refreshing");
+  fixture.document.hidden = false;
+  fixture.document.emit("visibilitychange", {});
+  await fixture.settle();
+  assert.equal(requests.length, 3, "returning to a tab refreshes it automatically");
+}
+
+async function testAutoRefreshRetriesFailuresAndKeepsExistingCards() {
+  const requests = [];
+  const fixture = indexAutoRefreshHarness(async url => {
+    requests.push(url);
+    return requests.length === 1 ? {ok: false, status: 503} : listResponse([["42", "recovered"]]);
+  });
+  await fixture.advance(60_000);
+  assert.equal(fixture.list.children[0].label, "initial");
+  assert.match(fixture.status.textContent, /Retrying automatically/);
+  await fixture.advance(4_999);
+  assert.equal(requests.length, 1);
+  await fixture.advance(1);
+  assert.equal(requests.length, 2);
+  assert.equal(fixture.list.children[0].label, "recovered");
+}
+
+async function testAutoRefreshTimesOutAndRetriesAHungRequest() {
+  let calls = 0;
+  const fixture = indexAutoRefreshHarness((url, options) => {
+    calls++;
+    if (calls !== 1) return Promise.resolve(listResponse([["42", "recovered"]]));
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(Error("synthetic timeout")), {once: true});
+    });
+  });
+  await fixture.advance(60_000);
+  await fixture.advance(15_000);
+  assert.match(fixture.status.textContent, /Retrying automatically/);
+  await fixture.advance(5_000);
+  assert.equal(calls, 2);
+  assert.equal(fixture.list.children[0].label, "recovered");
+}
+
+async function testReconnectWaitsForAnOngoingPageLoad() {
+  const requests = [];
+  let release;
+  const fixture = indexAutoRefreshHarness(url => {
+    requests.push(url);
+    if (requests.length === 1) return new Promise(resolve => { release = resolve; });
+    return Promise.resolve(listResponse([["42", "fresh"], ["43", "page"]]));
+  });
+  fixture.button.hidden = false;
+  fixture.button.dataset.nextOffset = "20";
+  const [loading] = fixture.button.emit("click", {});
+  fixture.document.emit("tg:event", {detail: {type: "resync_required"}});
+  assert.equal(requests.length, 1, "refresh waits for pagination to finish");
+  release(listResponse([["43", "page"]]));
+  await loading;
+  await fixture.settle();
+  assert.equal(requests[1], "/api/chats?refresh=1");
+  assert.deepEqual(fixture.list.children.map(card => card.label), ["fresh", "page"]);
+}
+
+async function testHungPageLoadDoesNotBlockAutomaticReconnect() {
+  const requests = [];
+  const fixture = indexAutoRefreshHarness((url, options) => {
+    requests.push(url);
+    if (requests.length !== 1) return Promise.resolve(listResponse([["42", "fresh"]]));
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(Error("synthetic timeout")), {once: true});
+    });
+  });
+  fixture.button.hidden = false;
+  fixture.button.emit("click", {});
+  fixture.document.emit("tg:event", {detail: {type: "resync_required"}});
+  await fixture.advance(15_000);
+  assert.equal(requests[1], "/api/chats?refresh=1");
+  assert.equal(fixture.list.children[0].label, "fresh");
+}
+
+async function testAutoRefreshKeepsLatestScrollAndFocusedChat() {
+  let release;
+  const fixture = indexAutoRefreshHarness(() => new Promise(resolve => { release = resolve; }));
+  fixture.list.children.push(fixture.makeCard("43", "other"));
+  const old = fixture.list.children[0];
+  old.querySelector(".chat-card-link").focus();
+  const pending = fixture.context.requestListRefresh(true);
+  fixture.setViewportOffset(-50); // The user scrolls while the request is in flight.
+  release(listResponse([["43", "other"], ["42", "updated"]]));
+  await pending;
+  assert.deepEqual(fixture.scrolls, [80], "anchor uses the current, not pre-request, position");
+  const updated = fixture.list.children.find(card => card.dataset.chatId === "42");
+  assert.equal(updated.label, "updated");
+  assert.equal(updated.contains(fixture.document.activeElement), true);
+}
+
+async function testLiveUpdatesRequireFreshSnapshotBeforeBackgroundReconciliation() {
+  const requests = [];
+  const fixture = indexAutoRefreshHarness(async url => {
+    requests.push(url);
+    if (url.startsWith("/api/chat/")) return {ok: true, async text() { return JSON.stringify([["42", "event"]]); }};
+    return listResponse([["42", "fresh"]]);
+  });
+  // A message for a visible ordinary chat is normally patched in place; the
+  // version still prevents a pre-event cached list from overwriting it later.
+  fixture.document.emit("tg:event", {detail: {type: "read", chat_id: 42}});
+  await fixture.advance(60_000);
+  assert.ok(requests.includes("/api/chats?refresh=1"));
+}
+
 function indexCardHarness(fetch) {
   const winEvents = listeners();
   const docEvents = listeners();
@@ -147,7 +371,6 @@ function indexCardHarness(fetch) {
     "chat-list-container": list,
     "load-more-chats": button,
     "chat-list-status": element(),
-    "refresh-chats": element(),
   };
   let now = 0;
   let nextTimer = 0;
@@ -1250,6 +1473,13 @@ async function testOldAutoreactSaveCannotCloseAReopenedDialog() {
 (async () => {
   await testBackAndEvents();
   await testIndexRetainsRenderedCardsOnReturn();
+  await testChatListUpdatesAutomaticallyWithoutARefreshButton();
+  await testAutoRefreshRetriesFailuresAndKeepsExistingCards();
+  await testAutoRefreshTimesOutAndRetriesAHungRequest();
+  await testReconnectWaitsForAnOngoingPageLoad();
+  await testHungPageLoadDoesNotBlockAutomaticReconnect();
+  await testAutoRefreshKeepsLatestScrollAndFocusedChat();
+  await testLiveUpdatesRequireFreshSnapshotBeforeBackgroundReconciliation();
   await testContinuousCardUpdatesAreBoundedAndPreserveFocus();
   await testOldCardResponseCannotOverwriteANewerEvent();
   await testForumTopicUpdatesAreBoundedAndDiscardOldResponses();

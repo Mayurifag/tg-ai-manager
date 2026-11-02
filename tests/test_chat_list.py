@@ -557,6 +557,7 @@ async def test_page_routes_render_consistent_card_metadata(client):
     html = await response.get_data(as_text=True)
     assert response.status_code == 200
     assert 'id="chat-list-container" aria-busy="false"' in html
+    assert 'id="refresh-chats"' not in html
     assert html.index('data-chat-id="45"') < html.index('data-chat-id="0"')
     assert "chat-skeleton" not in html
 
@@ -972,6 +973,32 @@ async def test_chat_list_reuses_and_refreshes_cache(interactor, monkeypatch):
     clock[0] += interactors.CHAT_LIST_TTL
     await interactor.get_chat_page()
     assert interactor.repository.get_chats.await_count == 3
+
+
+async def test_simultaneous_refreshes_share_one_dialog_scan(interactor):
+    await interactor.get_chat_page()
+    interactor.repository.get_chats.reset_mock()
+    started, release, second_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def fetch():
+        started.set()
+        await release.wait()
+        return make_chats(2)
+
+    async def second():
+        second_started.set()
+        return await interactor.get_chat_page(refresh=True)
+
+    interactor.repository.get_chats.side_effect = fetch
+    first = asyncio.create_task(interactor.get_chat_page(refresh=True))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    other = asyncio.create_task(second())
+    await asyncio.wait_for(second_started.wait(), timeout=1)
+    release.set()
+    pages = await asyncio.gather(first, other)
+
+    assert [len(page.chats) for page in pages] == [2, 2]
+    interactor.repository.get_chats.assert_awaited_once()
 
 
 async def test_account_switch_during_fetch_does_not_cache_previous_account(interactor):

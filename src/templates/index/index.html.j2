@@ -13,7 +13,6 @@
 {% block content %}
 <header class="page-heading">
     <div><h1>Chats</h1><p>Unread first · Your Telegram conversations</p></div>
-    <button id="refresh-chats" class="secondary-button" type="button">Refresh</button>
 </header>
 <div class="chat-list" id="chat-list-container" aria-busy="false">
     {% for chat in page.chats %}{% include "partials/chat_card_wrapper.html.j2" %}{% endfor %}
