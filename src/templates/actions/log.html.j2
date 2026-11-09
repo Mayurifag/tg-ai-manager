@@ -94,7 +94,11 @@
             {% for log in logs %}
             <tr>
                 <td style="color: #888; font-size: 0.9rem; white-space: nowrap;">
-                    {{ log.date.strftime('%Y-%m-%d %H:%M:%S') }}
+                    {% if log.date.utcoffset() is not none %}
+                    <time class="local-date-time" datetime="{{ log.date.isoformat() }}" data-timestamp="{{ log.date.isoformat() }}">{{ log.date.strftime('%Y-%m-%d %H:%M:%S %z') }}</time>
+                    {% else %}
+                    <time title="Server time; timezone unavailable">{{ log.date.strftime('%Y-%m-%d %H:%M:%S') }}</time>
+                    {% endif %}
                 </td>
                 <td>
                     <span class="log-badge badge-read">{{ log.action }}</span>

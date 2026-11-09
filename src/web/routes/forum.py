@@ -1,9 +1,11 @@
-import asyncio
 from datetime import datetime, timezone
 
-from quart import Blueprint, abort, render_template, request
+from quart import Blueprint, abort, current_app, render_template, request
 from src.container import get_chat_interactor
+from src.domain.errors import AccountChanged
 from src.domain.models import ForumTopicCursor
+from src.infrastructure.tasks import gather_owned
+from src.web.requests import BadRequest, query_values
 
 forum_bp = Blueprint("forum", __name__)
 
@@ -12,8 +14,12 @@ forum_bp = Blueprint("forum", __name__)
 async def forum_view(chat_id: int):
     cursor = None
     names = ("offset_date", "offset_id", "offset_topic")
-    if any(name in request.args for name in names):
-        values = [request.args.get(name, "") for name in names]
+    try:
+        params = query_values(set(names))
+    except BadRequest:
+        abort(400, description="Invalid forum topic cursor")
+    if any(name in params for name in names):
+        values = [params.get(name, "") for name in names]
         if any(
             not value.isascii()
             or not value.isdecimal()
@@ -28,14 +34,31 @@ async def forum_view(chat_id: int):
             int(values[2]),
         )
     interactor = get_chat_interactor()
-    chat, page = await asyncio.gather(
-        interactor.get_chat(chat_id), interactor.get_forum_topics_page(chat_id, cursor)
-    )
+    repository = getattr(request, "_account_adapter", None)
+    if repository is None:
+        raise AccountChanged()
+
+    def check() -> None:
+        interactor._ensure_repository_current(repository)
+        if current_app.tg_adapter is not repository:
+            raise AccountChanged()
+
+    async def load_chat():
+        check()
+        return await interactor.get_chat(chat_id)
+
+    async def load_topics():
+        check()
+        return await interactor.get_forum_topics_page(chat_id, cursor)
+
+    check()
+    chat, page = await gather_owned(load_chat, load_topics)
+    check()
     if not chat:
         abort(404)
     interactor.prefetch_topics(chat, page.topics)
     next_cursor = page.next_cursor
-    return await render_template(
+    result = await render_template(
         "forum/forum.html.j2",
         chats=page.topics,
         chat=chat,
@@ -49,6 +72,8 @@ async def forum_view(chat_id: int):
         if next_cursor
         else None,
     )
+    check()
+    return result
 
 
 @forum_bp.route(
@@ -56,10 +81,22 @@ async def forum_view(chat_id: int):
 )
 async def api_get_topic_card(chat_id: int, topic_id: int):
     interactor = get_chat_interactor()
+    repository = getattr(request, "_account_adapter", None)
+    if repository is None:
+        raise AccountChanged()
+
+    def check() -> None:
+        interactor._ensure_repository_current(repository)
+        if current_app.tg_adapter is not repository:
+            raise AccountChanged()
+
+    check()
     topic = await interactor.get_forum_topic(chat_id, topic_id)
+    check()
     if not topic:
         return "Topic not found", 404
-
-    return await render_template(
+    result = await render_template(
         "forum/topic_card_partial.html.j2", topic=topic, parent_id=chat_id
     )
+    check()
+    return result

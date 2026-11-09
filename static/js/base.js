@@ -22,18 +22,27 @@ window.parseAppleEmojis = function (container) {
 
 window.renderLocalTimes = function (context) {
   const els = (context || document).querySelectorAll(
-    ".local-time[data-timestamp]",
+    ".local-time[data-timestamp], .local-date-time[data-timestamp]",
   );
   els.forEach((el) => {
     const iso = el.getAttribute("data-timestamp");
     if (iso) {
       const date = new Date(iso);
-      el.textContent = date.toLocaleTimeString([], {
+      const options = {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
-      });
-      el.title = date.toLocaleString();
+      };
+      el.textContent = el.classList.contains("local-date-time")
+        ? date.toLocaleString([], {
+            ...options,
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            second: "2-digit",
+          })
+        : date.toLocaleTimeString([], options);
+      el.title = date.toLocaleString([], { timeZoneName: "short" });
       el.classList.add("rendered");
     }
   });
@@ -186,7 +195,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const feedContainer = document.getElementById("event-feed-list");
-  const streamStatus = document.getElementById("event-stream-status");
   let evtSource;
 
   function connectEvents(resyncOnOpen = false) {
@@ -201,11 +209,8 @@ document.addEventListener("DOMContentLoaded", () => {
     evtSource = new EventSource(`/api/events/stream?${params}`);
     evtSource.onerror = () => {
       needsResync = true;
-      if (streamStatus)
-        streamStatus.textContent = "Events: reconnecting; content may be stale";
     };
     evtSource.onopen = () => {
-      if (streamStatus) streamStatus.textContent = "Events: connected";
       if (needsResync) {
         needsResync = false;
         document.dispatchEvent(
@@ -229,7 +234,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const customEvent = new CustomEvent("tg:event", { detail: data });
       document.dispatchEvent(customEvent);
 
-      if (data.type === "read" || data.type === "edited") return;
+      if (
+        ["read", "edited", "profile_updated", "resync_required"].includes(
+          data.type,
+        )
+      )
+        return;
 
       if (feedContainer) {
         const emptyMsg = feedContainer.querySelector(".empty-feed");

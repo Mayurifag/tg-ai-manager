@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from html import escape as html_escape
 from typing import List, Optional
@@ -165,7 +165,7 @@ class SystemEvent:
     text: str
     chat_name: str
     topic_name: Optional[str] = None
-    date: datetime = field(default_factory=datetime.now)
+    date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     chat_id: Optional[int] = None
     topic_id: Optional[int] = None
     link: Optional[str] = None
@@ -183,6 +183,6 @@ class ActionLog:
     chat_id: int
     chat_name: str
     reason: str
-    date: datetime = field(default_factory=datetime.now)
+    date: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     link: Optional[str] = None
     id: Optional[int] = None

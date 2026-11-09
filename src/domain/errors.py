@@ -12,3 +12,7 @@ class AccountChanged(RuntimeError):
 
 class LogUnavailable(RuntimeError):
     """Action or event history could not be stored or retrieved."""
+
+
+class ReactionBlocked(RuntimeError):
+    """A reaction was not queued because an earlier write is unresolved."""

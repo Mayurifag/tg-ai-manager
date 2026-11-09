@@ -74,70 +74,40 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
 
         return await self._execute(_fetch)
 
-    async def save_user(self, user: User) -> None:
+    async def create_user(self, user: User) -> None:
         enc_session = self.crypto.encrypt(user.session_string)
+        enc_ai_key = self.crypto.encrypt(user.ai_api_key)
 
-        def _save():
+        def _create():
             with self._connect() as conn:
-                cursor = conn.execute("SELECT 1 FROM users WHERE id = ?", (user.id,))
-                exists = cursor.fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO users (
+                        id, username, session_string,
+                        autoread_service_messages, autoread_polls, autoread_self,
+                        autoread_bots, autoread_regex, is_premium, debug_mode,
+                        ai_provider, ai_model, ai_api_key, ai_prompt
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user.id,
+                        user.username,
+                        enc_session,
+                        int(user.autoread_service_messages),
+                        int(user.autoread_polls),
+                        int(user.autoread_self),
+                        user.autoread_bots,
+                        user.autoread_regex,
+                        int(user.is_premium),
+                        int(user.debug_mode),
+                        user.ai_provider,
+                        user.ai_model,
+                        enc_ai_key,
+                        user.ai_prompt,
+                    ),
+                )
 
-                if exists:
-                    conn.execute(
-                        """
-                        UPDATE users
-                        SET username = ?, session_string = ?,
-                            autoread_service_messages = ?, autoread_polls = ?, autoread_self = ?,
-                            autoread_bots = ?, autoread_regex = ?, is_premium = ?, debug_mode = ?,
-                            ai_provider = ?, ai_model = ?, ai_api_key = ?, ai_prompt = ?
-                        WHERE id = ?
-                        """,
-                        (
-                            user.username,
-                            enc_session,
-                            int(user.autoread_service_messages),
-                            int(user.autoread_polls),
-                            int(user.autoread_self),
-                            user.autoread_bots,
-                            user.autoread_regex,
-                            int(user.is_premium),
-                            int(user.debug_mode),
-                            user.ai_provider,
-                            user.ai_model,
-                            self.crypto.encrypt(user.ai_api_key),
-                            user.ai_prompt,
-                            user.id,
-                        ),
-                    )
-                else:
-                    conn.execute(
-                        """
-                        INSERT INTO users (
-                            id, username, session_string,
-                            autoread_service_messages, autoread_polls, autoread_self,
-                            autoread_bots, autoread_regex, is_premium, debug_mode,
-                            ai_provider, ai_model, ai_api_key, ai_prompt
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            user.id,
-                            user.username,
-                            enc_session,
-                            int(user.autoread_service_messages),
-                            int(user.autoread_polls),
-                            int(user.autoread_self),
-                            user.autoread_bots,
-                            user.autoread_regex,
-                            int(user.is_premium),
-                            int(user.debug_mode),
-                            user.ai_provider,
-                            user.ai_model,
-                            self.crypto.encrypt(user.ai_api_key),
-                            user.ai_prompt,
-                        ),
-                    )
-
-        await self._execute(_save)
+        await self._execute(_create)
 
     async def update_fields(
         self, user_id: int, fields: dict[str, Any], *, expected_session: Optional[str]

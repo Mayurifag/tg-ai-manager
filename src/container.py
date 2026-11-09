@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Optional, cast
 
 from quart import current_app
@@ -13,6 +15,7 @@ from src.domain.ports import ActionRepository, EventRepository
 from src.infrastructure.event_bus import EventBus
 from src.domain.models import SystemEvent
 from src.infrastructure.logging import get_logger
+from src.infrastructure.tasks import raise_if_task_stopped, run_with_task_deadline
 from src.rules.service import RuleService
 from src.users.ports import UserRepository
 
@@ -24,6 +27,18 @@ logger = get_logger(__name__)
 
 def _app() -> TypedQuart:
     return cast("TypedQuart", current_app._get_current_object())  # noqa: SLF001
+
+
+@contextmanager
+def account_transition() -> Iterator[None]:
+    """Invalidate login-page snapshots throughout an account transition."""
+    app = _app()
+    app._account_transition_revision += 1
+    app._account_transition_depth += 1
+    try:
+        yield
+    finally:
+        app._account_transition_depth -= 1
 
 
 def _get_tg_adapter() -> TelethonAdapter:
@@ -67,6 +82,19 @@ def bind_adapter_events(app: TypedQuart, adapter: TelethonAdapter) -> None:
 
 
 async def reload_tg_adapter(session_string: Optional[str] = None) -> None:
+    with account_transition():
+        await _reload_tg_adapter(session_string)
+
+
+async def _reload_tg_adapter(session_string: Optional[str]) -> None:
+    app = _app()
+
+    def ensure_active() -> None:
+        raise_if_task_stopped()
+        if app.shutdown_event.is_set():
+            raise RuntimeError("Application is shutting down")
+
+    ensure_active()
     settings = get_settings()
     new_adapter = TelethonAdapter(
         session_string=session_string,
@@ -74,13 +102,34 @@ async def reload_tg_adapter(session_string: Optional[str] = None) -> None:
         api_hash=settings.TG_API_HASH,
     )
 
-    app = _app()
     old_adapter = app.tg_adapter
-    bind_adapter_events(app, new_adapter)
-    old_adapter._retired = True
-    app.sse.invalidate_clients()
-    await app.rule_service.retire_account()
-    await old_adapter.disconnect()
+    try:
+        bind_adapter_events(app, new_adapter)
+        old_adapter.retire()
+        app.sse.invalidate_clients()
+
+        async def retire_old_adapter() -> None:
+            try:
+                ensure_active()
+                await app.rule_service.retire_account()
+                ensure_active()
+                await old_adapter.disconnect()
+            finally:
+                ensure_active()
+
+        # A cleanup dependency may clear its task's cancellation. Keep the
+        # requesting task as owner and publish only after the child is joined.
+        await run_with_task_deadline(
+            retire_old_adapter, None, name="adapter_replacement_cleanup"
+        )
+        ensure_active()
+    except BaseException:
+        # Until published, this adapter belongs to the replacement attempt.
+        try:
+            await new_adapter.disconnect()
+        except Exception as error:
+            logger.error("replacement_cleanup_failed", category=type(error).__name__)
+        raise
     app.tg_adapter = new_adapter
     app.chat_interactor.replace_repository(new_adapter)
     app.rule_service.chat_repo = new_adapter

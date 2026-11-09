@@ -15,12 +15,20 @@ class WriteQueueFull(RuntimeError):
     """The operation was not accepted; callers may retry later."""
 
 
+class UncertainFloodWait(Exception):
+    """Honor a flood wait without retrying a potentially completed write."""
+
+    def __init__(self, seconds: int) -> None:
+        super().__init__("Telegram write outcome is unknown")
+        self.seconds = seconds
+
+
 class TelegramWriteQueue:
     """Serial write queue for Telegram API operations.
 
     Enqueued coroutines are executed one at a time by a single worker.
     On FloodWait (429) errors the same operation is retried after waiting
-    the required number of seconds.
+    the required number of seconds, except for explicitly uncertain writes.
     Dropping pending operations on shutdown is acceptable (in-memory only).
     """
 
@@ -73,16 +81,26 @@ class TelegramWriteQueue:
             self._running and self._worker_task and not self._worker_task.done()
         )
 
-    async def stop(self) -> None:
-        """Stop the background worker. Pending operations are dropped."""
+    def retire(self) -> None:
+        """Stop accepting work and cancel the worker without awaiting cleanup."""
+        if self._closed:
+            return
         self._closed = True
         self._running = False
         if self._worker_task is not None:
             self._worker_task.cancel()
-            try:
-                await self._worker_task
-            except asyncio.CancelledError:
-                pass
+
+    async def stop(self) -> None:
+        """Stop the background worker. Pending operations are dropped."""
+        self.retire()
+        if self._worker_task is not None:
+            # gather distinguishes the worker's expected cancellation from
+            # cancellation of the caller, which must abort account changes.
+            (result,) = await asyncio.gather(self._worker_task, return_exceptions=True)
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                raise result
             self._worker_task = None
         dropped = 0
         while not self._queue.empty():
@@ -103,13 +121,19 @@ class TelegramWriteQueue:
                     try:
                         await coro_fn()
                         break
+                    except UncertainFloodWait as e:
+                        logger.warning("flood_wait_without_retry", seconds=e.seconds)
+                        await asyncio.sleep(e.seconds)
+                        break
                     except FloodWaitError as e:
                         # Keep the accepted operation in the worker's single
                         # in-flight slot; a full queue cannot deadlock a retry.
                         logger.warning("flood_wait_backoff", seconds=e.seconds)
                         await asyncio.sleep(e.seconds)
                     except Exception as e:
-                        logger.error("write_queue_operation_failed", error=repr(e))
+                        logger.error(
+                            "write_queue_operation_failed", category=type(e).__name__
+                        )
                         break
             finally:
                 self._queue.task_done()

@@ -8,8 +8,8 @@ accounts via MTProto API. In future I might also add local models which might be
 and user might ask questions to it.
 
 Managed via web interface, which deployed to VPS using docker image and env variables. Built using Telethon. Async
-event-driven architecture. Gemini used as a free AI provider. Perhaps Kafka/Valkey/SQLite or else will be added in
-future. There is also logging of actions done by manager.
+event-driven architecture. Gemini used as an AI provider. SQLite stores account settings and rules; Valkey stores
+short-lived action and debug history. There is also logging of actions done by manager.
 
 ## Setup
 
@@ -37,7 +37,7 @@ services:
   tg-manager:
     image: ghcr.io/mayurifag/tg-ai-manager:latest
     ports:
-      - "14123:8000"
+      - "127.0.0.1:14123:8000"
     environment:
       # Must have:
       - TG_API_ID=123456          # Replace with your ID
@@ -56,7 +56,7 @@ demand.
 
 - Live messages use a persistent MTProto connection, not Bot API webhooks.
 - Reconnection clears Telethon 1.x's stale keepalive-ping state and explicitly requests update catch-up. This narrow
-  workaround uses a private Telethon field; its regression tests must pass when upgrading Telethon.
+  workaround uses a private Telethon field; verify its behavior when upgrading Telethon.
 - Every 10 seconds, a background task checks Telegram's actual unread state in batches for explicitly enabled auto-read
   chats. It reads only those approved chats/topics, up to the message ID returned by the server. Text, bot, poll,
   service-message, and AI rules are not expanded into blanket chat permissions. Inaccessible chats are skipped and
@@ -76,7 +76,6 @@ avoids that observed steady-state limit.
 
 ## TODO
 
-- AI integration to skip ads - we will have prompt which will ask LLM if message is ad or not and auto-read if it is
 - AI integration to make a summary on person and save it to db based on all messages (should save latest message which
   it parsed and may be continued to save context notes)
 - AI integration to help with advice - ask LLM to give some advice on recent messages what to answer next with context.
@@ -87,8 +86,6 @@ avoids that observed steady-state limit.
 - AI integration to help find answer in chats - ask LLM on some prompt which will use all chat to find answer to some
   question. Thats the tough one, but research may be done in some hours. This also might be used on several channels.
   This require a lot of work
-- Refactor to have Telethon queue - mark as read / react and so on have to be done on queue with telethon internal
-  throttling
 - Support large quotes posts on frontend.
 - we save content in png/jpg from telegram -> but we actually may convert and use webp
 - I have to cache messages so I can use them to show in live updates what exactly message was deleted or reacted

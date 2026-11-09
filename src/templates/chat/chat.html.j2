@@ -1,7 +1,5 @@
 {% extends "base.html.j2" %}
 
-{% block body_class %}chat-page{% endblock %}
-
 {% block title %}
 {% if chat %}
 {{ chat.name }}
@@ -33,12 +31,12 @@ Messages
         {{ chat.name[0] | upper }}
     </div>
     {% endif %}
-    <h3>{{ chat.name }}</h3>
+    <h1>{{ chat.name }}</h1>
     <p>{{ chat.type.value | title }}</p>
 </div>
 
-<details class="chat-actions-container" id="chat-controls" open>
-    <summary class="actions-header">Chat controls</summary>
+<div class="chat-actions-container">
+    <div class="actions-header">Actions</div>
     <div class="actions-grid">
         <button type="button" class="action-item" id="btn-toggle-autoread" title="{{ 'Inherited from forum; disable the forum rule first' if autoread_inherited else 'Toggle Autoread' }}" aria-pressed="{{ 'true' if autoread_enabled else 'false' }}">
             <span class="icon">👀</span>
@@ -70,7 +68,7 @@ Messages
         </button>
         {% endif %}
     </div>
-</details>
+</div>
 {% endif %}
 {% endblock %}
 
@@ -79,16 +77,12 @@ Messages
 
 {% block content %}
 <div id="loading-indicator" class="history-status" role="status" aria-live="polite" hidden>Loading older messages…</div>
-<div id="reading-position-status" class="history-status" role="status" aria-live="polite" hidden></div>
 <div class="messages-container" id="messages-container">
     {% include "chat/messages_partial.html.j2" %}
     {% if not messages %}<p class="empty-messages">No messages to show.</p>{% endif %}
 </div>
-<button type="button" id="load-newer-messages" class="history-more" hidden>Load newer messages</button>
-<button type="button" id="jump-to-latest" class="jump-to-latest" hidden></button>
-<button type="button" id="return-to-reading" class="jump-to-latest return-to-reading" hidden>Return to previous position</button>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <dialog id="autoreact-modal" class="modal-overlay" aria-labelledby="autoreact-title">
     <div class="modal-content">
@@ -134,6 +128,7 @@ Messages
 
                 <div class="help-text" id="ar-help-text">Leave empty to react to ALL incoming messages.</div>
             </div>
+            <p id="autoreact-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
             <button class="btn-cancel" onclick="closeArModal()">Cancel</button>
@@ -147,9 +142,8 @@ Messages
 {% block scripts %}
 <script>
     window.TG_CHAT = {
-        chatId: {{ chat_id }},
+        chatId: {{ chat_id | string | tojson }},
         topicId: {{ topic_id if topic_id is not none else 'null' }},
-        accountId: {{ account_id | tojson }},
         isPremium: {{ 'true' if is_premium else 'false' }},
         isChannel: {{ 'true' if chat.type.value == 'channel' else 'false' }}
     };

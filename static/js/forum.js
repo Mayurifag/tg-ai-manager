@@ -3,6 +3,7 @@ const topicList = document.getElementById("topic-list-container");
 const topicStatus = document.getElementById("topic-list-status");
 const topicRefreshes = new Map();
 const MAX_TOPIC_REFRESHES = 3;
+const TOPIC_REQUEST_TIMEOUT = 15_000;
 let topicRefreshTimer = null;
 let activeTopicRefreshes = 0;
 let pageReloadTimer = null;
@@ -53,9 +54,12 @@ function flushTopicRefreshes() {
 
 async function fetchTopic(topicId, state) {
   const revision = state.revision;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TOPIC_REQUEST_TIMEOUT);
   try {
     const response = await fetch(
       `/api/forum/${forumConfig.chatId}/topic/${topicId}/card`,
+      { signal: controller.signal },
     );
     const html = response.status === 404 ? null : await response.text();
     if (!response.ok && response.status !== 404)
@@ -90,6 +94,7 @@ async function fetchTopic(topicId, state) {
     console.error("Could not update topic:", error);
     topicStatus.textContent = "Some topics may be stale. Refresh to retry.";
   } finally {
+    clearTimeout(timeout);
     state.inFlight = false;
     activeTopicRefreshes--;
     if (!state.dirty) topicRefreshes.delete(topicId);
@@ -126,7 +131,8 @@ if (readForumBtn) {
       topicStatus.textContent = "Read queued; waiting for Telegram.";
     } catch (e) {
       console.error(e);
-      topicStatus.textContent = "Could not queue read. Try again.";
+      topicStatus.textContent =
+        "Could not confirm whether the read was queued. Refresh and check before retrying.";
     } finally {
       setTimeout(() => {
         readForumBtn.disabled = false;
@@ -167,7 +173,8 @@ topicList.addEventListener("click", async (e) => {
       topicStatus.textContent = "Read queued; waiting for Telegram.";
     } catch (err) {
       console.error("Error marking topic as read:", err);
-      topicStatus.textContent = "Could not queue read. Try again.";
+      topicStatus.textContent =
+        "Could not confirm whether the read was queued. Refresh and check before retrying.";
       btn.disabled = false;
     }
   }
@@ -182,7 +189,7 @@ document.addEventListener("tg:event", (event) => {
   if (data.chat_id !== forumConfig.chatId) return;
   if (data.type === "read_failed") {
     topicStatus.textContent =
-      "Telegram could not mark the topic as read. Try again.";
+      data.text_plain || "Read was not confirmed. Refresh before retrying.";
     if (data.topic_id) refreshTopic(data.topic_id);
     else refreshVisibleTopics();
     return;

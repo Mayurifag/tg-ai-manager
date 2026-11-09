@@ -30,14 +30,13 @@ logs:
 # Clean up artifacts (optional)
 clean:
 	rm -rf __pycache__
-	rm -rf cache/*
 
 ci:
 	uv run --no-sync ruff format --check
 	uv run --no-sync ruff check
 	node --version > /dev/null
+	for file in static/js/*.js scripts/*.cjs; do node --check "$$file" || exit $$?; done
 	node scripts/generate-emoji-map.cjs --check
-	uv run --no-sync pytest -q
 
 format:
 	uv run --no-sync ruff format

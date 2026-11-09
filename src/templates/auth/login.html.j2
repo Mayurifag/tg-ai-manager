@@ -105,7 +105,7 @@
 <body>
     <div class="login-card">
         <h2>Telegram Login</h2>
-        <div class="error" id="error-msg"></div>
+        <div class="error" id="error-msg" role="alert"></div>
 
         <div id="qr-step" class="step active">
             <div class="qr-placeholder" id="qr-status-text">Generating QR...</div>
@@ -113,13 +113,14 @@
         </div>
 
         <div id="password-step" class="step">
-            <label class="hint">Two-Step Verification</label>
+            <label class="hint" for="password">Two-Step Verification</label>
             <p id="password-hint-text"
                 style="color: #4caf50; font-size: 0.85rem; margin-top: -5px; margin-bottom: 10px;"></p>
-            <input type="password" id="password" placeholder="Cloud Password">
+            <input type="password" id="password" placeholder="Cloud Password" aria-describedby="password-hint-text">
             <button onclick="verifyPassword()">Verify Password</button>
         </div>
         {% if current_user and current_user.session_string %}
+        <div class="error" id="forget-account-error" role="alert"></div>
         <button id="forget-account" type="button">Forget saved account</button>
         {% endif %}
     </div>

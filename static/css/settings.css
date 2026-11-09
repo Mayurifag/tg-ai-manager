@@ -4,6 +4,11 @@
   margin-bottom: 50px;
 }
 
+.settings-container h1 {
+  font-size: 1.5rem;
+  margin: 0 0 1rem;
+}
+
 .section-card {
   background: #1e1e20;
   padding: 0;
@@ -46,6 +51,11 @@
   cursor: pointer;
   height: 0;
   width: 0;
+}
+
+.gs-card:has(input:focus-visible) {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 2px;
 }
 
 .gs-content {
@@ -96,6 +106,23 @@
   content: "ON";
 }
 
+/* A lost response can leave the stored setting different from either UI state. */
+.gs-card:has(input:indeterminate) {
+  background: #2a2a2c;
+  border-color: #555;
+  cursor: not-allowed;
+}
+.gs-card:has(input:indeterminate) .gs-label {
+  color: #ccc;
+}
+.gs-card:has(input:indeterminate) .gs-status-badge {
+  background: #444;
+  color: #ddd;
+}
+.gs-card:has(input:indeterminate) .gs-status-badge::after {
+  content: "UNKNOWN";
+}
+
 /* --- Expanded View Rows (Bots / Regex) --- */
 .gs-expanded-row {
   display: flex;
@@ -144,7 +171,7 @@
   cursor: pointer;
   font-size: 0.9rem;
   padding: 2px 6px;
-  color: #666;
+  color: var(--text-muted);
   transition: color 0.2s;
   line-height: 1;
 }
@@ -182,7 +209,7 @@
 
 .gs-none {
   font-style: italic;
-  color: #666;
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -539,4 +566,9 @@
 .rule-delete-btn:hover {
   color: #f44336;
   background: rgba(244, 67, 54, 0.1);
+}
+
+.rule-delete-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

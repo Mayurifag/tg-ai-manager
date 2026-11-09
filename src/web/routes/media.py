@@ -92,7 +92,9 @@ async def stream_document(chat_id: int, msg_id: int):
         abort(404)
     size = document.size
     start, end = 0, size
-    raw_range = request.headers.get("Range")
+    # Range is defined for GET, not HEAD. A HEAD response describes the full
+    # document without opening a Telegram stream or occupying a stream slot.
+    raw_range = request.headers.get("Range") if request.method == "GET" else None
     if raw_range:
         requested = request.range
         interval = (
@@ -137,7 +139,11 @@ async def stream_document(chat_id: int, msg_id: int):
             + "; filename*=UTF-8''"
             + quote(filename, safe="")
         )
-    stream = adapter.stream_document(chat_id, msg_id, document, start, end - start)
+    stream = (
+        adapter.stream_document(chat_id, msg_id, document, start, end - start)
+        if request.method == "GET"
+        else None
+    )
     try:
         # Quart's make_response accepts async generators, but not arbitrary
         # async iterators such as the lease that owns our stream capacity.
@@ -155,7 +161,8 @@ async def stream_document(chat_id: int, msg_id: int):
         response.timeout = None
         return response
     except BaseException:
-        await stream.aclose()
+        if stream is not None:
+            await stream.aclose()
         raise
 
 

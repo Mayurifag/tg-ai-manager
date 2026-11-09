@@ -1,4 +1,7 @@
 const dialogSessions = new WeakMap();
+let settingsStateUnconfirmed = false;
+const unconfirmedSettingMessage =
+  "Could not confirm whether the setting was saved. Reload and check before changing it again.";
 
 async function patchSetting(payload) {
   const dialog = document.querySelector("dialog.modal-overlay[open]");
@@ -13,8 +16,15 @@ async function patchSetting(payload) {
     (button) => button === document.activeElement,
   );
   const setStatus = (message) => {
+    if (!dialog && settingsStateUnconfirmed) return;
     if (!dialog || (dialog.open && dialogSessions.get(dialog) === session))
       status.textContent = message;
+  };
+  const reportUnconfirmed = () => {
+    settingsStateUnconfirmed = true;
+    document.getElementById("settings-status").textContent =
+      unconfirmedSettingMessage;
+    if (dialog) setStatus(unconfirmedSettingMessage);
   };
   if (saveButtons.some((button) => button.disabled)) return false;
   saveButtons.forEach((button) => (button.disabled = true));
@@ -28,20 +38,28 @@ async function patchSetting(payload) {
       },
       body: JSON.stringify(payload),
     });
-    if (
-      !res.ok ||
-      !res.headers.get("content-type")?.includes("application/json")
-    ) {
-      setStatus("Could not save setting. Try again.");
-      return false;
+    const isJson = res.headers
+      .get("content-type")
+      ?.includes("application/json");
+    if (!res.ok || !isJson) {
+      if (res.status === 400 && isJson) {
+        const body = await res.json().catch(() => ({}));
+        if (body.code === "invalid_request") {
+          setStatus(body.error || "Invalid setting.");
+          return false;
+        }
+      }
+      reportUnconfirmed();
+      return null;
     }
-    document.getElementById("settings-status").textContent = "Setting saved.";
-    setStatus("Setting saved.");
+    if (!settingsStateUnconfirmed)
+      document.getElementById("settings-status").textContent = "Setting saved.";
+    if (dialog) setStatus("Setting saved.");
     return true;
   } catch (e) {
     console.error(e);
-    setStatus("Network error. Could not save setting.");
-    return false;
+    reportUnconfirmed();
+    return null;
   } finally {
     saveButtons.forEach((button) => (button.disabled = false));
     if (
@@ -63,16 +81,23 @@ window.toggleSetting = async function (key) {
   };
   const checkbox = document.getElementById(idMap[key] || key);
   const restoreFocus = document.activeElement === checkbox;
+  let unconfirmed = false;
   checkbox.disabled = true;
   try {
     const payload = {};
     const next = checkbox.checked;
     payload[key] = next;
-    if (!(await patchSetting(payload)) && checkbox.checked === next)
-      checkbox.checked = !next;
+    const result = await patchSetting(payload);
+    unconfirmed = result === null;
+    if (unconfirmed) checkbox.indeterminate = true;
+    else if (!result && checkbox.checked === next) checkbox.checked = !next;
   } finally {
-    checkbox.disabled = false;
-    if (restoreFocus && document.activeElement === document.body)
+    checkbox.disabled = unconfirmed;
+    if (
+      !unconfirmed &&
+      restoreFocus &&
+      document.activeElement === document.body
+    )
       checkbox.focus();
   }
 };
@@ -224,17 +249,49 @@ document.querySelectorAll(".modal-overlay").forEach((overlay) => {
 });
 
 const rulesContainer = document.getElementById("rules-container");
+const rulesStatus = document.getElementById("rules-status");
+const RULES_LOAD_TIMEOUT = 15_000;
+const RULES_RETRY_INTERVAL = 5_000;
+const RULES_RETRY_MAX_INTERVAL = 60_000;
+let rulesLoadGeneration = 0;
+let activeRulesLoad = null;
+let rulesRetryTimer = null;
+let rulesRetryDelay = RULES_RETRY_INTERVAL;
+// Confirmed deletions stay unavailable until an authoritative list loads.
+const ruleDeleteStates = new Map();
 
-function buildRuleItemHTML(rule) {
+function ruleDeleteButton(ruleId) {
+  const item = Array.from(
+    rulesContainer.querySelectorAll("[data-rule-id]"),
+  ).find((element) => element.dataset.ruleId === ruleId);
+  return item?.querySelector(".rule-delete-btn");
+}
+
+function setRuleDeleteState(ruleId, state) {
+  if (state) ruleDeleteStates.set(ruleId, state);
+  else ruleDeleteStates.delete(ruleId);
+  const button = ruleDeleteButton(ruleId);
+  if (!button) return;
+  // Keep the button focusable; deleteRule enforces the disabled state.
+  if (state) button.setAttribute("aria-disabled", "true");
+  else button.removeAttribute("aria-disabled");
+  if (state === "pending") button.setAttribute("aria-busy", "true");
+  else button.removeAttribute("aria-busy");
+}
+
+function buildRuleItemHTML(rule, chatId) {
   let detail = "";
   if (rule.rule_type === "autoreact") {
-    const emoji = rule.config.emoji || "💩";
-    const targets = rule.config.target_users || [];
+    const config = rule.config || {};
+    const emoji = config.emoji || "💩";
+    const targets = Array.isArray(config.target_users)
+      ? config.target_users
+      : [];
     const targetsHTML = targets.length
       ? targets
           .map(
             (uid) =>
-              `<div class="user-chip-lazy" data-user-id="${uid}"><div class="u-avatar">?</div><span class="u-name">${uid}</span></div>`,
+              `<div class="user-chip-lazy" data-user-id="${window.TG.escapeHtml(uid)}"><div class="u-avatar">?</div><span class="u-name">${window.TG.escapeHtml(uid)}</span></div>`,
           )
           .join("")
       : '<span class="ar-default">All incoming eligible messages in this scope</span>';
@@ -242,8 +299,19 @@ function buildRuleItemHTML(rule) {
   } else if (rule.config && Object.keys(rule.config).length) {
     detail = `<span class="rule-config">${window.TG.escapeHtml(JSON.stringify(rule.config))}</span>`;
   }
+  const scope =
+    rule.topic_id == null
+      ? `chat ${chatId}`
+      : `chat ${chatId}, topic ${rule.topic_id}`;
+  const deleteLabel = window.TG.escapeHtml(
+    `Delete ${rule.rule_type} rule for ${scope}`,
+  );
+  const deleteState = ruleDeleteStates.get(String(rule.id));
+  const deleteStateAttributes = deleteState
+    ? ` aria-disabled="true"${deleteState === "pending" ? ' aria-busy="true"' : ""}`
+    : "";
   const deleteBtn = rule.id
-    ? `<button class="rule-delete-btn" onclick="deleteRule(${rule.id})" title="Delete rule">✕</button>`
+    ? `<button class="rule-delete-btn" onclick="deleteRule(${rule.id})" title="Delete rule" aria-label="${deleteLabel}"${deleteStateAttributes}>✕</button>`
     : "";
   return `
         <div class="rule-item" data-rule-id="${rule.id}">
@@ -254,13 +322,15 @@ function buildRuleItemHTML(rule) {
 }
 
 function buildGroupHTML(chatId, data) {
-  const chatRulesHTML = data.chat_rules.map(buildRuleItemHTML).join("");
+  const chatRulesHTML = data.chat_rules
+    .map((rule) => buildRuleItemHTML(rule, chatId))
+    .join("");
   const topicsHTML = Object.entries(data.topics)
     .map(
       ([topicId, rules]) => `
         <div class="topic-group">
             <div class="topic-header"><span style="margin-right:5px;">#</span> Topic ID: ${window.TG.escapeHtml(topicId)}</div>
-            ${rules.map(buildRuleItemHTML).join("")}
+            ${rules.map((rule) => buildRuleItemHTML(rule, chatId)).join("")}
         </div>`,
     )
     .join("");
@@ -281,79 +351,178 @@ function buildGroupHTML(chatId, data) {
 }
 
 async function loadRules() {
+  clearTimeout(rulesRetryTimer);
+  rulesRetryTimer = null;
+  const generation = ++rulesLoadGeneration;
+  activeRulesLoad?.abort();
+  const controller = new AbortController();
+  activeRulesLoad = controller;
+  const timeout = setTimeout(() => controller.abort(), RULES_LOAD_TIMEOUT);
   try {
-    const res = await fetch("/api/rules");
-    if (!res.ok) return;
+    const res = await fetch("/api/rules", { signal: controller.signal });
+    if (!res.ok) {
+      const error = new Error(`HTTP ${res.status}`);
+      if (res.status === 503) {
+        const body = await res.json().catch(() => ({}));
+        if (Number.isSafeInteger(body.rule_id) && body.rule_id > 0)
+          error.ruleId = body.rule_id;
+      }
+      throw error;
+    }
     const grouped = await res.json();
+    if (generation !== rulesLoadGeneration) return;
+    if (!grouped || typeof grouped !== "object" || Array.isArray(grouped))
+      throw new Error("Invalid rules response");
+    const active = document.activeElement;
+    const restoreRulesFocus =
+      active !== rulesContainer && rulesContainer.contains(active);
     const keys = Object.keys(grouped);
     if (!keys.length) {
       rulesContainer.innerHTML =
-        '<div style="text-align:center;color:#777;padding:30px;">No specific rules configured.</div>';
-      return;
+        '<div style="text-align:center;color:var(--text-muted);padding:30px;">No specific rules configured.</div>';
+    } else {
+      rulesContainer.innerHTML = keys
+        .map((cid) => buildGroupHTML(cid, grouped[cid]))
+        .join("");
+      enrichRuleCards();
     }
-    rulesContainer.innerHTML = keys
-      .map((cid) => buildGroupHTML(cid, grouped[cid]))
-      .join("");
-    enrichRuleCards();
+    for (const [id, state] of ruleDeleteStates) {
+      if (state === "confirmed") setRuleDeleteState(id, null);
+    }
+    rulesStatus.textContent = "";
+    rulesRetryDelay = RULES_RETRY_INTERVAL;
+    if (restoreRulesFocus) rulesContainer.focus({ preventScroll: true });
   } catch (e) {
+    if (generation !== rulesLoadGeneration) return;
     console.error("Failed to load rules", e);
+    rulesStatus.textContent = e.ruleId
+      ? `Stored rule ${e.ruleId} has invalid configuration. Displayed rules may be out of date.`
+      : "Could not load rules. Displayed rules may be out of date. Retrying automatically.";
+    rulesRetryTimer = setTimeout(() => void loadRules(), rulesRetryDelay);
+    rulesRetryDelay = Math.min(rulesRetryDelay * 2, RULES_RETRY_MAX_INTERVAL);
+  } finally {
+    clearTimeout(timeout);
+    if (generation === rulesLoadGeneration) activeRulesLoad = null;
   }
 }
 
+let enrichmentGeneration = 0;
+let activeEnrichment = null;
+const ENRICHMENT_REQUEST_TIMEOUT = 15_000;
+
 async function enrichRuleCards() {
-  document.querySelectorAll(".rule-group-card").forEach(async (card) => {
-    const chatId = card.getAttribute("data-chat-id");
-    if (!chatId) return;
-    try {
-      const res = await fetch(`/api/chat/${chatId}/info`);
-      if (!res.ok) return;
-      const data = await res.json();
-      card.querySelector(".rg-name").textContent = data.name;
-      const typeEl = card.querySelector(".rg-type");
-      typeEl.textContent = data.type;
-      typeEl.classList.remove("rg-loading");
-      const avatarEl = card.querySelector(".rg-avatar");
-      avatarEl.innerHTML = data.avatar_url
-        ? `<img src="${window.TG.escapeHtml(data.avatar_url)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
-        : window.TG.escapeHtml(data.name.charAt(0).toUpperCase());
-    } catch (e) {}
+  const generation = ++enrichmentGeneration;
+  if (activeEnrichment) {
+    activeEnrichment.controller.abort();
+    await activeEnrichment.done;
+  }
+  if (generation !== enrichmentGeneration) return;
+  const controller = new AbortController();
+  const targets = new Map();
+  const add = (id, element, kind) => {
+    // Older stored rule configs may contain values that are not Telegram IDs.
+    if (!/^-?[1-9]\d{0,18}$/.test(id || "")) return;
+    if (!targets.has(id)) targets.set(id, []);
+    targets.get(id).push({ element, kind });
+  };
+  document.querySelectorAll(".rule-group-card").forEach((card) => {
+    add(card.getAttribute("data-chat-id"), card, "chat");
+  });
+  document.querySelectorAll(".user-chip-lazy").forEach((chip) => {
+    add(chip.getAttribute("data-user-id"), chip, "user");
   });
 
-  document.querySelectorAll(".user-chip-lazy").forEach(async (chip) => {
-    const uid = chip.getAttribute("data-user-id");
-    if (!uid) return;
-    try {
-      const res = await fetch(`/api/chat/${uid}/info`);
-      if (!res.ok) return;
-      const data = await res.json();
-      chip.querySelector(".u-name").textContent = data.name;
-      chip.querySelector(".u-avatar").innerHTML = data.avatar_url
-        ? `<img src="${window.TG.escapeHtml(data.avatar_url)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
-        : window.TG.escapeHtml(data.name.charAt(0).toUpperCase());
-      chip.title = `@${data.username || "unknown"}`;
-    } catch (e) {}
-  });
+  const jobs = Array.from(targets);
+  let next = 0;
+  async function worker() {
+    while (!controller.signal.aborted && next < jobs.length) {
+      const [id, elements] = jobs[next++];
+      const requestController = new AbortController();
+      const abort = () => requestController.abort();
+      controller.signal.addEventListener("abort", abort, { once: true });
+      const timeout = setTimeout(abort, ENRICHMENT_REQUEST_TIMEOUT);
+      try {
+        const res = await fetch(`/api/chat/${id}/info`, {
+          signal: requestController.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (typeof data.name !== "string") throw new Error("Invalid chat info");
+        if (controller.signal.aborted) return;
+        const avatar = data.avatar_url
+          ? `<img src="${window.TG.escapeHtml(data.avatar_url)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`
+          : window.TG.escapeHtml(data.name.charAt(0).toUpperCase());
+        for (const { element, kind } of elements) {
+          element.querySelector(
+            kind === "chat" ? ".rg-name" : ".u-name",
+          ).textContent = data.name;
+          element.querySelector(
+            kind === "chat" ? ".rg-avatar" : ".u-avatar",
+          ).innerHTML = avatar;
+          if (kind === "chat") {
+            const type = element.querySelector(".rg-type");
+            type.textContent = data.type;
+            type.classList.remove("rg-loading");
+          } else {
+            element.title = `@${data.username || "unknown"}`;
+          }
+        }
+      } catch (_) {
+        if (controller.signal.aborted) return;
+        for (const { element, kind } of elements) {
+          if (kind === "chat") {
+            const type = element.querySelector(".rg-type");
+            type.textContent = "Info unavailable";
+            type.classList.remove("rg-loading");
+          }
+        }
+      } finally {
+        clearTimeout(timeout);
+        controller.signal.removeEventListener("abort", abort);
+      }
+    }
+  }
+  // shortcut: four concurrent lookups; revisit after measuring account RPC load.
+  const done = Promise.all(
+    Array.from({ length: Math.min(4, jobs.length) }, worker),
+  );
+  activeEnrichment = { controller, done };
+  try {
+    await done;
+  } finally {
+    if (activeEnrichment?.done === done) activeEnrichment = null;
+  }
 }
 
 window.deleteRule = async function (ruleId) {
+  const id = String(ruleId);
+  if (ruleDeleteStates.has(id)) return;
   if (!confirm("Delete this rule?")) return;
+  setRuleDeleteState(id, "pending");
   try {
     const res = await fetch(`/api/rules/${ruleId}`, {
       method: "DELETE",
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
     if (res.ok) {
-      const item = document.querySelector(`[data-rule-id="${ruleId}"]`);
+      setRuleDeleteState(id, "confirmed");
+      const item = ruleDeleteButton(id)?.closest(".rule-item");
       if (item) {
         item.style.opacity = "0.4";
         item.style.pointerEvents = "none";
       }
       await loadRules();
     } else {
-      alert("Failed to delete rule.");
+      alert(
+        "Could not confirm whether the rule was deleted. Reload the page and check before retrying.",
+      );
     }
   } catch (e) {
-    alert("Network Error");
+    alert(
+      "Could not confirm whether the rule was deleted. Reload the page and check before retrying.",
+    );
+  } finally {
+    if (ruleDeleteStates.get(id) === "pending") setRuleDeleteState(id, null);
   }
 };
 
@@ -376,12 +545,16 @@ if (resetBtn) {
       if (res.ok) {
         window.location.href = "/login";
       } else {
-        alert("Failed to reset account.");
+        alert(
+          "Could not confirm whether the account was forgotten. Refresh and check before retrying.",
+        );
         resetBtn.textContent = "Forget local account";
         resetBtn.disabled = false;
       }
     } catch (err) {
-      alert("Network Error");
+      alert(
+        "Could not confirm whether the account was forgotten. Refresh and check before retrying.",
+      );
       resetBtn.textContent = "Forget local account";
       resetBtn.disabled = false;
     }

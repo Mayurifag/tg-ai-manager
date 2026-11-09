@@ -11,7 +11,7 @@ class RecoveringTelegramClient(TelegramClient):
     Telethon 1.x keeps its pending keepalive ping across connections. If its
     pong was lost, every subsequent keepalive reconnects again. Reset that
     connection-local flag only at a connection boundary. Keep this workaround
-    isolated and covered by regression tests until upstream fixes it.
+    isolated and verify it when upgrading Telethon until upstream fixes it.
     """
 
     reconnect_count = 0

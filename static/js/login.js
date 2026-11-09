@@ -5,8 +5,8 @@ function hideError() {
   document.getElementById("error-msg").style.display = "none";
 }
 
-function showError(msg) {
-  const el = document.getElementById("error-msg");
+function showError(msg, targetId = "error-msg") {
+  const el = document.getElementById(targetId);
   el.innerText = msg;
   el.style.display = "block";
 }
@@ -73,6 +73,7 @@ function startQRPoll() {
         return;
       }
 
+      hideError();
       if (data.status === "authorized") {
         clearInterval(qrPollInterval);
         window.location.href = "/";
@@ -82,9 +83,14 @@ function startQRPoll() {
       } else if (data.status === "expired") {
         clearInterval(qrPollInterval);
         showError("QR Code Expired. Reload page.");
+      } else if (data.status === "error") {
+        clearInterval(qrPollInterval);
+        document.getElementById("qr-status-text").innerText = "QR login failed";
+        showError("QR login failed. Reload the page to try again.");
       }
     } catch (e) {
       console.error("Poll error", e);
+      showError("Could not check login status. Retrying…");
     } finally {
       polling = false;
     }
@@ -159,7 +165,10 @@ if (forgetAccount) {
       if (!response.ok) throw new Error("Reset failed");
       window.location.reload();
     } catch (_) {
-      showError("Could not forget the saved account. Try again.");
+      showError(
+        "Could not confirm whether the account was forgotten. Refresh and check before retrying.",
+        "forget-account-error",
+      );
       forgetAccount.disabled = false;
     }
   });

@@ -1,10 +1,12 @@
 import asyncio
+import math
 import secrets
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import Any, Dict, List, Optional
+from weakref import WeakValueDictionary
 
 from src.application.message_views import group_messages_into_albums
 from src.domain.errors import AccountChanged, TelegramUnavailable
@@ -21,6 +23,7 @@ from src.domain.models import (
 from src.domain.ports import ActionRepository, ChatRepository, EventRepository
 from src.infrastructure.action_logging import record_action
 from src.infrastructure.logging import get_logger
+from src.infrastructure.tasks import raise_if_task_stopped
 
 
 CHAT_PAGE_SIZE = 20
@@ -30,6 +33,11 @@ CHAT_LIST_TTL = 60
 MESSAGE_CACHE_TTL = 300
 EMPTY_CACHE_TTL = 5
 MAX_MESSAGE_CACHES = 100
+# shortcut: bound auxiliary chat metadata; revisit if observed accounts need
+# more concurrently active histories or forums than these cache sizes.
+MAX_MESSAGE_VERSIONS = 2048
+MAX_FORUM_TOPIC_CACHES = 100
+MAX_EVENT_PREFETCH_TRACKED = 1000
 PREFETCH_WORKERS = 3
 EVENT_PREFETCH_INTERVAL = 20
 HISTORY_PAGE_SIZE = 20
@@ -66,16 +74,22 @@ class ChatInteractor:
         self._chat_list_lock = asyncio.Lock()
         self._chat_list_generation = 0
         self._dirty_chat_ids: set[int] = set()
+        self._chat_scan_retry_at = 0.0
         self._messages: OrderedDict[
             tuple[int, Optional[int]], tuple[float, List[Message]]
         ] = OrderedDict()
-        self._message_locks: dict[tuple[int, Optional[int]], asyncio.Lock] = {}
-        self._message_versions: dict[int, int] = {}
-        self._last_event_prefetch: dict[int, float] = {}
-        self._forum_topics: dict[int, tuple[float, ForumTopicPage]] = {}
-        self._forum_locks: dict[int, asyncio.Lock] = {}
-        self._first_unread_slots = asyncio.Semaphore(2)
-        self._history_window_slots = asyncio.Semaphore(2)
+        self._message_locks: WeakValueDictionary[
+            tuple[int, Optional[int]], asyncio.Lock
+        ] = WeakValueDictionary()
+        self._message_versions: OrderedDict[int, int] = OrderedDict()
+        self._message_version_epoch = 0
+        self._last_event_prefetch: OrderedDict[int, float] = OrderedDict()
+        self._forum_topics: OrderedDict[int, tuple[float, ForumTopicPage]] = (
+            OrderedDict()
+        )
+        self._forum_locks: WeakValueDictionary[int, asyncio.Lock] = (
+            WeakValueDictionary()
+        )
         self._prefetch_queue: asyncio.Queue[tuple[int, Chat, Optional[int]]] = (
             asyncio.Queue(maxsize=100)
         )
@@ -93,9 +107,10 @@ class ChatInteractor:
         self._chat_snapshots.clear()
         self._dirty_chat_ids.clear()
         self._invalidate_chat_list()
+        self._chat_scan_retry_at = 0.0
         self._messages.clear()
         self._forum_topics.clear()
-        self._message_versions.clear()
+        self._clear_message_versions()
         self._last_event_prefetch.clear()
         while not self._prefetch_queue.empty():
             self._prefetch_queue.get_nowait()
@@ -106,16 +121,45 @@ class ChatInteractor:
         self._chat_list = None
         self._chat_list_generation += 1
 
+    def _message_version(self, chat_id: int) -> tuple[int, int]:
+        return self._message_version_epoch, self._message_versions.get(chat_id, 0)
+
+    def _clear_message_versions(self) -> None:
+        self._message_versions.clear()
+        self._message_version_epoch += 1
+
+    def _bump_message_version(self, chat_id: int) -> None:
+        self._message_versions[chat_id] = self._message_versions.get(chat_id, 0) + 1
+        self._message_versions.move_to_end(chat_id)
+        while len(self._message_versions) > MAX_MESSAGE_VERSIONS:
+            self._message_versions.popitem(last=False)
+            # An evicted version may belong to an in-flight request. Changing
+            # the epoch ensures eviction cannot make its old version look new.
+            self._message_version_epoch += 1
+
     async def get_chat_page(
-        self, snapshot: Optional[str] = None, offset: int = 0, refresh: bool = False
+        self,
+        snapshot: Optional[str] = None,
+        offset: int = 0,
+        refresh: bool = False,
+        *,
+        check_current: Optional[Callable[[], None]] = None,
     ) -> ChatPage:
+        raise_if_task_stopped()
+        if check_current is not None:
+            check_current()
         now = time.monotonic()
         for key, (last_used, _) in list(self._chat_snapshots.items()):
             if now - last_used >= CHAT_SNAPSHOT_TTL:
                 del self._chat_snapshots[key]
 
         if snapshot is None:
-            chats = await self._get_chat_list(refresh=refresh)
+            chats = await self._get_chat_list(
+                refresh=refresh, check_current=check_current
+            )
+            raise_if_task_stopped()
+            if check_current is not None:
+                check_current()
             # Telegram already orders pinned and recent chats; a stable sort
             # preserves that order within the unread and read groups.
             chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
@@ -135,13 +179,26 @@ class ChatInteractor:
         self._queue_prefetch(page_chats)
         return ChatPage(page_chats, snapshot, end if end < len(chats) else None)
 
-    async def _get_chat_list(self, refresh: bool = False) -> List[Chat]:
+    async def _get_chat_list(
+        self,
+        refresh: bool = False,
+        *,
+        check_current: Optional[Callable[[], None]] = None,
+    ) -> List[Chat]:
+        def check() -> None:
+            raise_if_task_stopped()
+            if check_current is not None:
+                check_current()
+
+        check()
         # Serve the previous list while the background refresh is in flight.
         if self._warmer_running and not refresh and self._chat_list is not None:
             return self._chat_list[1]
         observed = self._chat_list
         while True:
+            check()
             async with self._chat_list_lock:
+                check()
                 # Simultaneous explicit refreshes share the scan that finished
                 # while they waited, rather than each fetching all dialogs.
                 if (
@@ -155,11 +212,33 @@ class ChatInteractor:
                     or self._chat_list is None
                     or time.monotonic() - self._chat_list[0] >= CHAT_LIST_TTL
                 ):
+                    remaining = self._chat_scan_retry_at - time.monotonic()
+                    if remaining > 0:
+                        raise TelegramUnavailable(retry_after=math.ceil(remaining))
                     generation = self._chat_list_generation
-                    chats = await self.repository.get_chats()
-                    if generation != self._chat_list_generation:
+                    repository = self.repository
+                    try:
+                        chats = await repository.get_chats()
+                        check()
+                        if generation != self._chat_list_generation:
+                            continue
+                        self._chat_list = (time.monotonic(), chats)
+                        self._chat_scan_retry_at = 0.0
+                    except AccountChanged:
+                        check()
                         continue
-                    self._chat_list = (time.monotonic(), chats)
+                    except TelegramUnavailable as error:
+                        check()
+                        if repository is not self.repository:
+                            continue
+                        if error.retry_after is not None:
+                            self._chat_scan_retry_at = max(
+                                self._chat_scan_retry_at,
+                                time.monotonic() + error.retry_after,
+                            )
+                        if generation != self._chat_list_generation:
+                            continue
+                        raise
                 return self._chat_list[1]
 
     def _queue_prefetch(
@@ -186,7 +265,20 @@ class ChatInteractor:
                     continue
                 repository = self.repository
                 if chat.image_url and topic_id is None:
-                    await repository.get_chat_avatar(chat.id)
+                    try:
+                        await repository.get_chat_avatar(chat.id)
+                    except Exception as error:
+                        if isinstance(error, TelegramUnavailable) and (
+                            error.retry_after is not None
+                        ):
+                            raise
+                        # An optional avatar failure must not skip history or
+                        # topic prefetch, except for a surfaced flood wait.
+                        logger.warning(
+                            "chat_avatar_prefetch_failed",
+                            chat_id=chat.id,
+                            category=type(error).__name__,
+                        )
                 if generation != self._chat_list_generation:
                     continue
                 if chat.type == ChatType.FORUM and topic_id is None:
@@ -197,7 +289,9 @@ class ChatInteractor:
                     await self.get_chat_messages(chat.id, topic_id=topic_id)
             except Exception as error:
                 logger.warning(
-                    "chat_prefetch_failed", chat_id=chat.id, error=repr(error)
+                    "chat_prefetch_failed",
+                    chat_id=chat.id,
+                    category=type(error).__name__,
                 )
             except asyncio.CancelledError:
                 # An old repository's shared download can be cancelled when an
@@ -226,7 +320,9 @@ class ChatInteractor:
                         chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
                         self._queue_prefetch(chats[:CHAT_PAGE_SIZE])
                 except Exception as error:
-                    logger.warning("chat_cache_refresh_failed", error=repr(error))
+                    logger.warning(
+                        "chat_cache_refresh_failed", category=type(error).__name__
+                    )
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=CHAT_LIST_TTL)
                 except asyncio.TimeoutError:
@@ -240,16 +336,38 @@ class ChatInteractor:
     async def handle_event(self, event: SystemEvent) -> None:
         if event.type == "resync_required":
             self._invalidate_chat_list()
+            self._chat_snapshots.clear()
             self._messages.clear()
             self._forum_topics.clear()
             self._dirty_chat_ids.clear()
+            self._clear_message_versions()
+            return
+        if event.type == "profile_updated" and event.chat_id:
+            peer_id = event.chat_id
+            # An in-flight history may contain this sender even when no cached
+            # history does. Cached unrelated histories remain available.
+            self._message_version_epoch += 1
+            if self._chat_list and any(
+                chat.id == peer_id for chat in self._chat_list[1]
+            ):
+                if len(self._dirty_chat_ids) >= 1000:
+                    self._invalidate_chat_list()
+                    self._dirty_chat_ids.clear()
+                self._dirty_chat_ids.add(peer_id)
+            for key, (_, messages) in list(self._messages.items()):
+                if any(
+                    message.sender_id == peer_id
+                    or any(
+                        part.sender_id == peer_id for part in message.album_parts or ()
+                    )
+                    for message in messages
+                ):
+                    del self._messages[key]
             return
         if event.chat_id and event.type == "reaction_update" and event.message_model:
             # Reaction events contain only a message ID and reactions. Patch
             # those fields, never replace complete messages with the partial model.
-            self._message_versions[event.chat_id] = (
-                self._message_versions.get(event.chat_id, 0) + 1
-            )
+            self._bump_message_version(event.chat_id)
             for key, (cached_at, messages) in list(self._messages.items()):
                 if key[0] != event.chat_id:
                     continue
@@ -286,9 +404,7 @@ class ChatInteractor:
             self._dirty_chat_ids.add(event.chat_id)
         if event.chat_id and event.type == "read":
             self._forum_topics.pop(event.chat_id, None)
-            self._message_versions[event.chat_id] = (
-                self._message_versions.get(event.chat_id, 0) + 1
-            )
+            self._bump_message_version(event.chat_id)
             if event.read_origin == "manual":
                 await record_action(
                     self.action_repo,
@@ -297,7 +413,6 @@ class ChatInteractor:
                         chat_id=event.chat_id,
                         chat_name=event.chat_name,
                         reason="manual",
-                        date=datetime.now(),
                         link=event.link,
                     ),
                 )
@@ -309,9 +424,7 @@ class ChatInteractor:
             "action",
         }:
             was_cached = any(key[0] == event.chat_id for key in self._messages)
-            self._message_versions[event.chat_id] = (
-                self._message_versions.get(event.chat_id, 0) + 1
-            )
+            self._bump_message_version(event.chat_id)
             for key in list(self._messages):
                 if key[0] == event.chat_id:
                     del self._messages[key]
@@ -330,80 +443,153 @@ class ChatInteractor:
                 )
                 if chat:
                     self._last_event_prefetch[event.chat_id] = now
+                    self._last_event_prefetch.move_to_end(event.chat_id)
+                    while len(self._last_event_prefetch) > MAX_EVENT_PREFETCH_TRACKED:
+                        self._last_event_prefetch.popitem(last=False)
                     self._queue_prefetch([chat], topic_id=event.topic_id)
 
     async def get_chat(self, chat_id: int, *, refresh: bool = False) -> Optional[Chat]:
+        raise_if_task_stopped()
+        repository = self.repository
+        self._ensure_repository_current(repository)
         if not refresh and chat_id not in self._dirty_chat_ids and self._chat_list:
             chat = next(
                 (item for item in self._chat_list[1] if item.id == chat_id), None
             )
             if chat:
+                raise_if_task_stopped()
                 return chat
         for _ in range(3):
-            repository = self.repository
+            self._ensure_repository_current(repository)
             generation = self._chat_list_generation
-            version = self._message_versions.get(chat_id, 0)
-            chat = await repository.get_chat(chat_id)
-            if (
-                repository is not self.repository
-                or generation != self._chat_list_generation
-                or version != self._message_versions.get(chat_id, 0)
-            ):
+            version = self._message_version(chat_id)
+            # A newer scan or card can finish while this lookup is in flight,
+            # even if no Telegram event invalidates the chat.
+            cached = self._chat_list
+            cached_card = (
+                next(
+                    (
+                        (index, item)
+                        for index, item in enumerate(cached[1])
+                        if item.id == chat_id
+                    ),
+                    None,
+                )
+                if cached is not None
+                else None
+            )
+
+            def is_current() -> bool:
+                return (
+                    repository is self.repository
+                    and generation == self._chat_list_generation
+                    and version == self._message_version(chat_id)
+                    and self._chat_list is cached
+                    and (
+                        cached_card is None
+                        or (
+                            cached is not None
+                            and cached_card[0] < len(cached[1])
+                            and cached[1][cached_card[0]] is cached_card[1]
+                        )
+                    )
+                )
+
+            try:
+                chat = await repository.get_chat(chat_id)
+            except Exception:
+                self._ensure_repository_current(repository)
+                raise
+            self._ensure_repository_current(repository)
+            if not is_current():
                 continue
             if chat:
-                if self._chat_list:
-                    for index, item in enumerate(self._chat_list[1]):
-                        if item.id == chat_id:
-                            # Pagination snapshots hold their own list and remain stable.
-                            self._chat_list[1][index] = chat
-                            break
+                if cached is not None and cached_card is not None:
+                    # Pagination snapshots hold their own list and remain stable.
+                    raise_if_task_stopped()
+                    cached[1][cached_card[0]] = chat
+                raise_if_task_stopped()
                 self._dirty_chat_ids.discard(chat_id)
+            raise_if_task_stopped()
             return chat
         raise TelegramUnavailable()
 
     async def get_recent_authors(self, chat_id: int) -> List[Dict[str, Any]]:
-        return await self.repository.get_recent_authors(chat_id)
+        repository = self.repository
+        self._ensure_repository_current(repository)
+        authors = await repository.get_recent_authors(chat_id)
+        self._ensure_repository_current(repository)
+        return authors
 
     async def get_forum_topics(self, chat_id: int) -> List[Chat]:
         return (await self.get_forum_topics_page(chat_id)).topics
 
+    def _ensure_repository_current(self, repository: ChatRepository) -> None:
+        raise_if_task_stopped()
+        if self.repository is not repository or getattr(repository, "_retired", False):
+            raise AccountChanged()
+
     async def get_forum_topics_page(
         self, chat_id: int, cursor: Optional[ForumTopicCursor] = None
     ) -> ForumTopicPage:
+        repository = self.repository
+        return await self._get_forum_topics_page(repository, chat_id, cursor)
+
+    async def _get_forum_topics_page(
+        self,
+        repository: ChatRepository,
+        chat_id: int,
+        cursor: Optional[ForumTopicCursor],
+    ) -> ForumTopicPage:
+        self._ensure_repository_current(repository)
         if cursor is not None:
-            repository = self.repository
+            version = self._message_version(chat_id)
             page = await repository.get_forum_topics_page(chat_id, cursor)
-            if repository is not self.repository:
-                raise AccountChanged()
+            self._ensure_repository_current(repository)
+            if version != self._message_version(chat_id):
+                raise TelegramUnavailable()
             return page
         lock = self._forum_locks.setdefault(chat_id, asyncio.Lock())
         async with lock:
             retries = 0
             while True:
+                self._ensure_repository_current(repository)
                 cached = self._forum_topics.get(chat_id)
                 if cached and time.monotonic() - cached[0] < (
                     CHAT_LIST_TTL if cached[1].topics else EMPTY_CACHE_TTL
                 ):
+                    self._forum_topics.move_to_end(chat_id)
+                    self._ensure_repository_current(repository)
                     return cached[1]
                 generation = self._chat_list_generation
-                version = self._message_versions.get(chat_id, 0)
-                topics = await self.repository.get_forum_topics_page(chat_id)
-                if generation != self._chat_list_generation:
-                    continue
-                if version != self._message_versions.get(chat_id, 0):
+                version = self._message_version(chat_id)
+                topics = await repository.get_forum_topics_page(chat_id)
+                self._ensure_repository_current(repository)
+                if (
+                    generation != self._chat_list_generation
+                    or version != self._message_version(chat_id)
+                ):
                     retries += 1
                     if retries < 3:
                         continue
-                    return topics
+                    raise TelegramUnavailable()
                 self._forum_topics[chat_id] = (time.monotonic(), topics)
+                self._forum_topics.move_to_end(chat_id)
+                while len(self._forum_topics) > MAX_FORUM_TOPIC_CACHES:
+                    self._forum_topics.popitem(last=False)
+                self._ensure_repository_current(repository)
                 return topics
 
     async def get_forum_topic(self, chat_id: int, topic_id: int) -> Optional[Chat]:
         repository = self.repository
-        topic = await repository.get_forum_topic(chat_id, topic_id)
-        if repository is not self.repository:
-            raise AccountChanged()
-        return topic
+        for _ in range(3):
+            self._ensure_repository_current(repository)
+            version = self._message_version(chat_id)
+            topic = await repository.get_forum_topic(chat_id, topic_id)
+            self._ensure_repository_current(repository)
+            if version == self._message_version(chat_id):
+                return topic
+        raise TelegramUnavailable()
 
     async def get_message_by_id(self, chat_id: int, msg_id: int) -> Optional[Message]:
         repository = self.repository
@@ -413,24 +599,6 @@ class ChatInteractor:
         if messages:
             return messages[0]
         return None
-
-    async def first_unread_message_id(
-        self, chat_id: int, topic_id: Optional[int]
-    ) -> Optional[int]:
-        repository = self.repository
-        try:
-            await asyncio.wait_for(self._first_unread_slots.acquire(), timeout=0.25)
-        except asyncio.TimeoutError as error:
-            raise TelegramUnavailable() from error
-        try:
-            if repository is not self.repository:
-                raise AccountChanged()
-            result = await repository.first_unread_message_id(chat_id, topic_id)
-        finally:
-            self._first_unread_slots.release()
-        if repository is not self.repository:
-            raise AccountChanged()
-        return result
 
     async def get_single_message(self, chat_id: int, msg_id: int) -> Optional[Message]:
         # Alias for get_message_by_id
@@ -442,19 +610,15 @@ class ChatInteractor:
         chat_id: int,
         topic_id: Optional[int],
         messages: List[Message],
-        *,
-        newer: bool = False,
     ) -> List[Message]:
         """Include nearby album members without skipping interleaved messages."""
+        self._ensure_repository_current(repository)
         if len(messages) < HISTORY_PAGE_SIZE:
             return messages
-        boundary = messages[0] if newer else messages[-1]
-        if newer and boundary.id == 2**31 - 1:
-            return messages
-        edge = messages if newer else reversed(messages)
+        boundary = messages[-1]
         groups = {
             message.grouped_id
-            for index, message in enumerate(edge)
+            for index, message in enumerate(reversed(messages))
             if index < ALBUM_BOUNDARY_BAND and message.grouped_id
         }
         if not groups:
@@ -462,23 +626,20 @@ class ChatInteractor:
 
         extra: list[Message] = []
         while len(extra) < MAX_ALBUM_BOUNDARY_EXTENSION:
-            if repository is not self.repository:
-                raise AccountChanged()
+            self._ensure_repository_current(repository)
             limit = min(
                 ALBUM_BOUNDARY_LOOKAHEAD, MAX_ALBUM_BOUNDARY_EXTENSION - len(extra)
             )
-            cursor = {"after_id" if newer else "offset_id": boundary.id}
             adjacent = await repository.get_messages(
-                chat_id, limit=limit, topic_id=topic_id, **cursor
+                chat_id, limit=limit, topic_id=topic_id, offset_id=boundary.id
             )
-            if repository is not self.repository:
-                raise AccountChanged()
-            closest = list(reversed(adjacent)) if newer else adjacent
+            self._ensure_repository_current(repository)
             end = 0
             while True:
+                self._ensure_repository_current(repository)
                 matching = [
                     index + 1
-                    for index, message in enumerate(closest)
+                    for index, message in enumerate(adjacent)
                     if message.grouped_id in groups
                 ]
                 furthest = max(matching, default=0)
@@ -486,141 +647,82 @@ class ChatInteractor:
                     break
                 groups.update(
                     message.grouped_id
-                    for message in closest[end:furthest]
+                    for message in adjacent[end:furthest]
                     if message.grouped_id
                 )
                 end = furthest
             if not end:
                 break
-            extra.extend(closest[:end])
+            extra.extend(adjacent[:end])
             boundary = extra[-1]
-            if end < len(closest) or len(closest) < limit:
+            if end < len(adjacent) or len(adjacent) < limit:
                 break
         # shortcut: at most 40 extra messages and 20 between matching parts;
         # revisit if observed album spans exceed this bounded history lookahead.
-        return [*reversed(extra), *messages] if newer else [*messages, *extra]
-
-    async def get_message_window(
-        self, chat_id: int, topic_id: Optional[int], message_id: int
-    ) -> Optional[List[Message]]:
-        """Load a bounded, scope-checked window around a message without read writes."""
-        repository = self.repository
-        try:
-            await asyncio.wait_for(self._history_window_slots.acquire(), timeout=0.25)
-        except asyncio.TimeoutError as error:
-            raise TelegramUnavailable() from error
-        try:
-            if repository is not self.repository:
-                raise AccountChanged()
-            for attempt in range(2):
-                version = self._message_versions.get(chat_id, 0)
-                # The offset is exclusive. The maximum Telegram ID is already
-                # the newest possible message, so the latest page is enough.
-                offset = message_id + 1 if message_id < 2**31 - 1 else 0
-                older = await repository.get_messages(
-                    chat_id,
-                    limit=HISTORY_PAGE_SIZE,
-                    topic_id=topic_id,
-                    offset_id=offset,
-                )
-                if repository is not self.repository:
-                    raise AccountChanged()
-                found = any(message.id == message_id for message in older)
-                newer = []
-                if found:
-                    older = await self._complete_album_boundary(
-                        repository, chat_id, topic_id, older
-                    )
-                if found and message_id < 2**31 - 1:
-                    newer = await repository.get_messages(
-                        chat_id,
-                        limit=HISTORY_PAGE_SIZE,
-                        topic_id=topic_id,
-                        after_id=message_id,
-                    )
-                    if repository is not self.repository:
-                        raise AccountChanged()
-                    newer = await self._complete_album_boundary(
-                        repository, chat_id, topic_id, newer, newer=True
-                    )
-                if version != self._message_versions.get(chat_id, 0):
-                    if attempt == 0:
-                        continue
-                    raise TelegramUnavailable()
-                if not found:
-                    return None
-                return group_messages_into_albums([*newer, *older])
-            raise TelegramUnavailable()
-        finally:
-            self._history_window_slots.release()
+        self._ensure_repository_current(repository)
+        return [*messages, *extra]
 
     async def get_chat_messages(
         self,
         chat_id: int,
         topic_id: Optional[int] = None,
         offset_id: int = 0,
-        after_id: Optional[int] = None,
     ) -> List[Message]:
-        if after_id is not None:
-            if after_id == 2**31 - 1:
-                return []
-            repository = self.repository
-            version = self._message_versions.get(chat_id, 0)
-            raw = await repository.get_messages(
-                chat_id, topic_id=topic_id, after_id=after_id
-            )
-            if repository is not self.repository:
-                raise AccountChanged()
-            raw = await self._complete_album_boundary(
-                repository, chat_id, topic_id, raw, newer=True
-            )
-            if version != self._message_versions.get(chat_id, 0):
-                raise TelegramUnavailable()
-            return group_messages_into_albums(raw)
+        repository = self.repository
+        return await self._get_chat_messages(repository, chat_id, topic_id, offset_id)
+
+    async def _get_chat_messages(
+        self,
+        repository: ChatRepository,
+        chat_id: int,
+        topic_id: Optional[int],
+        offset_id: int,
+    ) -> List[Message]:
+        self._ensure_repository_current(repository)
         if offset_id:
-            repository = self.repository
-            version = self._message_versions.get(chat_id, 0)
+            version = self._message_version(chat_id)
             raw = await repository.get_messages(
                 chat_id, topic_id=topic_id, offset_id=offset_id
             )
-            if repository is not self.repository:
-                raise AccountChanged()
+            self._ensure_repository_current(repository)
             raw = await self._complete_album_boundary(
                 repository, chat_id, topic_id, raw
             )
-            if version != self._message_versions.get(chat_id, 0):
+            self._ensure_repository_current(repository)
+            if version != self._message_version(chat_id):
                 raise TelegramUnavailable()
-            return group_messages_into_albums(raw)
+            messages = group_messages_into_albums(raw)
+            self._ensure_repository_current(repository)
+            return messages
 
         key = (chat_id, topic_id)
         lock = self._message_locks.setdefault(key, asyncio.Lock())
         async with lock:
             retries = 0
             while True:
+                self._ensure_repository_current(repository)
                 cached = self._messages.get(key)
                 if cached and time.monotonic() - cached[0] < (
                     MESSAGE_CACHE_TTL if cached[1] else EMPTY_CACHE_TTL
                 ):
                     self._messages.move_to_end(key)
+                    self._ensure_repository_current(repository)
                     return cached[1]
                 generation = self._chat_list_generation
-                version = self._message_versions.get(chat_id, 0)
-                repository = self.repository
+                version = self._message_version(chat_id)
                 raw = await repository.get_messages(
                     chat_id, topic_id=topic_id, offset_id=0
                 )
-                if repository is not self.repository:
-                    continue
-                try:
-                    raw = await self._complete_album_boundary(
-                        repository, chat_id, topic_id, raw
-                    )
-                except AccountChanged:
-                    continue
+                self._ensure_repository_current(repository)
+                raw = await self._complete_album_boundary(
+                    repository, chat_id, topic_id, raw
+                )
+                self._ensure_repository_current(repository)
                 if generation != self._chat_list_generation:
                     continue
                 messages = group_messages_into_albums(raw)
-                if version != self._message_versions.get(chat_id, 0):
+                self._ensure_repository_current(repository)
+                if version != self._message_version(chat_id):
                     retries += 1
                     if retries < 3:
                         continue
@@ -631,6 +733,7 @@ class ChatInteractor:
                 self._messages.move_to_end(key)
                 while len(self._messages) > MAX_MESSAGE_CACHES:
                     self._messages.popitem(last=False)
+                self._ensure_repository_current(repository)
                 return messages
 
     async def mark_chat_as_read(
@@ -657,9 +760,3 @@ class ChatInteractor:
 
     async def get_recent_events(self, limit: int = 10) -> List[SystemEvent]:
         return await self.event_repo.get_recent_events(limit)
-
-    async def run_storage_maintenance(self):
-        await self.repository.run_storage_maintenance()
-
-    async def get_self_premium_status(self) -> bool:
-        return await self.repository.get_self_premium_status()

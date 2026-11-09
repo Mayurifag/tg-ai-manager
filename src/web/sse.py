@@ -8,6 +8,7 @@ from quart import current_app
 
 from src.domain.models import SystemEvent
 from src.infrastructure.html import html_to_text
+from src.infrastructure.tasks import raise_if_task_stopped
 from src.web.serializers import json_serializer
 
 MAX_SSE_CLIENTS = 50
@@ -74,11 +75,19 @@ class EventBroadcaster:
         client.queue.put_nowait(RESYNC)
 
     async def broadcast(self, event: SystemEvent) -> None:
+        raise_if_task_stopped()
+        if event.type == "resync_required":
+            # Do not deliver queued events from a state that is no longer known
+            # to be current. Each stream reconnects after receiving the marker.
+            self.invalidate_clients()
+            return
         clients = tuple(client for client in self._clients if not client.stale)
         if not clients:
             return
 
         payload = asdict(event)
+        if event.chat_id is not None:
+            payload["chat_id"] = str(event.chat_id)
         payload["text_plain"] = html_to_text(event.text)
         message = payload.get("message_model")
         if message:
@@ -105,7 +114,14 @@ class EventBroadcaster:
             # a message ID that a transcript can match without guessing.
             full = same_chat and (
                 same_topic
-                or event.type in {"deleted", "reaction_update", "reaction_failed"}
+                or event.type
+                in {
+                    "deleted",
+                    "reaction_update",
+                    "reaction_failed",
+                    "reaction_uncertain",
+                    "reaction_blocked",
+                }
             )
             if not full:
                 data = serialized_summary
@@ -128,6 +144,7 @@ class EventBroadcaster:
                             chat_id=event.chat_id,
                             current_user=SimpleNamespace(debug_mode=client.debug),
                         )
+                        raise_if_task_stopped()
                     serialized_full[key] = json.dumps(
                         full_payload, default=json_serializer
                     )
@@ -136,6 +153,7 @@ class EventBroadcaster:
             # this subscription. Do not enqueue old-account data after resync.
             if client.stale:
                 continue
+            raise_if_task_stopped()
             try:
                 client.queue.put_nowait(data)
             except asyncio.QueueFull:

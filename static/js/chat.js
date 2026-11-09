@@ -2,9 +2,6 @@ const chatConfig = window.TG_CHAT || {};
 const chatId = chatConfig.chatId;
 const topicId = chatConfig.topicId;
 const isChannel = Boolean(chatConfig.isChannel);
-const chatControls = document.getElementById("chat-controls");
-if (chatControls && window.matchMedia?.("(max-width: 800px)").matches)
-  chatControls.open = false;
 
 async function requestOk(url, options) {
   const response = await fetch(url, options);
@@ -13,7 +10,10 @@ async function requestOk(url, options) {
     ?.includes("application/json");
   if (!response.ok || !isJson) {
     const body = isJson ? await response.json().catch(() => ({})) : {};
-    throw new Error(body.error || `HTTP ${response.status}`);
+    const error = new Error(body.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = body.code;
+    throw error;
   }
   return response;
 }
@@ -25,6 +25,7 @@ let arConfig = {
 };
 let availableUsers = [];
 let usersLoaded = false;
+let usersLoadGeneration = 0;
 
 function showToast(message) {
   const x = document.getElementById("toast");
@@ -35,98 +36,65 @@ function showToast(message) {
   }, 3000);
 }
 
-window.retryMedia = function (button) {
-  const frame = button.closest(".media-preview-frame");
-  const image = frame?.querySelector("img.lightbox-trigger");
-  const video = frame?.querySelector("video");
-  if (!image && !video) return;
-  if (document.activeElement === button)
-    (image?.closest("button") || video)?.focus({ preventScroll: true });
-  frame.classList.remove("media-failed");
-  if (image) {
-    const url = new URL(image.getAttribute("src"), window.location.href);
-    url.searchParams.set("retry", Date.now().toString());
-    image.src = url.href;
-  } else {
-    video.load();
-  }
-};
+function markToggleUnconfirmed(button, indicator, error) {
+  indicator.classList.remove("on", "off");
+  indicator.classList.add("unknown");
+  button.setAttribute("aria-pressed", "mixed");
+  button.querySelector(".label").textContent += " (unknown)";
+  const detail =
+    error?.status === 409 && error.message ? `${error.message} ` : "";
+  button.title = `${detail}Could not confirm the change. Reload and check before retrying.`;
+  showToast(button.title);
+}
+
+function bindRuleToggle(button, ruleType, label) {
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    const indicator = button.querySelector(".status-indicator");
+    const wasEnabled = indicator.classList.contains("on");
+    const newState = !wasEnabled;
+
+    indicator.classList.toggle("on", newState);
+    indicator.classList.toggle("off", !newState);
+    button.setAttribute("aria-pressed", String(newState));
+    button.disabled = true;
+    let unconfirmed = false;
+
+    try {
+      await requestOk(`/api/rules/${ruleType}/toggle`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          topic_id: topicId,
+          enabled: newState,
+        }),
+      });
+      showToast(`${label} ${newState ? "Enabled" : "Disabled"}`);
+    } catch (e) {
+      console.error(e);
+      if (["invalid_request", "inherited_rule"].includes(e?.code)) {
+        indicator.classList.toggle("on", wasEnabled);
+        indicator.classList.toggle("off", !wasEnabled);
+        button.setAttribute("aria-pressed", String(wasEnabled));
+        showToast(e.message);
+      } else {
+        unconfirmed = true;
+        markToggleUnconfirmed(button, indicator, e);
+      }
+    } finally {
+      button.disabled = unconfirmed;
+    }
+  });
+}
 
 const autoreadBtn = document.getElementById("btn-toggle-autoread");
-if (autoreadBtn) {
-  autoreadBtn.addEventListener("click", async () => {
-    const indicator = autoreadBtn.querySelector(".status-indicator");
-    const wasEnabled = indicator.classList.contains("on");
-    const newState = !wasEnabled;
-
-    indicator.classList.toggle("on", newState);
-    indicator.classList.toggle("off", !newState);
-    autoreadBtn.setAttribute("aria-pressed", String(newState));
-    autoreadBtn.disabled = true;
-
-    try {
-      await requestOk("/api/rules/autoread/toggle", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          topic_id: topicId,
-          enabled: newState,
-        }),
-      });
-      showToast(newState ? "Autoread Enabled" : "Autoread Disabled");
-    } catch (e) {
-      console.error(e);
-      indicator.classList.toggle("on", wasEnabled);
-      indicator.classList.toggle("off", !wasEnabled);
-      autoreadBtn.setAttribute("aria-pressed", String(wasEnabled));
-      showToast(e.message || "Failed to toggle Autoread");
-    } finally {
-      autoreadBtn.disabled = false;
-    }
-  });
-}
-
 const aiAutoreadBtn = document.getElementById("btn-toggle-ai-autoread");
-if (aiAutoreadBtn) {
-  aiAutoreadBtn.addEventListener("click", async () => {
-    const indicator = aiAutoreadBtn.querySelector(".status-indicator");
-    const wasEnabled = indicator.classList.contains("on");
-    const newState = !wasEnabled;
-
-    indicator.classList.toggle("on", newState);
-    indicator.classList.toggle("off", !newState);
-    aiAutoreadBtn.setAttribute("aria-pressed", String(newState));
-    aiAutoreadBtn.disabled = true;
-
-    try {
-      await requestOk("/api/rules/ai_autoread/toggle", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          topic_id: topicId,
-          enabled: newState,
-        }),
-      });
-      showToast(newState ? "AI Autoread Enabled" : "AI Autoread Disabled");
-    } catch (e) {
-      console.error(e);
-      indicator.classList.toggle("on", wasEnabled);
-      indicator.classList.toggle("off", !wasEnabled);
-      aiAutoreadBtn.setAttribute("aria-pressed", String(wasEnabled));
-      showToast(e.message || "Failed to toggle AI Autoread");
-    } finally {
-      aiAutoreadBtn.disabled = false;
-    }
-  });
-}
+bindRuleToggle(autoreadBtn, "autoread", "Autoread");
+bindRuleToggle(aiAutoreadBtn, "ai_autoread", "AI Autoread");
 
 const markReadBtn = document.getElementById("btn-read-chat");
 if (markReadBtn) {
@@ -149,7 +117,9 @@ if (markReadBtn) {
       markReadBtn.disabled = false;
     } catch (e) {
       console.error(e);
-      showToast("Failed to mark read");
+      showToast(
+        "Could not confirm whether the read was queued. Refresh and check before retrying.",
+      );
       setTimeout(() => {
         markReadBtn.style.opacity = "1";
         markReadBtn.disabled = false;
@@ -175,7 +145,9 @@ if (copyTopicsBtn) {
       });
       showToast("Applied to all topics");
     } catch (e) {
-      showToast("Failed to apply");
+      showToast(
+        "Could not confirm whether the topic rules were applied. Refresh and check before retrying.",
+      );
     } finally {
       copyTopicsBtn.style.opacity = "1";
     }
@@ -185,8 +157,30 @@ if (copyTopicsBtn) {
 const arModal = document.getElementById("autoreact-modal");
 const arOpenButton = document.getElementById("btn-open-autoreact");
 let arModalGeneration = 0;
+let autoreactStateUnconfirmed = false;
+
+function markAutoreactUnconfirmed(error) {
+  autoreactStateUnconfirmed = true;
+  const detail =
+    error?.status === 409 && error.message ? `${error.message} ` : "";
+  const message = `${detail}Could not confirm the current autoreaction settings. Reload and check before retrying.`;
+  const indicator = document.getElementById("autoreact-indicator");
+  indicator.className = "status-indicator unknown";
+  const label = arOpenButton.querySelector(".label");
+  if (!label.textContent.endsWith(" (unknown)"))
+    label.textContent += " (unknown)";
+  arOpenButton.title = message;
+  arOpenButton.disabled = true;
+  const saveButton = document.getElementById("save-ar-btn");
+  saveButton.disabled = true;
+  saveButton.textContent = "Reload to check";
+  document.getElementById("autoreact-status").textContent = message;
+  arModal.setAttribute("aria-busy", "false");
+  showToast(message);
+}
 
 arOpenButton.addEventListener("click", () => {
+  if (autoreactStateUnconfirmed) return;
   arModalGeneration++;
   arModal.showModal();
   arModal.classList.add("show");
@@ -202,7 +196,11 @@ arModal.addEventListener("close", () => {
   arModalGeneration++;
   arModal.classList.remove("show");
   closeUserDropdown();
-  arOpenButton.focus();
+  if (!arOpenButton.disabled) arOpenButton.focus();
+  else
+    [autoreadBtn, aiAutoreadBtn, markReadBtn]
+      .find((btn) => btn && !btn.disabled)
+      ?.focus();
 });
 
 arModal.addEventListener("click", (e) => {
@@ -231,6 +229,7 @@ async function loadArSettings() {
   const saveButton = document.getElementById("save-ar-btn");
   saveButton.disabled = true;
   saveButton.textContent = "Save Configuration";
+  document.getElementById("autoreact-status").textContent = "";
   arModal.setAttribute("aria-busy", "true");
   arModal
     .querySelectorAll(
@@ -246,11 +245,33 @@ async function loadArSettings() {
     const config = {
       enabled: Boolean(data.enabled),
       emoji: data.config.emoji || "💩",
-      target_users: data.config.target_users || [],
+      target_users: data.config.target_users ?? [],
     };
 
+    if (
+      generation !== arModalGeneration ||
+      !arModal.open ||
+      autoreactStateUnconfirmed
+    )
+      return;
+    if (
+      !Array.isArray(config.target_users) ||
+      config.target_users.some((id) => !Number.isSafeInteger(id) || id === 0)
+    ) {
+      const message =
+        "Autoreaction targets are invalid or cannot be represented exactly in this browser.";
+      document.getElementById("autoreact-status").textContent = message;
+      arModal.setAttribute("aria-busy", "false");
+      showToast(message);
+      return;
+    }
     if (!isChannel && config.target_users.length > 0) await loadUsers();
-    if (generation !== arModalGeneration || !arModal.open) return;
+    if (
+      generation !== arModalGeneration ||
+      !arModal.open ||
+      autoreactStateUnconfirmed
+    )
+      return;
 
     arConfig = config;
     renderArUi();
@@ -264,6 +285,7 @@ async function loadArSettings() {
   } catch (e) {
     if (generation !== arModalGeneration || !arModal.open) return;
     arModal.setAttribute("aria-busy", "false");
+    if (autoreactStateUnconfirmed) return;
     console.error("Failed to load AR settings", e);
     showToast("Failed to load Autoreact settings");
   }
@@ -292,15 +314,33 @@ function renderArUi() {
 
 async function loadUsers() {
   if (usersLoaded || isChannel) return;
+  const generation = ++usersLoadGeneration;
   const dd = document.getElementById("user-dropdown");
   try {
     const res = await requestOk(`/api/chat/${chatId}/authors`);
     const data = await res.json();
+    if (generation !== usersLoadGeneration) return;
+    if (
+      !Array.isArray(data?.authors) ||
+      data.authors.some(
+        (author) =>
+          !author ||
+          typeof author !== "object" ||
+          !Number.isSafeInteger(author.id) ||
+          author.id === 0 ||
+          typeof author.name !== "string" ||
+          [author.username, author.avatar_url].some(
+            (value) => value != null && typeof value !== "string",
+          ),
+      )
+    )
+      throw new Error("Invalid authors response");
     availableUsers = data.authors;
-    usersLoaded = true;
     renderUserDropdown();
     renderUserDisplay();
+    usersLoaded = true;
   } catch (e) {
+    if (generation !== usersLoadGeneration) return;
     dd.innerHTML =
       '<div style="padding:10px; color:red;">Failed to load users</div>';
   }
@@ -443,6 +483,7 @@ document
   });
 
 document.getElementById("save-ar-btn").addEventListener("click", async () => {
+  if (autoreactStateUnconfirmed) return;
   const btn = document.getElementById("save-ar-btn");
   const restoreFocus = document.activeElement === btn;
   const generation = arModalGeneration;
@@ -451,7 +492,7 @@ document.getElementById("save-ar-btn").addEventListener("click", async () => {
   btn.textContent = "Saving...";
   btn.disabled = true;
   try {
-    const targets = isChannel ? [] : arConfig.target_users;
+    const targets = isChannel ? [] : [...arConfig.target_users];
 
     await requestOk("/api/rules/autoreact/config", {
       method: "POST",
@@ -470,7 +511,14 @@ document.getElementById("save-ar-btn").addEventListener("click", async () => {
       }),
     });
 
-    if (generation !== arModalGeneration || !arModal.open) return;
+    if (
+      generation !== arModalGeneration ||
+      !arModal.open ||
+      autoreactStateUnconfirmed
+    ) {
+      markAutoreactUnconfirmed();
+      return;
+    }
     const ind = document.getElementById("autoreact-indicator");
     if (savedEnabled) {
       ind.className =
@@ -483,7 +531,12 @@ document.getElementById("save-ar-btn").addEventListener("click", async () => {
 
     btn.textContent = "Saved!";
     setTimeout(() => {
-      if (generation !== arModalGeneration || !arModal.open) return;
+      if (
+        generation !== arModalGeneration ||
+        !arModal.open ||
+        autoreactStateUnconfirmed
+      )
+        return;
       btn.textContent = "Save Configuration";
       btn.disabled = false;
       if (savedConfig !== JSON.stringify(arConfig)) {
@@ -494,56 +547,37 @@ document.getElementById("save-ar-btn").addEventListener("click", async () => {
     }, 800);
     showToast("Autoreact Configured");
   } catch (e) {
-    if (generation !== arModalGeneration || !arModal.open) return;
-    btn.textContent = "Error";
-    btn.disabled = false;
-    if (
-      restoreFocus &&
-      arModal.open &&
-      document.activeElement === document.body
-    )
-      btn.focus();
-    showToast(e.message || "Failed to save autoreact settings");
+    if (["invalid_request", "inherited_rule"].includes(e?.code)) {
+      if (
+        generation === arModalGeneration &&
+        arModal.open &&
+        !autoreactStateUnconfirmed
+      ) {
+        btn.textContent = "Save Configuration";
+        btn.disabled = false;
+        document.getElementById("autoreact-status").textContent = e.message;
+        showToast(e.message);
+        if (restoreFocus && document.activeElement === document.body)
+          btn.focus();
+      }
+    } else {
+      markAutoreactUnconfirmed(e);
+      if (
+        restoreFocus &&
+        arModal.open &&
+        document.activeElement === document.body
+      )
+        arModal.querySelector(".modal-close").focus();
+    }
   }
 });
 
 const container = document.getElementById("messages-container");
 const currentTopicId = topicId;
-const jumpToLatest = document.getElementById("jump-to-latest");
-const loadNewerButton = document.getElementById("load-newer-messages");
-const returnToReading = document.getElementById("return-to-reading");
-const readingPositionStatus = document.getElementById(
-  "reading-position-status",
-);
-const positionKey = chatConfig.accountId
-  ? `tg-reading:${chatConfig.accountId}:${chatId}:${currentTopicId ?? "chat"}`
-  : null;
-let newMessageCount = 0;
-const seenNewMessageIds = new Set();
-let firstUnreadId = null;
-let unreadMarker = null;
-let userMoved = false;
 let isLoading = false;
 let allLoaded = false;
 let prefetchedHistory = null;
-let detachedHistory = false;
-let loadingNewer = false;
-let historyGeneration = 0;
-let interactionVersion = 0;
 let eventVersion = 0;
-let readingRequestVersion = 0;
-let previousReadingPosition = null;
-
-["wheel", "touchstart", "pointerdown", "keydown"].forEach((name) => {
-  window.addEventListener(
-    name,
-    () => {
-      userMoved = true;
-      interactionVersion++;
-    },
-    { passive: true },
-  );
-});
 
 function nearLatest() {
   return (
@@ -554,39 +588,6 @@ function nearLatest() {
   );
 }
 
-function clearNewMessages() {
-  newMessageCount = 0;
-  seenNewMessageIds.clear();
-  if (jumpToLatest) jumpToLatest.hidden = true;
-}
-
-function noteNewMessage(id) {
-  const key = String(id);
-  if (seenNewMessageIds.has(key)) return;
-  seenNewMessageIds.add(key);
-  if (seenNewMessageIds.size > 1000)
-    seenNewMessageIds.delete(seenNewMessageIds.values().next().value);
-  newMessageCount++;
-  showLatestControl();
-}
-
-function readSavedPosition() {
-  if (!positionKey) return null;
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(positionKey));
-    if (
-      !saved ||
-      !/^msg-[1-9][0-9]{0,9}$/.test(saved.id) ||
-      Number(saved.id.slice(4)) >= 2 ** 31 ||
-      !Number.isFinite(saved.top)
-    )
-      return null;
-    return saved;
-  } catch (_) {
-    return null;
-  }
-}
-
 function messageRow(root, id) {
   const row = root.querySelector(`[data-id="${id}"]`);
   return (
@@ -594,23 +595,6 @@ function messageRow(root, id) {
     root.querySelector(`[data-message-id="${id}"]`)?.closest(".message-row") ||
     null
   );
-}
-
-function messageIdFromHash(hash) {
-  const match = /^#msg-([1-9][0-9]{0,9})$/.exec(hash || "");
-  if (!match || Number(match[1]) >= 2 ** 31) return null;
-  return Number(match[1]);
-}
-
-function focusMessage(id) {
-  const target = document.getElementById(`msg-${id}`);
-  if (!target || !container.contains(target)) return false;
-  target.classList.add("message-target");
-  target.scrollIntoView({ block: "center" });
-  target.tabIndex = -1;
-  target.focus({ preventScroll: true });
-  setTimeout(() => target.classList.remove("message-target"), 3000);
-  return true;
 }
 
 function historyEdge(newer = false) {
@@ -654,349 +638,33 @@ function removeMessageRow(row) {
   }
 }
 
-function restoreReadingPosition(saved = readSavedPosition()) {
-  if (!saved) return false;
-  try {
-    const row =
-      document.getElementById(saved.id) ||
-      messageRow(container, saved.id.slice(4));
-    if (!row || !container.contains(row)) return false;
-    const top = Math.max(
-      -window.innerHeight,
-      Math.min(window.innerHeight, saved.top),
-    );
-    window.scrollBy(0, row.getBoundingClientRect().top - top);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-function showPositionStatus(message) {
-  if (!readingPositionStatus) return;
-  readingPositionStatus.textContent = message;
-  readingPositionStatus.hidden = false;
-}
-
 function showAlbumChanged() {
-  showPositionStatus("An album changed. Reload to see its latest contents.");
   showToast("Album changed. Reload to see its latest contents.");
 }
 
-function showLatestControl() {
-  if (!jumpToLatest) return;
-  jumpToLatest.textContent = newMessageCount
-    ? `${newMessageCount} new ${newMessageCount === 1 ? "message" : "messages"} · Jump to latest`
-    : "Jump to latest";
-  jumpToLatest.hidden = false;
-}
-
-function historyUrlFor(key, id) {
-  let url = `/api/chat/${chatId}/history?${key}=${id}`;
+function historyUrl(offsetId) {
+  let url = `/api/chat/${chatId}/history?offset_id=${offsetId}`;
   if (currentTopicId != null) url += `&topic_id=${currentTopicId}`;
   return url;
 }
 
-async function loadReadingWindow(
-  id,
-  savedTop = null,
-  retry = false,
-  jumpToMessage = false,
-  requestVersion = ++readingRequestVersion,
-) {
-  const generation = historyGeneration;
-  const movement = interactionVersion;
-  const events = eventVersion;
-  showPositionStatus("Loading reading position…");
+async function fetchHistory(offsetId) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await requestOk(historyUrlFor("around_id", id));
-    const data = await response.json();
-    if (
-      generation !== historyGeneration ||
-      requestVersion !== readingRequestVersion
-    )
-      return false;
-    // Layout and scroll anchoring can change scrollY without user input.
-    if (movement !== interactionVersion) {
-      showPositionStatus("Reading position is outside the loaded messages.");
-      return false;
-    }
-    if (events !== eventVersion) {
-      if (!retry)
-        return await loadReadingWindow(
-          id,
-          savedTop,
-          true,
-          jumpToMessage,
-          requestVersion,
-        );
-      showPositionStatus(
-        "Messages changed. Reload to restore the reading position.",
-      );
-      return false;
-    }
-    const fragment = document.createElement("div");
-    fragment.innerHTML = data.html;
-    const row = messageRow(fragment, id);
-    if (!row) throw new Error("Message unavailable");
-
-    historyGeneration++;
-    cancelAlbumRefreshes();
-    isLoading = false;
-    loadingNewer = false;
-    allLoaded = false;
-    prefetchedHistory = null;
-    unreadMarker = null;
-    detachedHistory = true;
-    container.replaceChildren(...fragment.childNodes);
-    document.getElementById("loading-indicator").hidden = true;
-    window.parseAppleEmojis(container);
-    window.renderLocalTimes(container);
-    if (loadNewerButton) {
-      loadNewerButton.hidden = false;
-      loadNewerButton.disabled = false;
-      loadNewerButton.textContent = "Load newer messages";
-    }
-    showLatestControl();
-    if (readingPositionStatus) readingPositionStatus.hidden = true;
-    if (jumpToMessage) {
-      focusMessage(id);
-    } else if (savedTop === null) {
-      markFirstUnread()?.scrollIntoView({ block: "start" });
-    } else {
-      const top = Math.max(
-        -window.innerHeight,
-        Math.min(window.innerHeight, savedTop),
-      );
-      window.scrollBy(0, row.getBoundingClientRect().top - top);
-    }
-    prefetchOlderMessages();
-    return true;
-  } catch (error) {
-    if (
-      generation !== historyGeneration ||
-      requestVersion !== readingRequestVersion
-    )
-      return false;
-    console.error("Could not load reading position:", error);
-    showPositionStatus(
-      jumpToMessage
-        ? "Message unavailable in this chat or topic."
-        : "Reading position is unavailable. Showing current messages.",
-    );
-    return false;
+    const response = await requestOk(historyUrl(offsetId), {
+      signal: controller.signal,
+    });
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
   }
-}
-
-async function navigateToMessage(id, remember = true) {
-  const requestVersion = ++readingRequestVersion;
-  userMoved = true;
-  const visible = remember ? visibleMessageAnchor() : null;
-  const previous = visible ? { id: visible.row.id, top: visible.top } : null;
-  let found = focusMessage(id);
-  if (!found)
-    found = await loadReadingWindow(id, null, false, true, requestVersion);
-  if (found && previous && returnToReading) {
-    previousReadingPosition = previous;
-    returnToReading.hidden = false;
-  }
-}
-
-if (returnToReading) {
-  returnToReading.addEventListener("click", async () => {
-    const previous = previousReadingPosition;
-    if (!previous || returnToReading.disabled) return;
-    const requestVersion = ++readingRequestVersion;
-    returnToReading.disabled = true;
-    try {
-      let restored = restoreReadingPosition(previous);
-      if (!restored) {
-        restored = await loadReadingWindow(
-          Number(previous.id.slice(4)),
-          previous.top,
-          false,
-          false,
-          requestVersion,
-        );
-      }
-      if (restored && requestVersion === readingRequestVersion) {
-        previousReadingPosition = null;
-        returnToReading.hidden = true;
-        const row = document.getElementById(previous.id);
-        if (row) {
-          row.tabIndex = -1;
-          row.focus({ preventScroll: true });
-        }
-      }
-    } finally {
-      returnToReading.disabled = false;
-    }
-  });
-}
-
-container.addEventListener("click", (event) => {
-  if (
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  )
-    return;
-  const link = event.target.closest("a.reply-indicator");
-  const id = messageIdFromHash(link?.getAttribute("href"));
-  if (id === null) return;
-  event.preventDefault();
-  void navigateToMessage(id);
-});
-
-window.addEventListener("hashchange", () => {
-  const id = messageIdFromHash(window.location?.hash);
-  if (id !== null) void navigateToMessage(id);
-});
-
-function markFirstUnread() {
-  if (!firstUnreadId || unreadMarker) return null;
-  let row = document.getElementById(`msg-${firstUnreadId}`);
-  if (row?.dataset.messageId) row = row.closest(".message-row");
-  if (!row || !container.contains(row)) {
-    row = container
-      .querySelector(`[data-message-id="${firstUnreadId}"]`)
-      ?.closest(".message-row");
-  }
-  if (!row) return null;
-  unreadMarker = document.createElement("div");
-  unreadMarker.className = "unread-marker";
-  unreadMarker.textContent = "Unread messages at opening";
-  unreadMarker.setAttribute("role", "separator");
-  row.after(unreadMarker);
-  if (readingPositionStatus) readingPositionStatus.hidden = true;
-  return unreadMarker;
-}
-
-async function findFirstUnread() {
-  let url = `/api/chat/${chatId}/first-unread`;
-  if (currentTopicId != null) url += `?topic_id=${currentTopicId}`;
-  try {
-    const response = await requestOk(url);
-    const data = await response.json();
-    if (
-      !Number.isSafeInteger(data.message_id) ||
-      data.message_id <= 0 ||
-      data.message_id >= 2 ** 31
-    )
-      return;
-    firstUnreadId = data.message_id;
-    const marker = markFirstUnread();
-    if (marker && !userMoved) {
-      marker.scrollIntoView({ block: "start" });
-    } else if (!marker) {
-      if (!userMoved) {
-        await loadReadingWindow(firstUnreadId);
-      } else {
-        showPositionStatus("First unread is outside the loaded messages.");
-      }
-    }
-  } catch (error) {
-    console.error("Could not locate first unread:", error);
-    if (readingPositionStatus) {
-      readingPositionStatus.textContent = "First unread is unavailable.";
-      readingPositionStatus.hidden = false;
-    }
-  }
-}
-
-window.addEventListener("pagehide", () => {
-  if (!positionKey) return;
-  const visible = visibleMessageAnchor();
-  if (!visible) return;
-  try {
-    sessionStorage.setItem(
-      positionKey,
-      JSON.stringify({ id: visible.row.id, top: visible.top }),
-    );
-  } catch (_) {
-    // Storage may be disabled; navigation still works without restoration.
-  }
-});
-
-if (jumpToLatest) {
-  jumpToLatest.addEventListener("click", async () => {
-    const restoreFocus = document.activeElement === jumpToLatest;
-    if (detachedHistory) {
-      const generation = historyGeneration;
-      const movement = interactionVersion;
-      const events = eventVersion;
-      jumpToLatest.disabled = true;
-      try {
-        const response = await requestOk(historyUrlFor("offset_id", 0));
-        const data = await response.json();
-        if (
-          generation !== historyGeneration ||
-          movement !== interactionVersion ||
-          events !== eventVersion
-        ) {
-          showPositionStatus("Messages changed. Try jumping to latest again.");
-          return;
-        }
-        historyGeneration++;
-        cancelAlbumRefreshes();
-        isLoading = false;
-        loadingNewer = false;
-        allLoaded = false;
-        prefetchedHistory = null;
-        unreadMarker = null;
-        firstUnreadId = null;
-        detachedHistory = false;
-        container.innerHTML =
-          data.html || '<p class="empty-messages">No messages to show.</p>';
-        document.getElementById("loading-indicator").hidden = true;
-        window.parseAppleEmojis(container);
-        window.renderLocalTimes(container);
-        if (loadNewerButton) loadNewerButton.hidden = true;
-        if (readingPositionStatus) readingPositionStatus.hidden = true;
-        prefetchOlderMessages();
-      } catch (error) {
-        console.error("Could not load latest messages:", error);
-        showPositionStatus("Could not load latest messages. Try again.");
-        return;
-      } finally {
-        jumpToLatest.disabled = false;
-      }
-    }
-    window.scrollTo(0, document.documentElement.scrollHeight);
-    if (
-      restoreFocus &&
-      (document.activeElement === document.body ||
-        document.activeElement === jumpToLatest)
-    ) {
-      const newest = container.querySelector("[data-id]");
-      if (newest) {
-        newest.tabIndex = -1;
-        newest.focus({ preventScroll: true });
-      }
-    }
-    clearNewMessages();
-  });
-}
-
-function historyUrl(offsetId) {
-  return historyUrlFor("offset_id", offsetId);
 }
 
 const albumRefreshes = new Map();
 const MAX_PENDING_ALBUM_REFRESHES = 32;
 let albumRefreshTimer = null;
 let albumRefreshRunning = false;
-let albumRefreshController = null;
-
-function cancelAlbumRefreshes() {
-  albumRefreshes.clear();
-  if (albumRefreshTimer) clearTimeout(albumRefreshTimer);
-  albumRefreshTimer = null;
-  albumRefreshController?.abort();
-}
 
 function albumRows(groupId) {
   return Array.from(container.querySelectorAll("[data-grouped-id]")).filter(
@@ -1030,10 +698,6 @@ function queueAlbumRefresh(
   const rows = albumRows(groupId);
   if (!rows.length) return false;
   let state = albumRefreshes.get(groupId);
-  if (state && state.generation !== historyGeneration) {
-    albumRefreshes.delete(groupId);
-    state = null;
-  }
   if (!state) {
     if (albumRefreshes.size >= MAX_PENDING_ALBUM_REFRESHES) {
       showAlbumChanged();
@@ -1041,12 +705,10 @@ function queueAlbumRefresh(
     }
     state = {
       groupId,
-      generation: historyGeneration,
       version: 0,
       required: new Set(),
       deleted: new Set(),
       dirty: false,
-      anchorId: null,
     };
     albumRefreshes.set(groupId, state);
   }
@@ -1070,10 +732,6 @@ function queueAlbumRefresh(
     albumRefreshes.delete(groupId);
     return false;
   }
-  state.anchorId =
-    !deleted && state.required.has(String(anchorId))
-      ? String(anchorId)
-      : state.required.values().next().value;
   state.version++;
   state.dirty = true;
   scheduleAlbumRefresh();
@@ -1092,10 +750,7 @@ function queueSplitAlbums() {
 async function refreshNextAlbum() {
   const state = Array.from(albumRefreshes.values()).find((item) => item.dirty);
   if (!state) return;
-  if (
-    state.generation !== historyGeneration ||
-    !albumRows(state.groupId).length
-  ) {
+  if (!albumRows(state.groupId).length) {
     albumRefreshes.delete(state.groupId);
     scheduleAlbumRefresh();
     return;
@@ -1103,19 +758,17 @@ async function refreshNextAlbum() {
   state.dirty = false;
   albumRefreshRunning = true;
   const version = state.version;
-  const controller = (albumRefreshController = new AbortController());
+  const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   const isCurrent = () =>
-    albumRefreshes.get(state.groupId) === state &&
-    state.generation === historyGeneration &&
-    state.version === version;
+    albumRefreshes.get(state.groupId) === state && state.version === version;
   try {
-    const response = await requestOk(
-      historyUrlFor("around_id", state.anchorId),
-      {
-        signal: controller.signal,
-      },
-    );
+    // The existing history endpoint uses an exclusive older-message offset.
+    const newestId = Math.max(...Array.from(state.required, Number));
+    const offset = newestId < 2 ** 31 - 1 ? newestId + 1 : 0;
+    const response = await requestOk(historyUrl(offset), {
+      signal: controller.signal,
+    });
     const data = await response.json();
     if (!isCurrent()) return;
     const rows = albumRows(state.groupId);
@@ -1149,13 +802,6 @@ async function refreshNextAlbum() {
     const restoreFocus = rows.some((row) =>
       row.contains(document.activeElement),
     );
-    const moveUnreadMarker =
-      unreadMarker &&
-      rows.some(
-        (row) =>
-          messageRow(row, firstUnreadId) ||
-          row.dataset.id === String(firstUnreadId),
-      );
     window.parseAppleEmojis(replacement);
     window.renderLocalTimes(replacement);
     for (const row of rows) row.remove();
@@ -1163,11 +809,6 @@ async function refreshNextAlbum() {
       container.querySelectorAll("[data-oldest-id]"),
     ).find((row) => Number(row.dataset.id) < Number(replacement.dataset.id));
     container.insertBefore(replacement, before || null);
-    if (moveUnreadMarker) {
-      unreadMarker.remove();
-      unreadMarker = null;
-      markFirstUnread();
-    }
     if (visible) {
       if (rows.includes(visible.row)) visible.row = replacement;
       keepVisibleAnchor(visible);
@@ -1183,7 +824,6 @@ async function refreshNextAlbum() {
     }
   } finally {
     clearTimeout(timeout);
-    if (albumRefreshController === controller) albumRefreshController = null;
     albumRefreshRunning = false;
     if (albumRefreshes.get(state.groupId) === state && !state.dirty)
       albumRefreshes.delete(state.groupId);
@@ -1196,26 +836,12 @@ function prefetchOlderMessages() {
   if (allLoaded || !edge) return;
   const offsetId = String(edge.id);
   if (prefetchedHistory?.offsetId === offsetId) return;
-  const promise = requestOk(historyUrl(offsetId))
-    .then((response) => response.json())
-    .catch(() => null);
+  const promise = fetchHistory(offsetId).catch(() => null);
   prefetchedHistory = { offsetId, promise, events: eventVersion };
 }
 
 requestAnimationFrame(() => {
-  const targetId = messageIdFromHash(window.location?.hash);
-  if (targetId !== null) {
-    void navigateToMessage(targetId, false);
-    prefetchOlderMessages();
-    return;
-  }
-  const saved = readSavedPosition();
-  const restored = restoreReadingPosition(saved);
-  if (!restored) {
-    window.scrollTo(0, document.documentElement.scrollHeight);
-    if (saved) void loadReadingWindow(Number(saved.id.slice(4)), saved.top);
-    else if (chatConfig.accountId) void findFirstUnread();
-  }
+  window.scrollTo(0, document.documentElement.scrollHeight);
   prefetchOlderMessages();
   if (document.documentElement.scrollHeight <= window.innerHeight + 100)
     loadOlderMessages();
@@ -1223,7 +849,6 @@ requestAnimationFrame(() => {
 window.renderLocalTimes(container);
 
 window.addEventListener("scroll", () => {
-  if (!detachedHistory && nearLatest()) clearNewMessages();
   if (isLoading || allLoaded) return;
   if (window.scrollY < 100) loadOlderMessages();
 });
@@ -1231,7 +856,6 @@ window.addEventListener("scroll", () => {
 async function loadOlderMessages() {
   if (isLoading || allLoaded) return;
   isLoading = true;
-  const generation = historyGeneration;
   const events = eventVersion;
   const indicator = document.getElementById("loading-indicator");
   indicator.textContent = "Loading older messages…";
@@ -1256,11 +880,9 @@ async function loadOlderMessages() {
         : null;
     prefetchedHistory = null;
     if (!data) {
-      const response = await requestOk(historyUrl(offsetId));
-      data = await response.json();
+      data = await fetchHistory(offsetId);
     }
 
-    if (generation !== historyGeneration) return;
     if (events !== eventVersion) {
       indicator.textContent = "Messages changed. Scroll up to retry.";
       return;
@@ -1277,18 +899,16 @@ async function loadOlderMessages() {
       window.renderLocalTimes(fragment);
       while (fragment.firstChild) container.appendChild(fragment.firstChild);
       queueSplitAlbums();
-      markFirstUnread();
       window.scrollBy(0, oldestMsg.getBoundingClientRect().top - previousTop);
       prefetchOlderMessages();
     }
   } catch (error) {
-    if (generation !== historyGeneration) return;
     console.error("Failed to load history:", error);
     indicator.textContent =
       "Could not load older messages. Scroll up to retry.";
     return;
   } finally {
-    if (generation === historyGeneration) isLoading = false;
+    isLoading = false;
   }
   indicator.hidden = true;
   if (
@@ -1299,58 +919,9 @@ async function loadOlderMessages() {
   }
 }
 
-if (loadNewerButton) {
-  loadNewerButton.addEventListener("click", async () => {
-    if (!detachedHistory || loadingNewer) return;
-    const edge = historyEdge(true);
-    if (!edge) return;
-    const newest = edge.row;
-    const generation = historyGeneration;
-    const events = eventVersion;
-    const newestId = edge.id;
-    loadingNewer = true;
-    loadNewerButton.disabled = true;
-    loadNewerButton.textContent = "Loading newer messages…";
-    try {
-      const response = await requestOk(historyUrlFor("after_id", newestId));
-      const data = await response.json();
-      if (generation !== historyGeneration) return;
-      if (events !== eventVersion) {
-        loadNewerButton.textContent =
-          "Messages changed. Retry loading newer messages";
-        loadNewerButton.disabled = false;
-        return;
-      }
-      if (!data.count) {
-        loadNewerButton.textContent = "No newer messages";
-        return;
-      }
-      const previousTop = newest.getBoundingClientRect().top;
-      const fragment = document.createElement("div");
-      fragment.innerHTML = data.html;
-      window.parseAppleEmojis(fragment);
-      window.renderLocalTimes(fragment);
-      while (fragment.lastChild) container.prepend(fragment.lastChild);
-      queueSplitAlbums();
-      window.scrollBy(0, newest.getBoundingClientRect().top - previousTop);
-      loadNewerButton.textContent = "Load newer messages";
-      loadNewerButton.disabled = false;
-    } catch (error) {
-      if (generation !== historyGeneration) return;
-      console.error("Failed to load newer messages:", error);
-      loadNewerButton.textContent = "Could not load newer messages. Retry";
-      loadNewerButton.disabled = false;
-    } finally {
-      if (generation === historyGeneration) loadingNewer = false;
-    }
-  });
-}
-
 const pendingReactions = new Set();
 container.addEventListener("click", async (event) => {
-  const button = event.target.closest(
-    ".reaction-pill, .hover-reaction, .album-part-reaction",
-  );
+  const button = event.target.closest(".reaction-pill, .hover-reaction");
   if (!button) return;
   const msgId = Number(button.dataset.msgId);
   const emoji = button.dataset.emoji;
@@ -1368,7 +939,10 @@ container.addEventListener("click", async (event) => {
     showToast("Reaction queued");
   } catch (e) {
     console.error("Failed to toggle reaction", e);
-    showToast("Failed to queue reaction");
+    const detail = e?.status === 409 && e.message ? ` ${e.message}` : "";
+    showToast(
+      `Could not confirm whether the reaction was queued. Refresh and check before retrying.${detail}`,
+    );
   } finally {
     pendingReactions.delete(msgId);
   }
@@ -1434,9 +1008,13 @@ document.addEventListener("tg:event", (e) => {
   }
   if (data.chat_id !== chatId) return;
   if (data.type === "read_failed")
-    showToast("Telegram could not mark this chat as read");
+    showToast(
+      data.text_plain || "Read was not confirmed. Refresh before retrying.",
+    );
   if (data.type === "reaction_failed")
     showToast("Telegram could not apply the reaction");
+  if (["reaction_uncertain", "reaction_blocked"].includes(data.type))
+    showToast(data.text);
   if (
     !data.scope_known &&
     ["message", "edited", "action"].includes(data.type)
@@ -1449,7 +1027,13 @@ document.addEventListener("tg:event", (e) => {
     data.topic_id !== currentTopicId &&
     !(
       data.topic_id == null &&
-      ["deleted", "reaction_update", "reaction_failed"].includes(data.type)
+      [
+        "deleted",
+        "reaction_update",
+        "reaction_failed",
+        "reaction_uncertain",
+        "reaction_blocked",
+      ].includes(data.type)
     )
   )
     return;
@@ -1472,30 +1056,10 @@ document.addEventListener("tg:event", (e) => {
     const groupId = groupedId == null ? null : String(groupedId);
     const group = groupId && albumRows(groupId);
     if (group?.length) {
-      // Do not extend a detached history window into an unloaded newer range.
-      if (detachedHistory && Number(msgId) > historyEdge(true)?.id) {
-        noteNewMessage(msgId);
-      } else {
-        const alreadyPending = albumRefreshes
-          .get(groupId)
-          ?.required.has(String(msgId));
-        if (!alreadyPending) {
-          queueAlbumRefresh(groupId, msgId, { added: true });
-          if (!nearLatest()) noteNewMessage(msgId);
-        }
-      }
-      if (detachedHistory && loadNewerButton) {
-        loadNewerButton.disabled = false;
-        loadNewerButton.textContent = "Load newer messages";
-      }
-      return;
-    }
-    if (detachedHistory) {
-      noteNewMessage(msgId);
-      if (loadNewerButton) {
-        loadNewerButton.disabled = false;
-        loadNewerButton.textContent = "Load newer messages";
-      }
+      const alreadyPending = albumRefreshes
+        .get(groupId)
+        ?.required.has(String(msgId));
+      if (!alreadyPending) queueAlbumRefresh(groupId, msgId, { added: true });
       return;
     }
     const nearBottom = nearLatest();
@@ -1507,9 +1071,6 @@ document.addEventListener("tg:event", (e) => {
     while (tempDiv.lastChild) container.prepend(tempDiv.lastChild);
     if (nearBottom) {
       window.scrollTo(0, document.documentElement.scrollHeight);
-      clearNewMessages();
-    } else if (jumpToLatest) {
-      noteNewMessage(msgId);
     }
   } else if (data.type === "edited" && data.message_model) {
     const msgId = data.message_model.id;
@@ -1529,9 +1090,7 @@ document.addEventListener("tg:event", (e) => {
       fragment.innerHTML = data.rendered_html || "";
       const replacement = messageRow(fragment, msgId);
       if (!replacement) {
-        showPositionStatus(
-          "A message changed. Reload to see its latest contents.",
-        );
+        showToast("A message changed. Reload to see its latest contents.");
         return;
       }
       const visible = visibleMessageAnchor();
