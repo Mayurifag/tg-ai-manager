@@ -13,6 +13,7 @@
 {% block content %}
 
 <div class="settings-container">
+    <h1>Settings</h1>
     <div class="section-card">
         <div class="gs-grid">
             <label class="gs-card toggle-card"
@@ -34,10 +35,10 @@
             </label>
 
             <label class="gs-card toggle-card"
-                data-tooltip="Mark chat as read if I send a message from another device.">
+                data-tooltip="Currently inactive: outgoing messages do not trigger selective reads.">
                 <input type="checkbox" id="t-self" onchange="toggleSetting('autoread_self')" {% if settings.autoread_self %}checked{% endif %}>
                 <div class="gs-content">
-                    <span class="gs-label">My Messages</span>
+                    <span class="gs-label">My Messages (inactive)</span>
                     <span class="gs-status-badge"></span>
                 </div>
             </label>
@@ -58,7 +59,7 @@
                 data-tooltip="Messages from these usernames will be auto-read everywhere.">
                 <div class="gs-display-header">
                     <span>Autoread Users</span>
-                    <button class="edit-icon-btn" onclick="openModal('modal-bots')">✏️ Edit</button>
+                    <button class="edit-icon-btn" onclick="openModal('modal-bots')" aria-label="Edit Autoread Users" aria-haspopup="dialog" aria-controls="modal-bots">✏️ Edit</button>
                 </div>
                 <div class="gs-display-content">
                     {% if settings.autoread_bots %}
@@ -79,7 +80,7 @@
                 data-tooltip="Auto-read messages matching this RegEx pattern.">
                 <div class="gs-display-header">
                     <span>Autoread Regex</span>
-                    <button class="edit-icon-btn" onclick="openModal('modal-regex')">✏️ Edit</button>
+                    <button class="edit-icon-btn" onclick="openModal('modal-regex')" aria-label="Edit Autoread Regex" aria-haspopup="dialog" aria-controls="modal-regex">✏️ Edit</button>
                 </div>
                 <div class="gs-display-content">
                     {% if settings.autoread_regex %}
@@ -113,7 +114,7 @@
             <div class="gs-display-card {{ 'has-content' if settings.ai_model else '' }}" id="card-ai-model">
                 <div class="gs-display-header">
                     <span>AI Model</span>
-                    <button class="edit-icon-btn" onclick="openModal('modal-ai-model')">✏️ Edit</button>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-model')" aria-label="Edit AI Model" aria-haspopup="dialog" aria-controls="modal-ai-model">✏️ Edit</button>
                 </div>
                 <div class="gs-display-content">
                     {% if settings.ai_model %}
@@ -127,7 +128,7 @@
             <div class="gs-display-card {{ 'has-content' if settings.ai_api_key else '' }}" id="card-ai-key">
                 <div class="gs-display-header">
                     <span>AI API Key</span>
-                    <button class="edit-icon-btn" onclick="openModal('modal-ai-key')">✏️ Edit</button>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-key')" aria-label="Edit AI API Key" aria-haspopup="dialog" aria-controls="modal-ai-key">✏️ Edit</button>
                 </div>
                 <div class="gs-display-content">
                     {% if settings.ai_api_key %}
@@ -141,7 +142,7 @@
             <div class="gs-display-card {{ 'has-content' if settings.ai_prompt else '' }}" id="card-ai-prompt">
                 <div class="gs-display-header">
                     <span>AI Prompt</span>
-                    <button class="edit-icon-btn" onclick="openModal('modal-ai-prompt')">✏️ Edit</button>
+                    <button class="edit-icon-btn" onclick="openModal('modal-ai-prompt')" aria-label="Edit AI Prompt" aria-haspopup="dialog" aria-controls="modal-ai-prompt">✏️ Edit</button>
                 </div>
                 <div class="gs-display-content">
                     {% if settings.ai_prompt %}
@@ -154,8 +155,9 @@
         </div>
     </div>
 
-    <div class="section-card" id="rules-container">
-        <div style="text-align:center;color:#777;padding:30px;">Loading rules...</div>
+    <div class="section-card">
+        <p id="rules-status" role="status" aria-live="polite">Loading rules…</p>
+        <div id="rules-container" role="region" aria-label="Rules" tabindex="-1"></div>
     </div>
 
     {% if settings.debug_mode %}
@@ -172,10 +174,10 @@
             <button type="button" class="modal-close" onclick="closeModal('modal-bots')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <textarea id="input-bots" aria-label="Autoread usernames"
+            <textarea id="input-bots" aria-label="Autoread usernames" aria-describedby="help-bots"
                 style="width:100%; height:100px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 placeholder="@BotFather, @OtherBot">{{ settings.autoread_bots }}</textarea>
-            <div class="help-text">Comma separated list of usernames.</div>
+            <div class="help-text" id="help-bots">Comma separated list of usernames.</div>
             <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
@@ -192,10 +194,10 @@
             <button type="button" class="modal-close" onclick="closeModal('modal-regex')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="text" id="input-regex" aria-label="Autoread regular expression"
+            <input type="text" id="input-regex" aria-label="Autoread regular expression" aria-describedby="help-regex"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 value="{{ settings.autoread_regex }}" placeholder="(crypto|buy|sell)">
-            <div class="help-text">Regular expression to match against message text.</div>
+            <div class="help-text" id="help-regex">Regular expression to match against message text.</div>
             <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
@@ -212,10 +214,10 @@
             <button type="button" class="modal-close" onclick="closeModal('modal-ai-model')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="text" id="input-ai-model" aria-label="AI model"
+            <input type="text" id="input-ai-model" aria-label="AI model" aria-describedby="help-ai-model"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 value="{{ settings.ai_model }}" placeholder="gemini-2.0-flash-lite-preview">
-            <div class="help-text">The model identifier for the selected AI provider.</div>
+            <div class="help-text" id="help-ai-model">The model identifier for the selected AI provider.</div>
             <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
@@ -232,10 +234,10 @@
             <button type="button" class="modal-close" onclick="closeModal('modal-ai-key')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <input type="password" id="input-ai-key" aria-label="Gemini API key"
+            <input type="password" id="input-ai-key" aria-label="Gemini API key" aria-describedby="help-ai-key"
                 style="width:100%; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;"
                 placeholder="Enter your Gemini API key">
-            <div class="help-text">Your API key is stored securely and never displayed again.</div>
+            <div class="help-text" id="help-ai-key">Your API key is stored securely and never displayed again.</div>
             <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">
@@ -252,9 +254,9 @@
             <button type="button" class="modal-close" onclick="closeModal('modal-ai-prompt')" aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
-            <textarea id="input-ai-prompt" aria-label="AI prompt"
+            <textarea id="input-ai-prompt" aria-label="AI prompt" aria-describedby="help-ai-prompt"
                 style="width:100%; height:120px; background:#2a2a2c; border:1px solid #444; color:#fff; border-radius:4px; padding:10px; font-family:monospace;">{{ settings.ai_prompt }}</textarea>
-            <div class="help-text">System prompt sent to the AI model for context.</div>
+            <div class="help-text" id="help-ai-prompt">System prompt sent to the AI model for context.</div>
             <p class="modal-status" role="status" aria-live="polite"></p>
         </div>
         <div class="modal-footer">

@@ -1,4 +1,6 @@
-from datetime import datetime
+import asyncio
+from collections.abc import Callable
+from datetime import datetime, timezone
 from html import escape as html_escape
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 from urllib.parse import urlsplit
@@ -23,11 +25,19 @@ from telethon.tl.types import (
 )
 
 from src.adapters.telethon_mappers import get_message_action_text
+from src.domain.errors import AccountChanged
 from src.domain.models import Message, Reaction
 from src.infrastructure.html import sanitize_html
+from src.infrastructure.logging import get_logger
+from src.infrastructure.tasks import raise_if_task_stopped, run_with_task_deadline
 
 if TYPE_CHECKING:
-    from src.adapters.telegram.media import MediaManager
+    from src.adapters.telegram.media import AvatarGeneration, MediaManager
+
+logger = get_logger(__name__)
+# shortcut: allow ten seconds for optional sender details; revisit if normal
+# Telegram lookups routinely take longer.
+SENDER_LOOKUP_TIMEOUT = 10.0
 
 
 def media_dimensions(value: Any) -> tuple[Optional[int], Optional[int]]:
@@ -175,9 +185,22 @@ class MessageParser:
         msg: Any,
         replies_map: Dict[int, Any] | None = None,
         chat_id: Optional[int] = None,
+        *,
+        avatar_generation: Optional["AvatarGeneration"] = None,
+        is_current: Optional[Callable[[], bool]] = None,
     ) -> Message:
+        def check() -> None:
+            raise_if_task_stopped()
+            if is_current is not None and not is_current():
+                raise AccountChanged()
+
+        check()
+        if avatar_generation is None:
+            avatar_generation = self._media.avatar_generation()
+        check()
         if chat_id:
             self._cache_message_chat(msg.id, chat_id)
+        check()
 
         replies_map = replies_map or {}
 
@@ -298,16 +321,42 @@ class MessageParser:
         if not sender and getattr(msg, "post", False):
             sender = getattr(msg, "chat", None)
         if sender_id and not sender:
+            check()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + SENDER_LOOKUP_TIMEOUT
+
+            async def resolve_sender() -> Any:
+                check()
+                return await self.client.get_entity(sender_id)
+
             try:
-                sender = await self.client.get_entity(sender_id)
+                resolved_sender = await run_with_task_deadline(
+                    resolve_sender,
+                    deadline,
+                    name="message_sender_lookup",
+                )
+                check()
+                sender = resolved_sender
+            except AccountChanged:
+                raise
+            except TimeoutError:
+                check()
+                logger.warning("message_sender_lookup_timed_out", sender_id=sender_id)
             except Exception:
-                pass
+                check()
+            finally:
+                check()
 
         if sender:
+            check()
             sender_id = utils.get_peer_id(sender)
             sender_name = utils.get_display_name(sender)
             sender_username = getattr(sender, "username", None)
-            avatar_url = await self._media._get_chat_image(sender, sender_id)
+            check()
+            avatar_url = await self._media._get_chat_image(
+                sender, sender_id, generation=avatar_generation
+            )
+            check()
 
         sender_color = self._get_sender_color(sender, sender_id)
         sender_initials = self._get_sender_initials(sender_name)
@@ -334,10 +383,11 @@ class MessageParser:
         reactions = self._extract_reactions(getattr(msg, "reactions", None))
         grouped_id = getattr(msg, "grouped_id", None)
 
+        check()
         return Message(
             id=msg.id,
             text=text,
-            date=msg.date or datetime.now(),
+            date=msg.date or datetime.now(timezone.utc),
             sender_name=sender_name,
             is_outgoing=getattr(msg, "out", False),
             sender_id=sender_id,

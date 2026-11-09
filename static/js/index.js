@@ -91,14 +91,14 @@ async function loadMoreChats() {
 }
 
 loadMoreButton.addEventListener("click", loadMoreChats);
-if ("IntersectionObserver" in window && !loadMoreButton.hidden) {
+if ("IntersectionObserver" in window) {
   chatObserver = new IntersectionObserver(
     (entries) => {
       if (entries.some((entry) => entry.isIntersecting)) loadMoreChats();
     },
     { rootMargin: "300px" },
   );
-  chatObserver.observe(loadMoreButton);
+  if (!loadMoreButton.hidden) chatObserver.observe(loadMoreButton);
 }
 
 function scheduleListRefresh(delay = LIST_REFRESH_INTERVAL) {
@@ -220,9 +220,12 @@ async function reconcileChatList() {
         );
     }
     if (focusedCard) {
-      findCard(focusedCard.dataset.chatId)
-        ?.querySelector(focusSelector)
-        ?.focus({ preventScroll: true });
+      const replacement = findCard(focusedCard.dataset.chatId);
+      const target =
+        replacement?.querySelector(focusSelector) ||
+        replacement?.querySelector(".chat-card-link") ||
+        chatList.children[0]?.querySelector(".chat-card-link");
+      target?.focus({ preventScroll: true });
     }
     listSnapshotEventVersion = eventVersion;
     listRetryDelay = LIST_RETRY_INTERVAL;
@@ -240,7 +243,7 @@ async function reconcileChatList() {
       chatObserver.observe(loadMoreButton);
     if (listRefreshPending && listPageActive && !document.hidden) {
       void reconcileChatList();
-    } else {
+    } else if (!listRefreshPending) {
       scheduleListRefresh(failed ? listRetryDelay : LIST_REFRESH_INTERVAL);
       if (failed)
         listRetryDelay = Math.min(listRetryDelay * 2, LIST_REFRESH_INTERVAL);
@@ -297,7 +300,8 @@ chatList.addEventListener("click", async (event) => {
     listStatus.textContent = "Read queued; waiting for Telegram.";
   } catch (error) {
     console.error("Error marking chat as read:", error);
-    listStatus.textContent = "Could not mark chat as read. Try again.";
+    listStatus.textContent =
+      "Could not confirm whether the read was queued. Refresh and check before retrying.";
     button.disabled = false;
   }
 });
@@ -352,8 +356,12 @@ function flushCardRefreshes() {
 async function fetchCard(chatId, state) {
   const revision = state.revision;
   const generation = listGeneration;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LIST_REQUEST_TIMEOUT);
   try {
-    const response = await fetch(`/api/chat/${chatId}/card?t=${Date.now()}`);
+    const response = await fetch(`/api/chat/${chatId}/card?t=${Date.now()}`, {
+      signal: controller.signal,
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const html = await response.text();
     // Never overwrite newer events or a fresh list with an older request.
@@ -384,6 +392,7 @@ async function fetchCard(chatId, state) {
       insertCard(newCard, true);
     }
     window.parseAppleEmojis(newCard);
+    listStatus.textContent = "";
     if (focused) {
       const target =
         (focusReadButton && newCard.querySelector(".mark-read-btn")) ||
@@ -397,6 +406,7 @@ async function fetchCard(chatId, state) {
     listRefreshForced = true;
     scheduleListRefresh(LIST_RETRY_INTERVAL);
   } finally {
+    clearTimeout(timeout);
     state.inFlight = false;
     activeCardRefreshes--;
     if (!state.dirty) cardRefreshes.delete(chatId);
@@ -411,11 +421,28 @@ document.addEventListener("tg:event", (event) => {
     return;
   }
   if (!data.chat_id) return;
-  if (["message", "action", "edited", "deleted", "read"].includes(data.type))
+  if (data.type === "profile_updated" && !findCard(data.chat_id)) return;
+  if (
+    [
+      "message",
+      "action",
+      "edited",
+      "deleted",
+      "read",
+      "profile_updated",
+    ].includes(data.type)
+  )
     listEventVersion++;
   if (
     refreshingList &&
-    ["message", "action", "edited", "deleted", "read"].includes(data.type)
+    [
+      "message",
+      "action",
+      "edited",
+      "deleted",
+      "read",
+      "profile_updated",
+    ].includes(data.type)
   ) {
     reloadCard(data.chat_id);
     return;
@@ -428,7 +455,7 @@ document.addEventListener("tg:event", (event) => {
       button.textContent = "mark read";
     }
     listStatus.textContent =
-      "Telegram could not mark the chat as read. Try again.";
+      data.text_plain || "Read was not confirmed. Refresh before retrying.";
     return;
   }
 
@@ -436,7 +463,8 @@ document.addEventListener("tg:event", (event) => {
     data.type === "read" ||
     data.type === "deleted" ||
     data.type === "edited" ||
-    data.type === "action"
+    data.type === "action" ||
+    data.type === "profile_updated"
   ) {
     if (findCard(data.chat_id)) reloadCard(data.chat_id);
     return;

@@ -8,6 +8,7 @@
   --text-muted: #aaa;
   --text-accent: #8ac7ff;
   --outgoing-bg: #174b76;
+  --outgoing-muted: #ccc;
   --quote-surface: rgba(255, 255, 255, 0.04);
   --surface-inset: rgba(0, 0, 0, 0.2);
   --surface-hover: rgba(255, 255, 255, 0.08);

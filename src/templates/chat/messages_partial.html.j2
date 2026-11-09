@@ -1,6 +1,5 @@
 {% macro render_reactions(msg, album_index=none) %}
-<div class="reactions-container" id="reactions-{{ msg.id }}"{% if album_index %} data-album-index="{{ album_index }}"{% endif %}>
-    {% for r in msg.reactions %}
+<div class="reactions-container" id="reactions-{{ msg.id }}"{% if album_index %} data-album-index="{{ album_index }}"{% endif %}>{% for r in msg.reactions %}
     <button type="button" class="reaction-pill {{ 'chosen' if r.is_chosen else '' }}"
         data-msg-id="{{ msg.id }}" data-emoji="{{ r.custom_emoji_id if r.custom_emoji_id else r.emoji }}"
         aria-pressed="{{ 'true' if r.is_chosen else 'false' }}" aria-label="React {% if album_index %}to album item {{ album_index }} {% endif %}with {{ r.emoji }}">
@@ -8,21 +7,19 @@
         {% else %}<span>{{ r.emoji }}</span>{% endif %}
         <span class="reaction-count">{{ r.count }}</span>
     </button>
-    {% endfor %}
-</div>
+{% endfor %}</div>
 {% endmacro %}
 
 {% macro render_visual(msg) %}
 {% set frame_width, media_width, media_height = msg.media_geometry %}
 <div class="media-preview-frame" style="--media-width: {{ frame_width }}px; --media-ratio: {{ media_width }} / {{ media_height }}">
     {% if msg.is_video %}
-    <video controls preload="none" class="message-video" onerror="this.closest('.media-preview-frame').classList.add('media-failed')" onloadeddata="this.closest('.media-preview-frame').classList.remove('media-failed')"><source src="/media/{{ chat_id }}/{{ msg.id }}" onerror="this.parentElement.closest('.media-preview-frame').classList.add('media-failed')"></video>
+    <video controls preload="none" class="message-video"><source src="/media/{{ chat_id }}/{{ msg.id }}"></video>
     {% else %}
     <button type="button" class="media-image-button" aria-label="Open photo" onclick="openLightbox(this.firstElementChild)">
-        <img src="/media/{{ chat_id }}/{{ msg.id }}" class="inline-media lightbox-trigger" data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full" loading="lazy" alt="Photo" onerror="this.closest('.media-preview-frame').classList.add('media-failed')" onload="this.closest('.media-preview-frame').classList.remove('media-failed')">
+        <img src="/media/{{ chat_id }}/{{ msg.id }}" class="inline-media lightbox-trigger" data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full" loading="lazy" alt="Photo">
     </button>
     {% endif %}
-    <button type="button" class="media-retry" onclick="retryMedia(this)">Retry {{ 'video' if msg.is_video else 'photo' }}</button>
 </div>
 {% endmacro %}
 
@@ -70,10 +67,7 @@
                 {% else %}
                 <a class="file-attachment" href="/media/{{ chat_id }}/{{ part.id }}/full">{{ part.file_name or 'Open attachment' }}</a>
                 {% endif %}
-                <div class="album-reactions">
-                    {{ render_reactions(part, loop.index) }}
-                    <button type="button" class="album-part-reaction" data-msg-id="{{ part.id }}" data-emoji="💩" aria-label="React to album item {{ loop.index }} with 💩" title="React with 💩">💩</button>
-                </div>
+                {{ render_reactions(part, loop.index) }}
             </div>
             {% endfor %}
         </div>
@@ -111,10 +105,8 @@
         </a>
         {% endif %}
 
-        {% if not msg.album_parts %}
-        {{ render_reactions(msg) }}
+        {% if not msg.album_parts %}{{ render_reactions(msg) }}{% endif %}
         <button type="button" class="hover-reaction" data-msg-id="{{ msg.id }}" data-emoji="💩" aria-label="React with 💩" title="React with 💩">💩</button>
-        {% endif %}
         {% if current_user and current_user.debug_mode %}<button type="button" class="debug-process" onclick="debugProcessMessage(this, {{ msg.id }})" aria-label="Dry run rules" title="Dry run rules">⚙️</button>{% endif %}
         <time class="time local-time" datetime="{{ msg.date.isoformat() }}" data-timestamp="{{ msg.date.isoformat() }}"></time>
     </div>

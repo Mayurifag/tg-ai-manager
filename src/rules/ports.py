@@ -1,11 +1,19 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.rules.models import Rule
+from src.rules.models import Rule, RuleType
 
 
 class InheritedRuleError(ValueError):
     """A topic cannot be disabled while its parent rule remains enabled."""
+
+
+class InvalidRuleConfiguration(ValueError):
+    """Stored rule configuration cannot be interpreted safely."""
+
+    def __init__(self, rule_id: Optional[int] = None):
+        super().__init__("Stored rule configuration is invalid")
+        self.rule_id = rule_id
 
 
 class RuleRepository(ABC):
@@ -34,8 +42,8 @@ class RuleRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_all(self) -> List[Rule]:
-        """Retrieve all rules from the database."""
+    async def get_all(self, *, rule_type: Optional[RuleType] = None) -> List[Rule]:
+        """Retrieve rules, optionally limited to one type."""
         pass
 
     @abstractmethod

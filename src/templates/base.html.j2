@@ -14,7 +14,7 @@
     {% block head_extra %}{% endblock %}
 </head>
 
-<body class="{% block body_class %}{% endblock %}{% if current_user and current_user.debug_mode %} debug-layout{% endif %}">
+<body{% if current_user and current_user.debug_mode %} class="debug-layout"{% endif %}>
     <div class="app-container">
         <!-- LEFT SIDEBAR -->
         <aside class="sidebar left-sidebar">
@@ -30,7 +30,6 @@
 
             <!-- Navigation Links -->
             <div class="sidebar-nav">
-                <div id="event-stream-status" class="setting-option" role="status" aria-live="polite">Events: connecting</div>
                 <a href="/settings" class="setting-option">
                     ⚙️ Settings
                 </a>

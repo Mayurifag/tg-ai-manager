@@ -79,14 +79,18 @@ class SettingsPatch:
                 bool_value(values, key)
             elif value is None and key.startswith("ai_"):
                 continue
-            elif not isinstance(value, str) or len(value) > text_limits[key]:
+            elif (
+                not isinstance(value, str)
+                or len(value) > text_limits[key]
+                or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+            ):
                 raise BadRequest(f"Invalid {key}")
         if values.get("ai_provider") not in (None, "", "gemini"):
             raise BadRequest("Only Gemini is supported")
         if values.get("autoread_regex"):
             try:
                 regex.compile(values["autoread_regex"], regex.VERSION0)
-            except regex.error as exc:
+            except (regex.error, RecursionError) as exc:
                 raise BadRequest("Invalid regular expression") from exc
         return cls(dict(values))
 
@@ -174,19 +178,15 @@ class DebugProcessRequest:
     chat_id: int
     msg_id: int
     topic_id: Optional[int]
-    evaluate_ai: bool
 
     @classmethod
     def from_json(cls, data: Any) -> "DebugProcessRequest":
         body = require_body(data)
-        reject_unknown(body, {"chat_id", "msg_id", "topic_id", "evaluate_ai"})
+        reject_unknown(body, {"chat_id", "msg_id", "topic_id"})
         return cls(
             chat_id=require_int(body, "chat_id"),
             msg_id=require_int(body, "msg_id"),
             topic_id=optional_int(body, "topic_id"),
-            evaluate_ai=bool_value(body, "evaluate_ai")
-            if "evaluate_ai" in body
-            else False,
         )
 
 
@@ -241,4 +241,6 @@ class PasswordRequest:
         password = body.get("password")
         if not isinstance(password, str) or not password or len(password) > 1024:
             raise BadRequest("password required")
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in password):
+            raise BadRequest("Invalid password")
         return cls(password=password)

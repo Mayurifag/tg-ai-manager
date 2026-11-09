@@ -71,7 +71,7 @@ Forum Topics
 
 {% block scripts %}
 <script>
-    window.TG_FORUM = { chatId: {{ chat.id if chat else parent_id }} };
+    window.TG_FORUM = { chatId: {{ (chat.id if chat else parent_id) | string | tojson }} };
 </script>
 <script src="/static/js/forum.js?t={{ 'static/js/forum.js' | file_mtime }}"></script>
 {% endblock %}

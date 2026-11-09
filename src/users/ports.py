@@ -11,8 +11,8 @@ class UserRepository(ABC):
         pass
 
     @abstractmethod
-    async def save_user(self, user: User) -> None:
-        """Creates or Updates the user."""
+    async def create_user(self, user: User) -> None:
+        """Create an account without overwriting an existing one."""
         pass
 
     @abstractmethod

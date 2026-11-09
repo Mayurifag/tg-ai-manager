@@ -4,6 +4,10 @@ from quart import Quart, jsonify, redirect, request, url_for
 
 from src.container import _get_tg_adapter
 from src.domain.errors import AccountChanged, TelegramUnavailable
+from src.infrastructure.logging import get_logger
+from src.infrastructure.security import SecretStorageError
+from src.requests import BadRequest, require_int
+from src.rules.ports import InvalidRuleConfiguration
 from src.web.routes.auth import auth_bp
 from src.web.routes.chat import chat_bp
 from src.web.routes.forum import forum_bp
@@ -11,6 +15,8 @@ from src.web.routes.health import health_bp
 from src.web.routes.media import media_bp
 from src.web.routes.settings import settings_bp
 from src.web.routes.sse import sse_bp
+
+logger = get_logger(__name__)
 
 
 def register_routes(app: Quart):
@@ -21,6 +27,16 @@ def register_routes(app: Quart):
     app.register_blueprint(sse_bp)
     app.register_blueprint(settings_bp)
     app.register_blueprint(health_bp)
+
+    @app.errorhandler(SecretStorageError)
+    async def credential_storage_unavailable(_error):
+        # The chained provider exception may contain credential values. Quart's
+        # default unhandled-error log would include the full traceback.
+        logger.error("credential_storage_unavailable")
+        message = "Credential storage is unavailable. No change was confirmed."
+        if request.path.startswith("/api/"):
+            return jsonify({"error": message}), 503
+        return message, 503
 
     @app.errorhandler(TelegramUnavailable)
     async def telegram_unavailable(error):
@@ -41,6 +57,34 @@ def register_routes(app: Quart):
         if request.path.startswith("/api/"):
             return jsonify({"error": message}), 409
         return message, 409
+
+    @app.errorhandler(InvalidRuleConfiguration)
+    async def invalid_rule_configuration(error):
+        message = "Stored rule configuration is invalid. Check the saved rules."
+        rule_id = error.rule_id
+        if type(rule_id) is int and rule_id > 0:
+            message = f"Stored rule {rule_id} has invalid configuration."
+        if request.path.startswith("/api/"):
+            return jsonify({"error": message, "rule_id": rule_id}), 503
+        return message, 503
+
+    @app.errorhandler(400)
+    async def invalid_http_request(error):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Invalid request"}), 400
+        return error
+
+    @app.errorhandler(408)
+    async def request_timed_out(error):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Request body timed out"}), 408
+        return error
+
+    @app.errorhandler(413)
+    async def request_too_large(error):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Request body is too large"}), 413
+        return error
 
     @app.before_request
     async def protect_mutations():
@@ -108,6 +152,21 @@ def register_routes(app: Quart):
         request._account_adapter = adapter
 
     @app.before_request
+    async def validate_route_ids():
+        values = request.view_args or {}
+        try:
+            for key in ("chat_id", "topic_id", "msg_id", "doc_id", "rule_id"):
+                if key not in values:
+                    continue
+                value = require_int(values, key)
+                if key in {"doc_id", "rule_id"} and value <= 0:
+                    raise BadRequest(f"{key} must be positive")
+        except BadRequest as error:
+            if request.path.startswith("/api/"):
+                return jsonify({"error": str(error)}), 400
+            return str(error), 400
+
+    @app.before_request
     async def protect_account_mutations():
         if request.method in {"GET", "HEAD", "OPTIONS"} or request.endpoint == (
             "settings.api_debug_process"
@@ -128,13 +187,22 @@ def register_routes(app: Quart):
     @app.after_request
     async def discard_retired_account_response(response):
         adapter = getattr(request, "_account_adapter", None)
-        if adapter is None or request.endpoint == "sse.event_stream":
-            return response
-        if (
-            _get_tg_adapter() is adapter
-            and getattr(adapter, "_retired", False) is not True
-        ):
-            return response
+        login_check = getattr(request, "_login_page_check", None)
+        if login_check is not None:
+            try:
+                login_check()
+            except AccountChanged:
+                pass
+            else:
+                return response
+        else:
+            if adapter is None or request.endpoint == "sse.event_stream":
+                return response
+            if (
+                _get_tg_adapter() is adapter
+                and getattr(adapter, "_retired", False) is not True
+            ):
+                return response
 
         # Quart response bodies may own a document stream lease even before
         # iteration starts. Close a discarded body rather than leaking it.

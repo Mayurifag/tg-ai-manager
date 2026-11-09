@@ -3,33 +3,47 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.infrastructure.db import BaseSqliteRepository
+from src.infrastructure.json_data import load_json
+from src.requests import BadRequest
 from src.rules.models import Rule, RuleType
-from src.rules.ports import InheritedRuleError, RuleRepository
+from src.rules.ports import InheritedRuleError, InvalidRuleConfiguration, RuleRepository
+from src.rules.validation import stored_autoreact_options
 
 
 class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
     def __init__(self, db_path: str = "data.db"):
         super().__init__(db_path)
 
-    def _parse_config(self, config_str: Optional[str]) -> Dict[str, Any]:
-        if not config_str:
+    def _parse_config(
+        self, config_str: Optional[str], rule_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        if config_str is None or config_str == "":
             return {}
         try:
-            return json.loads(config_str)
-        except json.JSONDecodeError:
-            return {}
+            config = load_json(config_str)
+        except (ValueError, TypeError) as error:
+            raise InvalidRuleConfiguration(rule_id) from error
+        if not isinstance(config, dict):
+            raise InvalidRuleConfiguration(rule_id)
+        return config
 
     def _row_to_rule(self, row) -> Rule:
-        return Rule(
+        rule = Rule(
             id=row["id"],
             user_id=row["user_id"],
             rule_type=RuleType(row["rule_type"]),
             chat_id=row["chat_id"],
             topic_id=row["topic_id"],
-            config=self._parse_config(row["config"]),
+            config=self._parse_config(row["config"], row["id"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
+        if rule.rule_type == RuleType.AUTOREACT:
+            try:
+                stored_autoreact_options(rule)
+            except BadRequest as error:
+                raise InvalidRuleConfiguration(rule.id) from error
+        return rule
 
     async def set_scope(
         self, rule: Rule, enabled: bool, *, update_config: bool = False
@@ -116,10 +130,7 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 """,
                     (chat_id, topic_id),
                 )
-                results = []
-                for row in cursor:
-                    results.append(self._row_to_rule(row))
-                return results
+                return [self._row_to_rule(row) for row in cursor]
 
         return await self._execute(_fetch)
 
@@ -133,27 +144,24 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
                 """,
                     (chat_id,),
                 )
-                results = []
-                for row in cursor:
-                    results.append(self._row_to_rule(row))
-                return results
+                return [self._row_to_rule(row) for row in cursor]
 
         return await self._execute(_fetch)
 
-    async def get_all(self) -> List[Rule]:
+    async def get_all(self, *, rule_type: Optional[RuleType] = None) -> List[Rule]:
         def _fetch():
             with self._connect() as conn:
+                kind = rule_type.value if rule_type is not None else None
                 cursor = conn.execute(
                     """
                     SELECT id, user_id, rule_type, chat_id, topic_id, config, created_at, updated_at
                     FROM rules
+                    WHERE (? IS NULL OR rule_type = ?)
                     ORDER BY chat_id ASC, topic_id ASC NULLS FIRST
-                """
+                """,
+                    (kind, kind),
                 )
-                results = []
-                for row in cursor:
-                    results.append(self._row_to_rule(row))
-                return results
+                return [self._row_to_rule(row) for row in cursor]
 
         return await self._execute(_fetch)
 

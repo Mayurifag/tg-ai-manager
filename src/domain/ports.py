@@ -19,7 +19,8 @@ class ChatConnectionPort(ABC):
         pass
 
     @abstractmethod
-    async def connect(self):
+    async def connect(self, *, is_current: Optional[Callable[[], bool]] = None):
+        """Check optional ownership before starting later connection stages."""
         pass
 
     @abstractmethod
@@ -50,7 +51,6 @@ class ChatQueryPort(ABC):
         topic_id: Optional[int] = None,
         offset_id: int = 0,
         ids: Optional[List[int]] = None,
-        after_id: Optional[int] = None,
     ) -> List[Message]:
         pass
 
@@ -64,12 +64,6 @@ class ChatQueryPort(ABC):
     async def can_selectively_read(
         self, chat_id: int, topic_id: Optional[int], message_id: int
     ) -> bool:
-        pass
-
-    @abstractmethod
-    async def first_unread_message_id(
-        self, chat_id: int, topic_id: Optional[int]
-    ) -> Optional[int]:
         pass
 
     @abstractmethod
@@ -116,10 +110,6 @@ class TelegramMediaPort(ABC):
     async def get_chat_avatar(self, chat_id: int) -> Optional[bytes]:
         pass
 
-    @abstractmethod
-    async def run_storage_maintenance(self) -> None:
-        pass
-
 
 class TelegramEventPort(ABC):
     @abstractmethod
@@ -162,8 +152,9 @@ class TelegramWritePort(ABC):
         msg_id: int,
         emoji: str,
         validate: Callable[[], Awaitable[bool]],
-        on_complete: Callable[[bool], Awaitable[None]],
+        on_complete: Callable[[Optional[bool]], Awaitable[None]],
     ) -> bool:
+        """Queue a reaction; completion is True, False, or None if uncertain."""
         pass
 
 
