@@ -11,7 +11,7 @@ from quart import current_app
 from src.adapters.telegram import TelethonAdapter
 from src.application.interactors import ChatInteractor
 from src.config import get_settings
-from src.domain.ports import ActionRepository, EventRepository
+from src.domain.ports import ActionRepository
 from src.infrastructure.event_bus import EventBus
 from src.domain.models import SystemEvent
 from src.infrastructure.logging import get_logger
@@ -55,10 +55,6 @@ def get_rule_service() -> RuleService:
 
 def get_action_repo() -> ActionRepository:
     return _app().action_repo
-
-
-def get_event_repo() -> EventRepository:
-    return _app().event_repo
 
 
 def get_user_repo() -> UserRepository:

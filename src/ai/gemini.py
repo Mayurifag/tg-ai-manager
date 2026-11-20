@@ -1,5 +1,4 @@
 import google.genai
-from google.genai import errors as genai_errors  # noqa: F401 – re-exported for callers
 from google.genai import types
 
 from src.ai.ports import AIClassifier

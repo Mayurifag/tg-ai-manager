@@ -9,8 +9,9 @@
     <title>{% block title %}Telegram Manager{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
-    <script src="/static/libs/twemoji/twemoji.min.js"></script>
-    <script src="/static/js/apple-emoji-map.js?t={{ 'static/js/apple-emoji-map.js' | file_mtime }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@17.0.2/dist/twemoji.min.js"
+        integrity="sha384-Pe8SdSjyHDL7CJg3xfmrIoD4qNopbel/GRj/EtoJnq+8S0HkIRilr02Y9OliMlb+"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     {% block head_extra %}{% endblock %}
 </head>
 

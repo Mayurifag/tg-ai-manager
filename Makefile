@@ -35,8 +35,7 @@ ci:
 	uv run --no-sync ruff format --check
 	uv run --no-sync ruff check
 	node --version > /dev/null
-	for file in static/js/*.js scripts/*.cjs; do node --check "$$file" || exit $$?; done
-	node scripts/generate-emoji-map.cjs --check
+	for file in static/js/*.js; do node --check "$$file" || exit $$?; done
 
 format:
 	uv run --no-sync ruff format

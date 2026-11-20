@@ -1,5 +1,5 @@
 const chatList = document.getElementById("chat-list-container");
-const loadMoreButton = document.getElementById("load-more-chats");
+const chatListEnd = document.getElementById("chat-list-end");
 const listStatus = document.getElementById("chat-list-status");
 const cardRefreshes = new Map();
 const CARD_REFRESH_INTERVAL = 500;
@@ -13,7 +13,6 @@ let activeCardRefreshes = 0;
 let listGeneration = 0;
 let refreshingList = false;
 let loadingChats = false;
-let chatObserver = null;
 let listRefreshTimer = null;
 let listRefreshPending = false;
 let listRefreshForced = false;
@@ -44,17 +43,23 @@ function findCard(chatId) {
 }
 
 async function loadMoreChats() {
-  if (loadingChats || loadMoreButton.hidden) return;
+  if (
+    loadingChats ||
+    chatListEnd.hidden ||
+    !listPageActive ||
+    document.hidden ||
+    chatListEnd.getBoundingClientRect().top > window.innerHeight + 300
+  )
+    return;
   loadingChats = true;
-  loadMoreButton.disabled = true;
   listStatus.textContent = "Loading chats…";
-  if (chatObserver) chatObserver.unobserve(loadMoreButton);
+  let failed = false;
 
   try {
     const params = new URLSearchParams();
-    if (loadMoreButton.dataset.snapshot) {
-      params.set("snapshot", loadMoreButton.dataset.snapshot);
-      params.set("offset", loadMoreButton.dataset.nextOffset);
+    if (chatListEnd.dataset.snapshot) {
+      params.set("snapshot", chatListEnd.dataset.snapshot);
+      params.set("offset", chatListEnd.dataset.nextOffset);
     }
     let page = await fetchListPage(`/api/chats?${params}`, true);
     // A restart or an expired snapshot should not strand a long-lived page.
@@ -68,38 +73,27 @@ async function loadMoreChats() {
       }
     }
 
-    loadMoreButton.dataset.snapshot = page.snapshot;
-    loadMoreButton.dataset.nextOffset = page.next_offset ?? "";
-    loadMoreButton.hidden = page.next_offset === null;
-    loadMoreButton.textContent = "Load more chats";
+    chatListEnd.dataset.snapshot = page.snapshot;
+    chatListEnd.dataset.nextOffset = page.next_offset ?? "";
+    chatListEnd.hidden = page.next_offset === null;
     listStatus.textContent = chatList.children.length ? "" : "No chats yet.";
-    // Re-observe even if the button never left the viewport, such as when
-    // duplicates were skipped or the page is shorter than the screen.
-    if (chatObserver && !loadMoreButton.hidden)
-      chatObserver.observe(loadMoreButton);
   } catch (error) {
     console.error("Error loading chats:", error);
-    loadMoreButton.textContent = "Retry loading chats";
-    listStatus.textContent = "Could not load more chats. Try again.";
+    listStatus.textContent =
+      "Could not load more chats. Retrying automatically.";
+    failed = true;
+    scheduleListRefresh(LIST_RETRY_INTERVAL);
   } finally {
     loadingChats = false;
     scheduleCardRefresh();
-    loadMoreButton.disabled = false;
-    chatList.setAttribute("aria-busy", "false");
     if (listRefreshPending) void reconcileChatList();
+    else if (!failed) void loadMoreChats();
   }
 }
 
-loadMoreButton.addEventListener("click", loadMoreChats);
-if ("IntersectionObserver" in window) {
-  chatObserver = new IntersectionObserver(
-    (entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) loadMoreChats();
-    },
-    { rootMargin: "300px" },
-  );
-  if (!loadMoreButton.hidden) chatObserver.observe(loadMoreButton);
-}
+window.addEventListener("scroll", loadMoreChats, { passive: true });
+window.addEventListener("resize", loadMoreChats);
+void loadMoreChats();
 
 function scheduleListRefresh(delay = LIST_REFRESH_INTERVAL) {
   if (listRefreshTimer !== null) clearTimeout(listRefreshTimer);
@@ -146,8 +140,6 @@ async function reconcileChatList() {
   loadingChats = true;
   refreshingList = true;
   listGeneration++;
-  loadMoreButton.disabled = true;
-  if (chatObserver) chatObserver.unobserve(loadMoreButton);
   const loadedCount = chatList.children.length;
   let failed = false;
   try {
@@ -207,9 +199,9 @@ async function reconcileChatList() {
         if (!seen.has(card.dataset.chatId)) chatList.append(card);
       }
     }
-    loadMoreButton.dataset.snapshot = page.snapshot;
-    loadMoreButton.dataset.nextOffset = page.next_offset ?? "";
-    loadMoreButton.hidden = page.next_offset === null;
+    chatListEnd.dataset.snapshot = page.snapshot;
+    chatListEnd.dataset.nextOffset = page.next_offset ?? "";
+    chatListEnd.hidden = page.next_offset === null;
     listStatus.textContent = chatList.children.length ? "" : "No chats yet.";
     if (anchor && anchorTop !== undefined) {
       const restoredAnchor = findCard(anchor.dataset.chatId);
@@ -238,15 +230,13 @@ async function reconcileChatList() {
     loadingChats = false;
     refreshingList = false;
     scheduleCardRefresh();
-    loadMoreButton.disabled = false;
-    if (chatObserver && !loadMoreButton.hidden)
-      chatObserver.observe(loadMoreButton);
     if (listRefreshPending && listPageActive && !document.hidden) {
       void reconcileChatList();
     } else if (!listRefreshPending) {
       scheduleListRefresh(failed ? listRetryDelay : LIST_REFRESH_INTERVAL);
       if (failed)
         listRetryDelay = Math.min(listRetryDelay * 2, LIST_REFRESH_INTERVAL);
+      else void loadMoreChats();
     }
   }
 }
@@ -431,21 +421,12 @@ document.addEventListener("tg:event", (event) => {
       "read",
       "profile_updated",
     ].includes(data.type)
-  )
-    listEventVersion++;
-  if (
-    refreshingList &&
-    [
-      "message",
-      "action",
-      "edited",
-      "deleted",
-      "read",
-      "profile_updated",
-    ].includes(data.type)
   ) {
-    reloadCard(data.chat_id);
-    return;
+    listEventVersion++;
+    if (refreshingList) {
+      reloadCard(data.chat_id);
+      return;
+    }
   }
 
   if (data.type === "read_failed") {

@@ -533,14 +533,6 @@ class ChatInteractor:
         self, chat_id: int, cursor: Optional[ForumTopicCursor] = None
     ) -> ForumTopicPage:
         repository = self.repository
-        return await self._get_forum_topics_page(repository, chat_id, cursor)
-
-    async def _get_forum_topics_page(
-        self,
-        repository: ChatRepository,
-        chat_id: int,
-        cursor: Optional[ForumTopicCursor],
-    ) -> ForumTopicPage:
         self._ensure_repository_current(repository)
         if cursor is not None:
             version = self._message_version(chat_id)
@@ -590,19 +582,6 @@ class ChatInteractor:
             if version == self._message_version(chat_id):
                 return topic
         raise TelegramUnavailable()
-
-    async def get_message_by_id(self, chat_id: int, msg_id: int) -> Optional[Message]:
-        repository = self.repository
-        messages = await repository.get_messages(chat_id, ids=[msg_id])
-        if repository is not self.repository:
-            raise AccountChanged()
-        if messages:
-            return messages[0]
-        return None
-
-    async def get_single_message(self, chat_id: int, msg_id: int) -> Optional[Message]:
-        # Alias for get_message_by_id
-        return await self.get_message_by_id(chat_id, msg_id)
 
     async def _complete_album_boundary(
         self,
@@ -669,15 +648,6 @@ class ChatInteractor:
         offset_id: int = 0,
     ) -> List[Message]:
         repository = self.repository
-        return await self._get_chat_messages(repository, chat_id, topic_id, offset_id)
-
-    async def _get_chat_messages(
-        self,
-        repository: ChatRepository,
-        chat_id: int,
-        topic_id: Optional[int],
-        offset_id: int,
-    ) -> List[Message]:
         self._ensure_repository_current(repository)
         if offset_id:
             version = self._message_version(chat_id)

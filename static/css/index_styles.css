@@ -13,13 +13,6 @@
   color: #aaa;
 }
 
-.chat-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.25rem;
-}
-
 .meta {
   text-align: right;
   /* Removed min-width to allow the mark-read button to sit closer to the badge */
@@ -36,10 +29,8 @@
   display: inline-block;
 }
 
-.load-more-chats {
-  margin: 1rem 0;
-  padding: 0.6rem 1rem;
-  cursor: pointer;
+#chat-list-end {
+  height: 1px;
 }
 
 .chat-list-status {
@@ -61,15 +52,4 @@
   color: var(--text-muted);
   margin: 0.35rem 0 0;
   font-size: 0.9rem;
-}
-.load-more-chats {
-  background: var(--surface-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--surface-border);
-  border-radius: 6px;
-  padding: 0.55rem 0.9rem;
-  cursor: pointer;
-}
-.load-more-chats:hover {
-  background: var(--surface-raised);
 }

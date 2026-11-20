@@ -111,18 +111,6 @@ class ReadOps:
                 self._active_keys.discard(key)
                 raise
 
-    async def mark_selective_as_read(
-        self,
-        chat_id: int,
-        topic_id: Optional[int],
-        message_id: int,
-        validate: Callable[[], Awaitable[bool]],
-        on_success: Callable[[], Awaitable[None]],
-    ) -> None:
-        await self.mark_automatic_as_read(
-            chat_id, topic_id, message_id, validate, on_success, selective=True
-        )
-
     async def mark_automatic_as_read(
         self,
         chat_id: int,

@@ -216,23 +216,6 @@ class RuleService:
         )
         return global_rule
 
-    async def is_autoread_enabled(
-        self, chat_id: int, topic_id: Optional[int] = None
-    ) -> bool:
-        rule = await self.get_rule(chat_id, topic_id, RuleType.AUTOREAD)
-        return bool(rule)
-
-    async def check_global_autoread_rules(
-        self, message: Message, unread_count: Optional[int] = None
-    ) -> str:
-        if unread_count is not None and unread_count > 1:
-            return ""
-
-        user = await self.user_repo.get_user(1)
-        if not user:
-            return ""
-        return await self._match_global_autoread(user, message)
-
     async def _match_global_autoread(self, user: User, message: Message) -> str:
         if user.autoread_service_messages and message.is_service:
             return "global_service_msg"
@@ -698,12 +681,6 @@ class RuleService:
             self._album_reaction_pending.pop(album_key)
         raise_if_task_stopped()
 
-    async def get_react_decision(
-        self, chat_id: int, topic_id: Optional[int], message: Message
-    ) -> ReactDecision:
-        rule = await self.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
-        return self._react_decision(rule, message)
-
     @staticmethod
     def _react_decision(rule: Optional[Rule], message: Message) -> ReactDecision:
         if message.is_outgoing:
@@ -968,12 +945,6 @@ class RuleService:
         self, chat_id: int, topic_id: Optional[int], enabled: bool
     ) -> Optional[Rule]:
         return await self._toggle_rule(chat_id, topic_id, RuleType.AI_AUTOREAD, enabled)
-
-    async def is_ai_autoread_enabled(
-        self, chat_id: int, topic_id: Optional[int] = None
-    ) -> bool:
-        rule = await self.get_rule(chat_id, topic_id, RuleType.AI_AUTOREAD)
-        return bool(rule)
 
     async def toggle_autoread(
         self, chat_id: int, topic_id: Optional[int], enabled: bool

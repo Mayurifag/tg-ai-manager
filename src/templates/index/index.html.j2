@@ -14,11 +14,11 @@
 <header class="page-heading">
     <div><h1>Chats</h1><p>Unread first · Your Telegram conversations</p></div>
 </header>
-<div class="chat-list" id="chat-list-container" aria-busy="false">
+<div class="chat-list" id="chat-list-container">
     {% for chat in page.chats %}{% include "partials/chat_card_wrapper.html.j2" %}{% endfor %}
 </div>
-<button id="load-more-chats" class="load-more-chats" type="button"
-    data-snapshot="{{ page.snapshot }}" data-next-offset="{{ page.next_offset if page.next_offset is not none else '' }}"{% if page.next_offset is none %} hidden{% endif %}>Load more chats</button>
+<div id="chat-list-end" aria-hidden="true"
+    data-snapshot="{{ page.snapshot }}" data-next-offset="{{ page.next_offset if page.next_offset is not none else '' }}"{% if page.next_offset is none %} hidden{% endif %}></div>
 <div id="chat-list-status" class="chat-list-status" role="status" aria-live="polite">{% if not page.chats %}No chats yet.{% endif %}</div>
 
 {% endblock %}

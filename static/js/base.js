@@ -13,10 +13,29 @@ window.parseAppleEmojis = function (container) {
   if (!window.twemoji) return;
   twemoji.parse(container, {
     callback: function (icon) {
-      const filename = window.TG_APPLE_EMOJI_ASSETS?.[icon];
-      // Returning null preserves native Unicode when no matching file exists.
-      return filename ? "/static/emoji/apple/" + filename : null;
+      const points = icon.split("-");
+      let filename = points.map((point) => point.padStart(4, "0")).join("-");
+      // Apple filenames retain variation selectors that Twemoji normalizes.
+      if (
+        points.length === 1 &&
+        !/\p{Emoji_Presentation}/u.test(
+          String.fromCodePoint(parseInt(icon, 16)),
+        )
+      )
+        filename += "-fe0f";
+      if (points.length === 2 && points[1] === "20e3")
+        filename = `${points[0].padStart(4, "0")}-fe0f-20e3`;
+      const source =
+        "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.0/img/apple/64/" +
+        filename +
+        ".png";
+      return `https://wsrv.nl/?url=${encodeURIComponent(source)}&output=webp&ll`;
     },
+    attributes: () => ({
+      loading: "lazy",
+      decoding: "async",
+      referrerpolicy: "no-referrer",
+    }),
   });
 };
 

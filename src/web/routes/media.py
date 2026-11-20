@@ -1,4 +1,3 @@
-import os
 import re
 from urllib.parse import quote
 
@@ -10,7 +9,6 @@ from quart import (
     jsonify,
     redirect,
     request,
-    send_from_directory,
     url_for,
 )
 from telethon.tl.types import DocumentAttributeFilename
@@ -33,8 +31,6 @@ async def media_too_large(_error):
     return jsonify({"error": "Media exceeds the in-memory preview limit"}), 413
 
 
-STATIC_DIR = os.path.join(os.getcwd(), "static")
-CSS_DIR = os.path.join(STATIC_DIR, "css")
 INLINE_MEDIA_TYPES = {
     "image/jpeg",
     "image/png",
@@ -42,8 +38,6 @@ INLINE_MEDIA_TYPES = {
     "image/gif",
     "video/webm",
 }
-
-os.makedirs(CSS_DIR, exist_ok=True)
 
 
 async def _media_response(chat_id: int, msg_id: int, size_type: str):
@@ -203,21 +197,3 @@ async def get_custom_emoji(doc_id: int):
         return response
 
     return "", 404
-
-
-# --- Static Asset Routes ---
-
-
-@media_bp.route("/static/css/<path:filename>")
-async def serve_css(filename):
-    return await send_from_directory(CSS_DIR, filename)
-
-
-@media_bp.route("/static/libs/<path:filename>")
-async def serve_libs(filename):
-    return await send_from_directory(os.path.join(STATIC_DIR, "libs"), filename)
-
-
-@media_bp.route("/static/emoji/<path:filename>")
-async def serve_static_emoji(filename):
-    return await send_from_directory(os.path.join(STATIC_DIR, "emoji"), filename)
