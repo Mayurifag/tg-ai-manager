@@ -1,13 +1,13 @@
 # Build-only sources do not remain in the runtime image.
-FROM valkey/valkey:8.1.12-trixie AS valkey_source
-FROM ghcr.io/astral-sh/uv:0.13.9-trixie-slim AS python_builder
+FROM valkey/valkey:9.2.0-trixie@sha256:1c2b25b09f354c66fe994733acdf12fcfd4bdf6f3bd92b88a93a70378d884056 AS valkey_source
+FROM ghcr.io/astral-sh/uv:0.13.9-trixie-slim@sha256:9b7790faef7a3f2b9ba8f2f7c48b959c1359fe2bd51c44804b6ca61766fbacdf AS python_builder
 ENV UV_PROJECT_ENVIRONMENT="/venv"
 WORKDIR /app
 
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv python install && uv sync --locked --no-install-project --no-dev --group container
 
-FROM debian:trixie-slim
+FROM debian:13.7-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 ENV PYTHONUNBUFFERED=1
 ENV VALKEY_URL="redis://127.0.0.1:6379/0"
 ENV DB_PATH="/app_data/data.db"
