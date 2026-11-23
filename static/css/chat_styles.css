@@ -82,12 +82,6 @@
   background-color: rgba(255, 255, 255, 0.1);
 }
 
-.reply-content {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .reply-name {
   display: block;
   font-size: 0.75rem;
@@ -547,6 +541,7 @@ input:checked + .toggle-slider::before {
 
 .emoji-selector {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -572,7 +567,8 @@ input:checked + .toggle-slider::before {
 }
 
 #custom-emoji-input {
-  width: 60px;
+  width: 20ch;
+  max-width: 100%;
   background: #2a2a2c;
   border: 1px solid #444;
   color: #fff;

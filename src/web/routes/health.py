@@ -124,7 +124,7 @@ async def health():
     queue_running = adapter._write_queue.is_running()
     subscriber_count = len(bus._subscribers)
 
-    sse_clients = current_app.sse.client_count
+    sse_clients = current_app.events.client_count
 
     healthy = (
         db_ok

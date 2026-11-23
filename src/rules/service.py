@@ -194,6 +194,16 @@ class RuleService:
         rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
         return self._effective_rule(rules, topic_id, rule_type)
 
+    async def get_effective_rules(
+        self, chat_id: int, topic_id: Optional[int]
+    ) -> dict[RuleType, Rule]:
+        rules = await self.rule_repo.get_by_chat_and_topic(chat_id, topic_id)
+        return {
+            kind: rule
+            for kind in RuleType
+            if (rule := self._effective_rule(rules, topic_id, kind)) is not None
+        }
+
     @staticmethod
     def _effective_rule(
         rules: list[Rule], topic_id: Optional[int], rule_type: RuleType
@@ -223,9 +233,6 @@ class RuleService:
         if user.autoread_polls and message.is_poll:
             return "global_poll"
 
-        if user.autoread_self and message.is_outgoing:
-            return "global_self"
-
         if user.autoread_bots:
             bots_input = [b.strip() for b in user.autoread_bots.split(",") if b.strip()]
             target_usernames = {b.lstrip("@").lower() for b in bots_input}
@@ -247,7 +254,7 @@ class RuleService:
                     )
                 if matched:
                     return "global_regex"
-            except (regex.error, TimeoutError):
+            except regex.error, TimeoutError:
                 logger.warning("autoread_regex_failed_or_timed_out")
 
         return ""
@@ -295,6 +302,7 @@ class RuleService:
                 decision.max_id,
                 reason=decision.reason,
                 chat_name=event.chat_name,
+                topic_name=event.topic_name,
                 link=event.link,
                 event=event,
                 ai_policy_current=ai_policy_current
@@ -392,6 +400,7 @@ class RuleService:
         reason: str,
         chat_name: str,
         link: Optional[str],
+        topic_name: Optional[str] = None,
         event: Optional[SystemEvent] = None,
         action: str = "autoread",
         ai_policy_current: Optional[Callable[[], bool]] = None,
@@ -465,17 +474,28 @@ class RuleService:
                 ActionLog(
                     action=action,
                     chat_id=chat_id,
-                    chat_name=chat_name,
+                    chat_name=(
+                        f"{chat_name} (Topic {topic_name})"
+                        if topic_name is not None and event is None
+                        else chat_name
+                    ),
                     reason=reason,
                     link=link,
                 ),
             )
 
-        await adapter.mark_automatic_as_read(
-            chat_id, topic_id, max_id, validate, on_success, selective=selective
+        accepted = await adapter.mark_automatic_as_read(
+            chat_id,
+            topic_id,
+            max_id,
+            validate,
+            on_success,
+            selective=selective,
+            chat_name=chat_name,
+            topic_name=topic_name,
         )
         raise_if_task_stopped()
-        return True
+        return accepted
 
     async def _get_ai_read_reason(
         self,
@@ -775,7 +795,8 @@ class RuleService:
                                     topic.id,
                                     topic.last_message_id,
                                     reason="autoread_rule_startup",
-                                    chat_name=f"{chat.name} (Topic {topic.name})",
+                                    chat_name=chat.name,
+                                    topic_name=topic.name,
                                     link=f"/forum/{chat.id}",
                                     action="startup_read",
                                 )
@@ -784,23 +805,29 @@ class RuleService:
                         snapshot = await self._read_snapshot(
                             chat.id, None, check_current=check
                         )
+                        user, rules = snapshot
                         reason = ""
                         max_id = chat.last_message_id
-                        if any(
-                            rule.rule_type == RuleType.AUTOREAD for rule in snapshot[1]
-                        ):
+                        if any(rule.rule_type == RuleType.AUTOREAD for rule in rules):
                             reason = "autoread_rule_startup"
-                        elif chat.unread_count == 1:
-                            check()
-                            msgs = await adapter.get_messages(chat.id, limit=1)
-                            check()
-                            if msgs and not msgs[0].is_outgoing:
-                                msg = msgs[0]
-                                if snapshot[0]:
-                                    reason = await self._match_global_autoread(
-                                        snapshot[0], msg
-                                    )
-                                    check()
+                        elif (
+                            chat.unread_count == 1
+                            and user
+                            and (
+                                user.autoread_service_messages
+                                or user.autoread_polls
+                                or user.autoread_bots
+                                or user.autoread_regex
+                            )
+                        ):
+                            msg = chat.unread_message
+                            if msg is None:
+                                msgs = await adapter.get_messages(chat.id, limit=1)
+                                check()
+                                msg = msgs[0] if msgs else None
+                            if msg is not None and not msg.is_outgoing:
+                                reason = await self._match_global_autoread(user, msg)
+                                check()
                                 max_id = msg.id
                         if reason:
                             check()
@@ -919,7 +946,8 @@ class RuleService:
                             topic.id,
                             topic.last_message_id,
                             reason="autoread_reconcile",
-                            chat_name=f"{chat.name} (Topic {topic.name})",
+                            chat_name=chat.name,
+                            topic_name=topic.name,
                             link=f"/forum/{chat.id}",
                         )
                         check()

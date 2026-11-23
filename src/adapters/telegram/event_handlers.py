@@ -284,6 +284,7 @@ class EventHandlers:
                 topic_id=topic_id,
                 link=message_link(event.chat_id, topic_id),
                 message_model=domain_msg,
+                edit_pts=getattr(getattr(event, "original_update", None), "pts", None),
                 scope_known=chat is not None
                 and (not getattr(chat, "forum", False) or topic_id is not None),
             )
@@ -416,6 +417,18 @@ class EventHandlers:
             if isinstance(event, UpdateMessageReactions):
                 await self._process_reaction_update(event)
                 return
+            if isinstance(
+                event,
+                (
+                    types.UpdateDialogPinned,
+                    types.UpdatePinnedDialogs,
+                    types.UpdateFolderPeers,
+                ),
+            ):
+                await self._dispatch(
+                    SystemEvent(type="chat_list_changed", text="", chat_name="")
+                )
+                return
             if isinstance(event, (types.UpdateUserName, types.UpdateUser)):
                 profile_id = utils.get_peer_id(types.PeerUser(event.user_id))
             elif isinstance(event, types.UpdateChannel):
@@ -474,6 +487,8 @@ class EventHandlers:
             )
 
     async def _process_reaction_update(self, event: Any) -> None:
+        if event.saved_peer_id is not None:
+            return
         chat_id = 0
         if isinstance(event.peer, PeerUser):
             chat_id = event.peer.user_id
@@ -485,12 +500,25 @@ class EventHandlers:
         if not chat_id:
             return
 
-        link = message_link(chat_id)
-        chat_name = await self._chat_name(chat_id, "Unknown")
+        reactions = event.reactions
+        if reactions.min:
+            messages = await self.client.get_messages(chat_id, ids=[event.msg_id])
+            if not messages or not messages[0]:
+                return
+            reactions = messages[0].reactions
+            if reactions is not None and reactions.min:
+                return
 
-        reactions_list: List[Reaction] = self._parser._extract_reactions(
-            event.reactions
-        )
+        link = message_link(chat_id)
+        entity = getattr(event, "_entities", {}).get(chat_id)
+        chat_name = (
+            utils.get_display_name(entity)
+            if isinstance(entity, (types.User, types.Chat, types.Channel))
+            and not getattr(entity, "min", False)
+            else ""
+        ) or await self._chat_name(chat_id, "Unknown")
+
+        reactions_list: List[Reaction] = self._parser._extract_reactions(reactions)
 
         msg_model = Message(
             id=event.msg_id,

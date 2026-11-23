@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     TG_API_ID: int
     TG_API_HASH: str
 
-    # When set, sync rules from production export URL on startup
+    # Configured source for explicit rules imports
     RULES_SYNC_URL: Optional[str] = None
     RULES_SYNC_TOKEN: Optional[str] = None
     RULES_EXPORT_TOKEN: Optional[str] = None

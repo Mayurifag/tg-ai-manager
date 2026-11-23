@@ -33,7 +33,6 @@ from src.infrastructure.tasks import (
 from src.jinja_filters import file_mtime_filter
 from src.rules.service import RuleService
 from src.rules.sqlite_repo import SqliteRuleRepository
-from src.rules.sync import sync_rules_from_remote
 from src.users.sqlite_repo import SqliteUserRepository
 from src.infrastructure.maintenance import (
     job_background_maintenance,
@@ -41,7 +40,7 @@ from src.infrastructure.maintenance import (
 )
 from src.web.routes import register_routes
 from src.web.serializers import json_serializer
-from src.web.sse import EventBroadcaster
+from src.web.events import EventBroadcaster
 
 logger = get_logger(__name__)
 # shortcut: allow three seconds per cooperative resource close; revisit if
@@ -105,15 +104,12 @@ def run_migrations(root_path: str):
         sys.exit(1)
 
 
-async def _build_tg_adapter(settings, user_repo) -> TelethonAdapter:
+async def _build_tg_adapter(settings, user_repo):
     """Create a TelethonAdapter, loading the session string from the DB if present."""
-    session_string = None
     try:
         user = await run_with_task_deadline(
             lambda: user_repo.get_user(1), None, name="startup_saved_session"
         )
-        if user:
-            session_string = user.session_string
     except SecretStorageError:
         # Do not silently start as a new account when persisted credentials are unreadable.
         raise
@@ -122,10 +118,14 @@ async def _build_tg_adapter(settings, user_repo) -> TelethonAdapter:
         logger.error("session_load_failed", category=type(e).__name__)
         raise
 
-    return TelethonAdapter(
-        session_string=session_string,
-        api_id=settings.TG_API_ID,
-        api_hash=settings.TG_API_HASH,
+    return (
+        TelethonAdapter(
+            session_string=user.session_string if user else None,
+            api_id=settings.TG_API_ID,
+            api_hash=settings.TG_API_HASH,
+            saved_account_id=user.telegram_id if user else None,
+        ),
+        user,
     )
 
 
@@ -147,7 +147,7 @@ def create_app() -> TypedQuart:
     app._startup_unwinding = False
     app._shutdown_started = False
     app._shutdown_inflight = None
-    app.sse = EventBroadcaster()
+    app.events = EventBroadcaster()
     app.shutdown_event = asyncio.Event()
     # Quart's default recognizes .html, but not the project's .html.j2 files.
     app.jinja_env.autoescape = select_autoescape(
@@ -191,7 +191,7 @@ def create_app() -> TypedQuart:
                 )
                 user_repo = SqliteUserRepository(db_path=settings.DB_PATH)
 
-                tg_adapter = await _build_tg_adapter(settings, user_repo)
+                tg_adapter, saved_user = await _build_tg_adapter(settings, user_repo)
                 cleanup.push_async_callback(
                     _cleanup_resource, "telegram", tg_adapter.disconnect
                 )
@@ -227,16 +227,16 @@ def create_app() -> TypedQuart:
                 bus = EventBus()
                 bus.subscribe(interactor.handle_event)
 
-                async def _sse_broadcast(event):
+                async def _broadcast(event):
                     async with app.app_context():
-                        await app.sse.broadcast(event)
+                        await app.events.broadcast(event)
 
-                bus.subscribe(_sse_broadcast)
+                bus.subscribe(_broadcast)
 
                 async def _persist_event(event):
                     # These raw updates refresh views without creating new
                     # retained history for profile changes or remote reads.
-                    if event.type == "profile_updated" or (
+                    if event.type in {"profile_updated", "chat_list_changed"} or (
                         event.type == "read" and event.read_origin == "remote"
                     ):
                         return
@@ -260,40 +260,23 @@ def create_app() -> TypedQuart:
                     interactor.initialize, None, name="startup_telegram_connect"
                 )
                 ensure_startup_active()
-
-                # Sync only after Telegram has identified the authenticated account.
-                if settings.RULES_SYNC_URL:
-
-                    def sync_is_current() -> bool:
-                        raise_if_task_stopped()
-                        return (
-                            not app.shutdown_event.is_set()
-                            and app.tg_adapter is tg_adapter
-                            and not tg_adapter._retired
-                        )
-
-                    await run_with_task_deadline(
-                        lambda: sync_rules_from_remote(
-                            settings.RULES_SYNC_URL,
-                            rule_repo,
-                            user_repo,
-                            expected_account_id=tg_adapter._self_id,
-                            token=settings.RULES_SYNC_TOKEN,
-                            ai_policy_change=rule_service.ai_policy_change,
-                            is_current=sync_is_current,
-                        ),
-                        None,
-                        name="startup_rules_sync",
+                if (
+                    saved_user
+                    and saved_user.telegram_id is None
+                    and tg_adapter.is_connected()
+                ):
+                    await user_repo.update_fields(
+                        saved_user.id,
+                        {"telegram_id": tg_adapter._self_id},
+                        expected_session=saved_user.session_string,
                     )
-                else:
-                    logger.info("rules_sync_skipped", reason="RULES_SYNC_URL not set")
 
                 ensure_startup_active()
                 app.managed_tasks.create(
                     rule_service.run_startup_scan(tg_adapter), "startup_scan"
                 )
                 app.managed_tasks.create(
-                    interactor.run_cache_warmer(app.shutdown_event), "chat_cache_warmer"
+                    interactor.run_prefetch_workers(), "chat_prefetch"
                 )
                 app.managed_tasks.create(
                     job_telegram_recovery(rule_service, user_repo, app.shutdown_event),
@@ -366,7 +349,7 @@ def create_app() -> TypedQuart:
         signal_error = None
         adapter = getattr(app, "tg_adapter", None)
         for signal in ((adapter.retire,) if adapter is not None else ()) + (
-            app.sse.close,
+            app.events.close,
         ):
             try:
                 signal()
@@ -405,9 +388,6 @@ def create_app() -> TypedQuart:
 
     @app.context_processor
     async def inject_globals():
-        """
-        Injects recent events and current user into the template context.
-        """
         from typing import cast
         from quart import current_app, has_request_context, request
 
@@ -434,38 +414,34 @@ def create_app() -> TypedQuart:
                 if typed_app.tg_adapter is not adapter:
                     raise AccountChanged()
 
-        try:
-            check()
-            user = await user_repo.get_user(1)
-            check()
-            events = []
-            events_unavailable = False
-            if user and user.debug_mode:
-
-                async def load_events():
-                    try:
-                        check()
-                        return await interactor.get_recent_events()
-                    finally:
-                        check()
-
-                deadline = (
-                    asyncio.get_running_loop().time() + TEMPLATE_EVENT_HISTORY_TIMEOUT
+        async def load_debug_events():
+            deadline = (
+                asyncio.get_running_loop().time() + TEMPLATE_EVENT_HISTORY_TIMEOUT
+            )
+            try:
+                check()
+                return await run_with_task_deadline(
+                    interactor.get_recent_events,
+                    deadline,
+                    name="template_event_history",
                 )
-                try:
-                    events = await run_with_task_deadline(
-                        load_events, deadline, name="template_event_history"
-                    )
-                except (LogUnavailable, TimeoutError):
-                    events_unavailable = True
+            except LogUnavailable, TimeoutError:
+                return None
+            finally:
                 check()
 
-            return {
-                "recent_events": events,
-                "recent_events_unavailable": events_unavailable,
-                "current_user": user,
-            }
+        check()
+        try:
+            user = await user_repo.get_user(1)
         finally:
             check()
+        active = typed_app.tg_adapter
+        return {
+            "current_user": user,
+            "account_token": active.account_token,
+            "profile_name": active.display_name,
+            "profile_avatar_id": active.profile_avatar_id,
+            "load_debug_events": load_debug_events,
+        }
 
     return app

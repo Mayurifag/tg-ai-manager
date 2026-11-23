@@ -2,12 +2,15 @@ import asyncio
 
 from quart import Blueprint, abort, current_app, jsonify, render_template, request
 
-from src.application.interactors import ChatSnapshotExpired
+from src.application.interactors import (
+    CHAT_PAGE_SIZE,
+    MAX_CHAT_PAGE_SIZE,
+    ChatSnapshotExpired,
+)
 from src.domain.errors import AccountChanged, LogUnavailable, ReactionBlocked
 from src.container import (
     get_chat_interactor,
     get_rule_service,
-    get_user_repo,
 )
 from src.infrastructure.telegram_queue import WriteQueueFull
 from src.infrastructure.tasks import gather_owned, run_with_task_deadline
@@ -32,6 +35,8 @@ async def _chat_list_page(
     *,
     snapshot: str | None = None,
     offset: int = 0,
+    limit: int = CHAT_PAGE_SIZE,
+    prefetch: bool = True,
     refresh: bool = False,
     fragment: bool = False,
 ):
@@ -48,14 +53,20 @@ async def _chat_list_page(
     check()
     try:
         page = await interactor.get_chat_page(
-            snapshot, offset, refresh=refresh, check_current=check
+            snapshot,
+            offset,
+            refresh=refresh,
+            limit=limit,
+            prefetch=prefetch,
+            check_current=check,
         )
     except ChatSnapshotExpired:
         check()
         return jsonify({"error": "Chat list expired"}), 410
     check()
     if fragment:
-        html = await render_template("partials/chat_cards.html.j2", chats=page.chats)
+        template = current_app.jinja_env.get_template("partials/chat_cards.html.j2")
+        html = await template.render_async(chats=page.chats)
         check()
         return jsonify(
             {"html": html, "snapshot": page.snapshot, "next_offset": page.next_offset}
@@ -68,18 +79,25 @@ async def _chat_list_page(
 @chat_bp.route("/api/chats")
 async def api_chats():
     try:
-        params = query_values({"snapshot", "offset", "refresh"})
+        params = query_values({"snapshot", "offset", "refresh", "limit", "prefetch"})
     except BadRequest as error:
         return bad_request(error)
     snapshot = params.get("snapshot") or None
     raw_offset = params.get("offset", "0")
+    raw_limit = params.get("limit", str(CHAT_PAGE_SIZE))
     refresh = params.get("refresh", "0")
+    prefetch = params.get("prefetch", "1")
     if (
         len(raw_offset) > 9
         or not raw_offset.isascii()
         or not raw_offset.isdecimal()
+        or len(raw_limit) > len(str(MAX_CHAT_PAGE_SIZE))
+        or not raw_limit.isascii()
+        or not raw_limit.isdecimal()
+        or not 1 <= int(raw_limit) <= MAX_CHAT_PAGE_SIZE
         or (snapshot is None and raw_offset != "0")
         or refresh not in {"0", "1"}
+        or prefetch not in {"0", "1"}
         or (refresh == "1" and snapshot is not None)
         or (snapshot is not None and len(snapshot) > 128)
     ):
@@ -88,6 +106,8 @@ async def api_chats():
     return await _chat_list_page(
         snapshot=snapshot,
         offset=int(raw_offset),
+        limit=int(raw_limit),
+        prefetch=prefetch == "1",
         refresh=refresh == "1",
         fragment=True,
     )
@@ -117,7 +137,7 @@ async def actions_view():
         logs = await run_with_task_deadline(
             load_actions, deadline, name="action_history_lookup"
         )
-    except (LogUnavailable, TimeoutError):
+    except LogUnavailable, TimeoutError:
         check()
         result = (
             await render_template(
@@ -145,7 +165,6 @@ async def topic_view(chat_id: int, topic_id: int):
 async def _chat_page(chat_id: int, topic_id: int | None):
     interactor = get_chat_interactor()
     rule_service = get_rule_service()
-    user_repo = get_user_repo()
     repository = getattr(request, "_account_adapter", None)
     if repository is None:
         raise AccountChanged()
@@ -161,24 +180,20 @@ async def _chat_page(chat_id: int, topic_id: int | None):
 
     async def load_messages():
         check()
-        return await interactor.get_chat_messages(chat_id, topic_id=topic_id)
+        messages = await interactor.get_chat_messages(chat_id, topic_id=topic_id)
+        return messages, interactor.transcript_revision(chat_id, topic_id)
 
     check()
-    chat, messages = await gather_owned(load_chat, load_messages)
+    chat, (messages, transcript_revision) = await gather_owned(load_chat, load_messages)
     check()
     if not chat:
         abort(404)
 
-    user = await user_repo.get_user(1)
+    rules = await rule_service.get_effective_rules(chat_id, topic_id)
     check()
-    autoread_rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREAD)
-    check()
-    ai_autoread_rule = await rule_service.get_rule(
-        chat_id, topic_id, RuleType.AI_AUTOREAD
-    )
-    check()
-    react_rule = await rule_service.get_rule(chat_id, topic_id, RuleType.AUTOREACT)
-    check()
+    autoread_rule = rules.get(RuleType.AUTOREAD)
+    ai_autoread_rule = rules.get(RuleType.AI_AUTOREAD)
+    react_rule = rules.get(RuleType.AUTOREACT)
 
     autoreact_status = "off"
     if react_rule:
@@ -190,6 +205,7 @@ async def _chat_page(chat_id: int, topic_id: int | None):
         chat=chat,
         chat_id=chat_id,
         topic_id=topic_id,
+        transcript_revision=transcript_revision,
         autoread_enabled=bool(autoread_rule),
         ai_autoread_enabled=bool(ai_autoread_rule),
         autoread_inherited=bool(
@@ -199,7 +215,6 @@ async def _chat_page(chat_id: int, topic_id: int | None):
             topic_id and ai_autoread_rule and ai_autoread_rule.topic_id is None
         ),
         autoreact_status=autoreact_status,
-        is_premium=user.is_premium if user else False,
     )
     check()
     return result
@@ -286,7 +301,8 @@ async def api_get_chat_card(chat_id: int):
     check()
     if not chat:
         return "Chat not found", 404
-    result = await render_template("partials/chat_card_wrapper.html.j2", chat=chat)
+    template = current_app.jinja_env.get_template("partials/chat_card_wrapper.html.j2")
+    result = await template.render_async(chat=chat)
     check()
     return result
 

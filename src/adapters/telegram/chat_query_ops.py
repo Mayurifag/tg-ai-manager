@@ -10,6 +10,7 @@ from telethon.tl.types import InputDialogPeer
 
 from src.adapters.telethon_mappers import (
     format_message_preview,
+    get_message_action_text,
     map_telethon_dialog_to_chat_type,
 )
 from src.adapters.telegram.query_errors import unavailable
@@ -58,8 +59,6 @@ class ChatQueryOps:
         for d in dialogs:
             raise_if_task_stopped()
             chat_type = map_telethon_dialog_to_chat_type(d)
-            unread_count = d.unread_count
-            unread_topics_count = None
 
             raise_if_task_stopped()
             image_url = await self._media._get_chat_image(
@@ -73,18 +72,19 @@ class ChatQueryOps:
                 self._parser._cache_message_chat(msg.id, d.id)
 
             raise_if_task_stopped()
-            preview = format_message_preview(msg, chat_type, {})
+            preview = format_message_preview(msg, chat_type)
 
             results.append(
                 Chat(
                     id=d.id,
                     name=d.name,
-                    unread_count=unread_count,
+                    unread_count=d.unread_count,
                     type=chat_type,
-                    unread_topics_count=unread_topics_count,
                     last_message_preview=preview,
                     image_url=image_url,
                     is_pinned=d.pinned,
+                    last_message_id=getattr(msg, "id", None),
+                    last_message_date=getattr(msg, "date", None),
                 )
             )
         raise_if_task_stopped()
@@ -127,6 +127,9 @@ class ChatQueryOps:
                             unread_count=d.unread_count,
                             type=chat_type,
                             last_message_id=getattr(d.message, "id", None),
+                            unread_message=self._dialog_unread_message(d)
+                            if d.unread_count == 1 and chat_type != ChatType.FORUM
+                            else None,
                         )
                         results.append(chat)
                     check()
@@ -141,6 +144,39 @@ class ChatQueryOps:
         check()
         return results
 
+    @staticmethod
+    def _dialog_unread_message(dialog: Any) -> Optional[Message]:
+        msg = dialog.message
+        if not isinstance(msg, (types.Message, types.MessageService)) or (
+            msg.date is None or getattr(msg, "chat_id", None) != dialog.id
+        ):
+            return None
+        sender = msg.sender
+        if sender is None and getattr(msg, "post", False):
+            sender = msg.chat
+        # A partial sender may omit a username needed by a bot filter.
+        if not isinstance(sender, (types.User, types.Chat, types.Channel)) or getattr(
+            sender, "min", False
+        ):
+            return None
+        is_service = isinstance(msg, types.MessageService)
+        text = (
+            get_message_action_text(msg) or "Service message"
+            if is_service
+            else msg.message or ""
+        )
+        return Message(
+            id=msg.id,
+            text="",
+            date=msg.date,
+            sender_name="",
+            is_outgoing=bool(msg.out),
+            sender_username=getattr(sender, "username", None),
+            is_service=is_service,
+            is_poll=isinstance(getattr(msg, "media", None), types.MessageMediaPoll),
+            raw_text=text,
+        )
+
     async def _get_unread_chats_by_id(
         self, chat_ids: List[int], *, check: Callable[[], None]
     ) -> List[Chat]:
@@ -151,6 +187,16 @@ class ChatQueryOps:
             check()
             if retry_at <= now:
                 self._unavailable_chats.pop(chat_id, None)
+
+        def defer(chat_id: int) -> None:
+            self._unavailable_chats[chat_id] = time.monotonic() + 300
+            self._unavailable_chats.move_to_end(chat_id)
+            while len(self._unavailable_chats) > MAX_UNAVAILABLE_CHATS:
+                self._unavailable_chats.popitem(last=False)
+            logger.warning(
+                "reconcile_chat_unavailable", chat_id=chat_id, retry_after_seconds=300
+            )
+
         peers = []
         for chat_id in sorted(set(chat_ids)):
             check()
@@ -162,26 +208,32 @@ class ChatQueryOps:
                 if not peer:
                     raise LookupError("Telegram did not return the chat")
                 check()
-                peers.append(InputDialogPeer(peer=peer))
-                self._unavailable_chats.pop(chat_id, None)
-            except (ValueError, errors.ChannelPrivateError):
+                peers.append((chat_id, InputDialogPeer(peer=peer)))
+            except LookupError, ValueError, errors.ChannelPrivateError:
                 check()
-                self._unavailable_chats[chat_id] = time.monotonic() + 300
-                self._unavailable_chats.move_to_end(chat_id)
-                while len(self._unavailable_chats) > MAX_UNAVAILABLE_CHATS:
-                    self._unavailable_chats.popitem(last=False)
-                logger.warning(
-                    "reconcile_chat_unavailable",
-                    chat_id=chat_id,
-                    retry_after_seconds=300,
-                )
+                defer(chat_id)
 
         results = []
-        for offset in range(0, len(peers), 100):
+
+        async def lookup(batch) -> None:
             check()
-            response = await self.client(
-                GetPeerDialogsRequest(peers=peers[offset : offset + 100])
-            )
+            try:
+                response = await self.client(
+                    GetPeerDialogsRequest(peers=[peer for _, peer in batch])
+                )
+            except (
+                errors.ChannelPrivateError,
+                errors.ChannelInvalidError,
+                errors.PeerIdInvalidError,
+            ):
+                check()
+                if len(batch) == 1:
+                    defer(batch[0][0])
+                else:
+                    middle = len(batch) // 2
+                    await lookup(batch[:middle])
+                    await lookup(batch[middle:])
+                return
             check()
             entities = {
                 utils.get_peer_id(entity): entity
@@ -220,6 +272,9 @@ class ChatQueryOps:
                     read_max_id=dialog.read_inbox_max_id,
                     top_message_id=dialog.top_message,
                 )
+
+        for offset in range(0, len(peers), 100):
+            await lookup(peers[offset : offset + 100])
         check()
         return results
 
@@ -235,9 +290,35 @@ class ChatQueryOps:
         avatar_generation = self._media.avatar_generation()
         check()
         try:
-            entity = await self.client.get_entity(chat_id)
+            input_peer = await self.client.get_input_entity(chat_id)
             check()
-            name = utils.get_display_name(entity)
+            res = await self.client(
+                GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])
+            )
+            check()
+            dialog = next(
+                (
+                    item
+                    for item in res.dialogs
+                    if utils.get_peer_id(item.peer) == chat_id
+                ),
+                None,
+            )
+            if dialog is None:
+                raise LookupError("Telegram did not return dialog state")
+            entity = next(
+                (
+                    item
+                    for item in (*res.chats, *res.users)
+                    if isinstance(item, (types.User, types.Chat, types.Channel))
+                    and not getattr(item, "min", False)
+                    and utils.get_peer_id(item) == chat_id
+                ),
+                None,
+            )
+            if entity is None:
+                entity = await self.client.get_entity(input_peer)
+                check()
 
             c_type = ChatType.GROUP
             if isinstance(entity, types.User):
@@ -258,35 +339,33 @@ class ChatQueryOps:
             )
             check()
 
-            unread_topics_count = None
-            input_peer = utils.get_input_peer(entity)
-            check()
-            res = await self.client(
-                GetPeerDialogsRequest(peers=[InputDialogPeer(peer=input_peer)])  # type: ignore
-            )
-            check()
-            if not res.dialogs:
-                raise LookupError("Telegram did not return dialog state")
-            dialog = res.dialogs[0]
             latest_msg = next(
-                (msg for msg in res.messages if msg.id == dialog.top_message), None
+                (
+                    msg
+                    for msg in res.messages
+                    if msg.id == dialog.top_message
+                    and (peer := getattr(msg, "peer_id", None)) is not None
+                    and utils.get_peer_id(peer) == chat_id
+                ),
+                None,
             )
             check()
             if latest_msg:
                 self._parser._cache_message_chat(latest_msg.id, chat_id)
             check()
-            last_message_preview = format_message_preview(latest_msg, c_type, {})
+            last_message_preview = format_message_preview(latest_msg, c_type)
 
             check()
             return Chat(
                 id=chat_id,
-                name=name,
+                name=utils.get_display_name(entity),
                 unread_count=dialog.unread_count,
                 type=c_type,
-                unread_topics_count=unread_topics_count,
                 image_url=image_url,
                 last_message_preview=last_message_preview,
                 is_pinned=dialog.pinned,
+                last_message_id=dialog.top_message or None,
+                last_message_date=getattr(latest_msg, "date", None),
             )
         except AccountChanged:
             raise

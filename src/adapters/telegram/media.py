@@ -51,14 +51,20 @@ class MediaBusy(RuntimeError):
 
 
 class _BoundedBytesIO(io.BytesIO):
+    def __init__(self, limit: int = MAX_DOWNLOAD_BYTES) -> None:
+        super().__init__()
+        self.limit = limit
+
     def write(self, data: bytes) -> int:
-        if self.tell() + len(data) > MAX_DOWNLOAD_BYTES:
+        if self.tell() + len(data) > self.limit:
             raise MediaTooLarge("Media exceeds the in-memory download limit")
         return super().write(data)
 
 
-async def _download_bytes(download, *args, **kwargs) -> Optional[bytes]:
-    with _BoundedBytesIO() as output:
+async def _download_bytes(
+    download, *args, limit: int = MAX_DOWNLOAD_BYTES, **kwargs
+) -> Optional[bytes]:
+    with _BoundedBytesIO(limit) as output:
         result = await download(*args, file=output, **kwargs)
         return output.getvalue() if result is not None else None
 
@@ -344,8 +350,8 @@ class MediaManager:
         # shortcut: retry one invalidated lookup; revisit if busy chats routinely fail.
         for _ in range(MEDIA_LOOKUP_ATTEMPTS):
             generation = self.message_generation(chat_id)
-            entity = await self.client.get_entity(chat_id)
-            messages = await self.client.get_messages(entity, ids=[message_id])
+            peer = await self.client.get_input_entity(chat_id)
+            messages = await self.client.get_messages(peer, ids=[message_id])
             if self._closed:
                 return None
             if generation != self.message_generation(chat_id):
@@ -382,7 +388,7 @@ class MediaManager:
                 )
                 if isinstance(data, bytes) and data:
                     return MediaContent(data=data, mime_type="image/jpeg")
-            except (MediaBusy, MediaTooLarge, TelegramUnavailable):
+            except MediaBusy, MediaTooLarge, TelegramUnavailable:
                 raise
             except Exception as error:
                 logger.warning(
@@ -460,7 +466,7 @@ class MediaManager:
                     await self.get_chat_avatar(chat_id)
                 else:
                     await self.download_media(chat_id, message_id)
-            except (MediaBusy, MediaTooLarge):
+            except MediaBusy, MediaTooLarge:
                 logger.info("preview_prefetch_skipped", chat_id=chat_id)
             except Exception as error:
                 logger.warning(
@@ -519,7 +525,7 @@ class MediaManager:
                                 break
                 if isinstance(data, bytes) and data:
                     return MediaContent(data=data, mime_type=mime_type)
-            except (MediaBusy, MediaTooLarge, TelegramUnavailable):
+            except MediaBusy, MediaTooLarge, TelegramUnavailable:
                 raise
             except Exception as error:
                 logger.warning(
@@ -547,7 +553,7 @@ class MediaManager:
             message = await self._message(chat_id, message_id)
             media = getattr(message, "media", None)
             return media.document if isinstance(media, MessageMediaDocument) else None
-        except (MediaBusy, MediaTooLarge, TelegramUnavailable):
+        except MediaBusy, MediaTooLarge, TelegramUnavailable:
             raise
         except Exception as error:
             logger.warning(
@@ -635,7 +641,7 @@ class MediaManager:
                             data=data,
                             mime_type=document.mime_type or "application/octet-stream",
                         )
-            except (MediaBusy, MediaTooLarge, TelegramUnavailable):
+            except MediaBusy, MediaTooLarge, TelegramUnavailable:
                 raise
             except Exception as error:
                 logger.warning(

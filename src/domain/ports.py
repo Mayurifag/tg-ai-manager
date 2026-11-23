@@ -137,8 +137,10 @@ class TelegramWritePort(ABC):
         on_success: Callable[[], Awaitable[None]],
         *,
         selective: bool,
-    ) -> None:
-        """Queue a guarded, bounded automatic read."""
+        chat_name: str,
+        topic_name: Optional[str],
+    ) -> bool:
+        """Queue a guarded, bounded automatic read unless already confirmed."""
         pass
 
     @abstractmethod

@@ -179,6 +179,8 @@ button.setting-option {
 }
 
 .sidebar-avatar {
+  position: relative;
+  overflow: hidden;
   width: 32px;
   height: 32px;
   min-width: 32px;
@@ -194,6 +196,14 @@ button.setting-option {
   text-transform: uppercase;
 }
 
+.sidebar-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .sidebar-user-info {
   flex: 1;
   overflow: hidden;
@@ -202,7 +212,8 @@ button.setting-option {
   justify-content: center;
 }
 
-.sidebar-username {
+.sidebar-username,
+.sidebar-handle {
   font-weight: 600;
   color: #fff;
   font-size: 0.85rem; /* Reduced font size */
@@ -210,6 +221,11 @@ button.setting-option {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.2;
+}
+
+.sidebar-handle {
+  font-weight: normal;
+  color: var(--text-muted);
 }
 
 .sidebar-status {
@@ -270,9 +286,6 @@ button.setting-option {
 .event-item.type-message {
   border-left-color: #4caf50;
 }
-.event-item.type-edited {
-  border-left-color: #ff9800;
-}
 .event-item.type-deleted {
   border-left-color: #f44336;
 }
@@ -325,12 +338,6 @@ button.setting-option {
   overflow: hidden;
   white-space: normal;
   word-break: break-word;
-}
-
-.event-text strong,
-.event-text b {
-  font-weight: bold;
-  color: #fff;
 }
 
 /* Global Tooltip */
@@ -481,9 +488,6 @@ button.setting-option {
     flex-direction: row;
     flex-wrap: wrap;
     padding-top: 8px;
-  }
-  .user-profile-section {
-    display: none;
   }
   .main-content,
   .debug-layout .main-content {

@@ -1,8 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from telethon.errors import FloodWaitError
-
 from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,20 +13,11 @@ class WriteQueueFull(RuntimeError):
     """The operation was not accepted; callers may retry later."""
 
 
-class UncertainFloodWait(Exception):
-    """Honor a flood wait without retrying a potentially completed write."""
-
-    def __init__(self, seconds: int) -> None:
-        super().__init__("Telegram write outcome is unknown")
-        self.seconds = seconds
-
-
 class TelegramWriteQueue:
     """Serial write queue for Telegram API operations.
 
     Enqueued coroutines are executed one at a time by a single worker.
-    On FloodWait (429) errors the same operation is retried after waiting
-    the required number of seconds, except for explicitly uncertain writes.
+    A write must manage its own retries without holding the worker during delays.
     Dropping pending operations on shutdown is acceptable (in-memory only).
     """
 
@@ -111,29 +100,14 @@ class TelegramWriteQueue:
 
     async def _worker(self) -> None:
         while self._running:
+            coro_fn = await self._queue.get()
             try:
-                coro_fn = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-
-            try:
-                while self._running:
-                    try:
-                        await coro_fn()
-                        break
-                    except UncertainFloodWait as e:
-                        logger.warning("flood_wait_without_retry", seconds=e.seconds)
-                        await asyncio.sleep(e.seconds)
-                        break
-                    except FloodWaitError as e:
-                        # Keep the accepted operation in the worker's single
-                        # in-flight slot; a full queue cannot deadlock a retry.
-                        logger.warning("flood_wait_backoff", seconds=e.seconds)
-                        await asyncio.sleep(e.seconds)
-                    except Exception as e:
-                        logger.error(
-                            "write_queue_operation_failed", category=type(e).__name__
-                        )
-                        break
+                await coro_fn()
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                logger.warning("write_queue_operation_cancelled")
+            except Exception as e:
+                logger.error("write_queue_operation_failed", category=type(e).__name__)
             finally:
                 self._queue.task_done()

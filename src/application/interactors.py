@@ -27,6 +27,7 @@ from src.infrastructure.tasks import raise_if_task_stopped
 
 
 CHAT_PAGE_SIZE = 20
+MAX_CHAT_PAGE_SIZE = 200
 CHAT_SNAPSHOT_TTL = 60 * 60
 MAX_CHAT_SNAPSHOTS = 8
 CHAT_LIST_TTL = 60
@@ -69,8 +70,12 @@ class ChatInteractor:
         self.repository = repository
         self.action_repo = action_repo
         self.event_repo = event_repo
-        self._chat_snapshots: OrderedDict[str, tuple[float, List[Chat]]] = OrderedDict()
+        self._chat_snapshots: OrderedDict[str, tuple[float, List[Chat], int]] = (
+            OrderedDict()
+        )
         self._chat_list: Optional[tuple[float, List[Chat]]] = None
+        self._chat_list_revision = 0
+        self._chat_list_scan_revision = 0
         self._chat_list_lock = asyncio.Lock()
         self._chat_list_generation = 0
         self._dirty_chat_ids: set[int] = set()
@@ -83,6 +88,7 @@ class ChatInteractor:
         ] = WeakValueDictionary()
         self._message_versions: OrderedDict[int, int] = OrderedDict()
         self._message_version_epoch = 0
+        self._transcript_scope = secrets.token_urlsafe(12)
         self._last_event_prefetch: OrderedDict[int, float] = OrderedDict()
         self._forum_topics: OrderedDict[int, tuple[float, ForumTopicPage]] = (
             OrderedDict()
@@ -94,7 +100,6 @@ class ChatInteractor:
             asyncio.Queue(maxsize=100)
         )
         self._prefetch_pending: set[tuple[int, int, Optional[int]]] = set()
-        self._warmer_running = False
 
     async def initialize(self):
         await self.repository.connect()
@@ -120,6 +125,15 @@ class ChatInteractor:
     def _invalidate_chat_list(self) -> None:
         self._chat_list = None
         self._chat_list_generation += 1
+        self._chat_list_revision += 1
+
+    def is_chat_snapshot_current(self, token: str) -> bool:
+        snapshot = self._chat_snapshots.get(token)
+        return snapshot is not None and snapshot[2] == self._chat_list_revision
+
+    def transcript_revision(self, chat_id: int, topic_id: Optional[int]) -> str:
+        epoch, version = self._message_version(chat_id)
+        return f"{self._transcript_scope}:{chat_id}:{topic_id}:{epoch}:{version}"
 
     def _message_version(self, chat_id: int) -> tuple[int, int]:
         return self._message_version_epoch, self._message_versions.get(chat_id, 0)
@@ -143,13 +157,15 @@ class ChatInteractor:
         offset: int = 0,
         refresh: bool = False,
         *,
+        limit: int = CHAT_PAGE_SIZE,
+        prefetch: bool = True,
         check_current: Optional[Callable[[], None]] = None,
     ) -> ChatPage:
         raise_if_task_stopped()
         if check_current is not None:
             check_current()
         now = time.monotonic()
-        for key, (last_used, _) in list(self._chat_snapshots.items()):
+        for key, (last_used, _, _) in list(self._chat_snapshots.items()):
             if now - last_used >= CHAT_SNAPSHOT_TTL:
                 del self._chat_snapshots[key]
 
@@ -163,6 +179,7 @@ class ChatInteractor:
             # Telegram already orders pinned and recent chats; a stable sort
             # preserves that order within the unread and read groups.
             chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
+            revision = self._chat_list_scan_revision
             snapshot = secrets.token_urlsafe(18)
             while len(self._chat_snapshots) >= MAX_CHAT_SNAPSHOTS:
                 self._chat_snapshots.popitem(last=False)
@@ -170,13 +187,14 @@ class ChatInteractor:
             cached = self._chat_snapshots.get(snapshot)
             if cached is None:
                 raise ChatSnapshotExpired
-            chats = cached[1]
+            _, chats, revision = cached
 
-        self._chat_snapshots[snapshot] = (time.monotonic(), chats)
+        self._chat_snapshots[snapshot] = (time.monotonic(), chats, revision)
         self._chat_snapshots.move_to_end(snapshot)
-        end = offset + CHAT_PAGE_SIZE
+        end = offset + limit
         page_chats = chats[offset:end]
-        self._queue_prefetch(page_chats)
+        if prefetch:
+            self._queue_prefetch(page_chats)
         return ChatPage(page_chats, snapshot, end if end < len(chats) else None)
 
     async def _get_chat_list(
@@ -191,9 +209,6 @@ class ChatInteractor:
                 check_current()
 
         check()
-        # Serve the previous list while the background refresh is in flight.
-        if self._warmer_running and not refresh and self._chat_list is not None:
-            return self._chat_list[1]
         observed = self._chat_list
         while True:
             check()
@@ -210,12 +225,14 @@ class ChatInteractor:
                 if (
                     refresh
                     or self._chat_list is None
+                    or self._chat_list_scan_revision != self._chat_list_revision
                     or time.monotonic() - self._chat_list[0] >= CHAT_LIST_TTL
                 ):
                     remaining = self._chat_scan_retry_at - time.monotonic()
                     if remaining > 0:
                         raise TelegramUnavailable(retry_after=math.ceil(remaining))
                     generation = self._chat_list_generation
+                    revision = self._chat_list_revision
                     repository = self.repository
                     try:
                         chats = await repository.get_chats()
@@ -223,6 +240,7 @@ class ChatInteractor:
                         if generation != self._chat_list_generation:
                             continue
                         self._chat_list = (time.monotonic(), chats)
+                        self._chat_list_scan_revision = revision
                         self._chat_scan_retry_at = 0.0
                     except AccountChanged:
                         check()
@@ -302,38 +320,16 @@ class ChatInteractor:
                 self._prefetch_pending.discard((generation, chat.id, topic_id))
                 self._prefetch_queue.task_done()
 
-    async def run_cache_warmer(self, shutdown_event: asyncio.Event) -> None:
-        self._warmer_running = True
-        workers = [
-            asyncio.create_task(self._prefetch_worker())
-            for _ in range(PREFETCH_WORKERS)
-        ]
-        try:
-            while not shutdown_event.is_set():
-                try:
-                    if self.repository.is_connected():
-                        expired = (
-                            self._chat_list is None
-                            or time.monotonic() - self._chat_list[0] >= CHAT_LIST_TTL
-                        )
-                        chats = await self._get_chat_list(refresh=expired)
-                        chats = sorted(chats, key=lambda chat: chat.unread_count <= 0)
-                        self._queue_prefetch(chats[:CHAT_PAGE_SIZE])
-                except Exception as error:
-                    logger.warning(
-                        "chat_cache_refresh_failed", category=type(error).__name__
-                    )
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=CHAT_LIST_TTL)
-                except asyncio.TimeoutError:
-                    pass
-        finally:
-            self._warmer_running = False
-            for worker in workers:
-                worker.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+    async def run_prefetch_workers(self) -> None:
+        async with asyncio.TaskGroup() as workers:
+            for _ in range(PREFETCH_WORKERS):
+                workers.create_task(self._prefetch_worker())
 
     async def handle_event(self, event: SystemEvent) -> None:
+        if event.type == "chat_list_changed":
+            self._invalidate_chat_list()
+            self._chat_snapshots.clear()
+            return
         if event.type == "resync_required":
             self._invalidate_chat_list()
             self._chat_snapshots.clear()
@@ -347,9 +343,13 @@ class ChatInteractor:
             # An in-flight history may contain this sender even when no cached
             # history does. Cached unrelated histories remain available.
             self._message_version_epoch += 1
-            if self._chat_list and any(
+            known_chat = self._chat_list is not None and any(
                 chat.id == peer_id for chat in self._chat_list[1]
-            ):
+            )
+            # An in-flight scan may include a peer absent from the old list.
+            if known_chat or self._chat_list_lock.locked():
+                self._chat_list_revision += 1
+            if known_chat:
                 if len(self._dirty_chat_ids) >= 1000:
                     self._invalidate_chat_list()
                     self._dirty_chat_ids.clear()
@@ -398,6 +398,7 @@ class ChatInteractor:
             "action",
             "read",
         }:
+            self._chat_list_revision += 1
             if len(self._dirty_chat_ids) >= 1000:
                 self._invalidate_chat_list()
                 self._dirty_chat_ids.clear()
@@ -432,7 +433,6 @@ class ChatInteractor:
             now = time.monotonic()
             if (
                 was_cached
-                and self._warmer_running
                 and self._chat_list
                 and now - self._last_event_prefetch.get(event.chat_id, float("-inf"))
                 >= EVENT_PREFETCH_INTERVAL
@@ -650,7 +650,6 @@ class ChatInteractor:
         repository = self.repository
         self._ensure_repository_current(repository)
         if offset_id:
-            version = self._message_version(chat_id)
             raw = await repository.get_messages(
                 chat_id, topic_id=topic_id, offset_id=offset_id
             )
@@ -659,8 +658,6 @@ class ChatInteractor:
                 repository, chat_id, topic_id, raw
             )
             self._ensure_repository_current(repository)
-            if version != self._message_version(chat_id):
-                raise TelegramUnavailable()
             messages = group_messages_into_albums(raw)
             self._ensure_repository_current(repository)
             return messages

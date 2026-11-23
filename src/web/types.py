@@ -9,7 +9,7 @@ from src.infrastructure.tasks import BackgroundTasks
 from src.rules.service import RuleService
 from src.users.ports import UserRepository
 from src.web.requests import ValidatedJSONProvider, ValidatedRequest
-from src.web.sse import EventBroadcaster
+from src.web.events import EventBroadcaster
 
 
 class TypedQuart(Quart):
@@ -100,5 +100,5 @@ class TypedQuart(Quart):
     _startup_unwinding: bool
     _shutdown_started: bool
     _shutdown_inflight: asyncio.Future[str] | None
-    sse: EventBroadcaster
+    events: EventBroadcaster
     shutdown_event: asyncio.Event

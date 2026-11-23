@@ -1,3 +1,5 @@
+from time import perf_counter
+
 import google.genai
 from google.genai import types
 
@@ -21,7 +23,8 @@ class GeminiClassifier(AIClassifier):
         self._model = model
         self._prompt = prompt
         self._client = google.genai.Client(
-            api_key=api_key, http_options=types.HttpOptions(timeout=10_000)
+            api_key=api_key,
+            http_options=types.HttpOptions(api_version="v1beta", timeout=10_000),
         )
 
     async def classify_is_ad(self, text: str) -> bool:
@@ -40,11 +43,21 @@ class GeminiClassifier(AIClassifier):
             },
             max_output_tokens=128,
         )
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=text,
-            config=config,
-        )
+        started = perf_counter()
+        received = False
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self._model,
+                contents=text,
+                config=config,
+            )
+            received = True
+        finally:
+            logger.info(
+                "gemini_request_finished",
+                sdk_request_ms=round((perf_counter() - started) * 1000, 1),
+                response_received=received,
+            )
         candidates = response.candidates or []
         feedback = response.prompt_feedback
         if len(candidates) != 1 or (

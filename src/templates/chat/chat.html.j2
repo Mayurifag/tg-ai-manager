@@ -78,8 +78,7 @@ Messages
 {% block content %}
 <div id="loading-indicator" class="history-status" role="status" aria-live="polite" hidden>Loading older messages…</div>
 <div class="messages-container" id="messages-container">
-    {% include "chat/messages_partial.html.j2" %}
-    {% if not messages %}<p class="empty-messages">No messages to show.</p>{% endif %}
+    {% include "chat/transcript.html.j2" %}
 </div>
 
 <div id="toast" role="status" aria-live="polite"></div>
@@ -102,7 +101,7 @@ Messages
                 <button type="button" class="emoji-opt selected" data-emoji="💩" aria-label="React with 💩" aria-pressed="true">💩</button>
                 <button type="button" class="emoji-opt" data-emoji="🤡" aria-label="React with 🤡" aria-pressed="false">🤡</button>
                 <button type="button" class="emoji-opt" data-emoji="❤️" aria-label="React with ❤️" aria-pressed="false">❤️</button>
-                <input type="text" id="custom-emoji-input" aria-label="Custom reaction" placeholder="Custom" maxlength="4">
+                <input type="text" id="custom-emoji-input" aria-label="Custom reaction" placeholder="Emoji or ID">
             </div>
 
             <div id="ar-user-section" style="display: {{ 'none' if chat.type.value == 'channel' else 'block' }};">
@@ -144,7 +143,7 @@ Messages
     window.TG_CHAT = {
         chatId: {{ chat_id | string | tojson }},
         topicId: {{ topic_id if topic_id is not none else 'null' }},
-        isPremium: {{ 'true' if is_premium else 'false' }},
+        snapshot: {{ transcript_revision | tojson }},
         isChannel: {{ 'true' if chat.type.value == 'channel' else 'false' }}
     };
 </script>

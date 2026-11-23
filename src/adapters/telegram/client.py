@@ -2,6 +2,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable, List, Optional
 
+from telethon import utils
 from telethon.errors import SessionPasswordNeededError
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import GetPasswordRequest
@@ -14,6 +15,7 @@ from src.adapters.telegram.media import MediaManager
 from src.adapters.telegram.message_parser import MessageParser
 from src.adapters.telegram.query_errors import unavailable
 from src.adapters.telegram.recovering_client import RecoveringTelegramClient
+from src.adapters.telegram.stickers import StickerWorkspace
 from src.adapters.telegram.types import ITelethonClient
 from src.domain.errors import AccountChanged
 from src.domain.models import ForumTopicCursor, MediaContent, SystemEvent
@@ -34,6 +36,8 @@ class TelethonAdapter(ChatRepository):
         session_string: Optional[str],
         api_id: Optional[int],
         api_hash: Optional[str],
+        *,
+        saved_account_id: int | None = None,
     ):
         self.session = StringSession(session_string or "")
         self._source_session_string = session_string
@@ -42,10 +46,12 @@ class TelethonAdapter(ChatRepository):
         self.client: Optional[ITelethonClient] = None
 
         self._self_id: Optional[int] = None
+        self._saved_account_id = saved_account_id
+        self.self_profile = None
 
         if self.api_id and self.api_hash:
             self.client = RecoveringTelegramClient(
-                self.session, self.api_id, self.api_hash
+                self.session, self.api_id, self.api_hash, flood_sleep_threshold=0
             )  # type: ignore
         else:
             logger.info("adapter_initialized_no_credentials")
@@ -70,6 +76,7 @@ class TelethonAdapter(ChatRepository):
 
         # Build collaborators
         self._media = MediaManager(self.client)
+        self.stickers = StickerWorkspace(self.client, self._media, self._write_queue)
         self._parser = MessageParser(self.client, self._media)
         self._chat_query_ops = ChatQueryOps(
             client=self.client, parser=self._parser, media=self._media
@@ -80,8 +87,6 @@ class TelethonAdapter(ChatRepository):
             parser=self._parser,
             write_queue=self._write_queue,
             dispatch_fn=None,
-            get_topic_name_fn=self._forum_ops.get_topic_name,
-            get_topic_name_before_fn=self._forum_ops.get_topic_name,
         )
         self._event_handlers = EventHandlers(
             client=self.client,
@@ -93,6 +98,19 @@ class TelethonAdapter(ChatRepository):
             get_topic_name_before_fn=self._forum_ops.get_topic_name,
         )
         self._write_ops.set_dispatch_fn(self._event_handlers._dispatch)
+
+    @property
+    def account_token(self) -> str:
+        return self.stickers.token
+
+    @property
+    def display_name(self) -> str:
+        return utils.get_display_name(self.self_profile) if self.self_profile else ""
+
+    @property
+    def profile_avatar_id(self) -> int | None:
+        photo = getattr(self.self_profile, "photo", None)
+        return self._self_id if getattr(photo, "photo_id", None) else None
 
     def is_connected(self) -> bool:
         return (
@@ -172,9 +190,15 @@ class TelethonAdapter(ChatRepository):
                     return
                 if is_current is not None:
                     self._ensure_login_current(is_current)
-                if not me or not isinstance(me.id, int):
+                if not me or type(me.id) is not int or me.id <= 0:
                     raise RuntimeError("Could not identify the Telegram account")
+                if (
+                    self._saved_account_id is not None
+                    and me.id != self._saved_account_id
+                ):
+                    raise AccountChanged()
                 self._self_id = me.id
+                self.self_profile = me
                 self._parser.self_id = me.id
                 logger.info("self_id_cached", user_id=self._self_id)
         except Exception as e:
@@ -189,6 +213,7 @@ class TelethonAdapter(ChatRepository):
 
     def retire(self) -> None:
         self._retired = True
+        self.stickers.retire()
         # Quiesce writes and QR waits before any asynchronous teardown starts.
         self._write_queue.retire()
         if self._qr_task and not self._qr_task.cancelling():
@@ -229,6 +254,7 @@ class TelethonAdapter(ChatRepository):
                         ("telegram", self._disconnect_retired_client),
                         ("media", self._media.close),
                         ("write_queue", self._write_queue.stop),
+                        ("stickers", self.stickers.close),
                         ("write_operations", self._write_ops.close),
                     ):
                         cleanup.push_async_callback(close_component, component, close)
@@ -388,6 +414,7 @@ class TelethonAdapter(ChatRepository):
         """Enable account operations only after the login identity is persisted."""
         self._ensure_login_current(is_current)
         self._source_session_string = session_string
+        self._saved_account_id = self._self_id
         await self._write_queue.start()
         self._ensure_login_current(is_current)
         self._register_handlers()
@@ -497,9 +524,18 @@ class TelethonAdapter(ChatRepository):
         on_success: Callable[[], Awaitable[None]],
         *,
         selective: bool,
-    ) -> None:
-        await self._write_ops.mark_automatic_as_read(
-            chat_id, topic_id, max_id, validate, on_success, selective=selective
+        chat_name: str,
+        topic_name: Optional[str],
+    ) -> bool:
+        return await self._write_ops.mark_automatic_as_read(
+            chat_id,
+            topic_id,
+            max_id,
+            validate,
+            on_success,
+            selective=selective,
+            chat_name=chat_name,
+            topic_name=topic_name,
         )
 
     async def send_reaction(self, chat_id: int, msg_id: int, emoji: str) -> bool:

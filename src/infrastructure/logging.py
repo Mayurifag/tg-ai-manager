@@ -52,8 +52,8 @@ def configure_logging():
         "telethon",
         "redis",
         "push_response",
-        "httpx",
-        "httpcore",
+        "httpx2",
+        "httpcore2",
         "hpack",
         "google_genai",
     ):

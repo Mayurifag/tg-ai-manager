@@ -4,6 +4,9 @@ const topicId = chatConfig.topicId;
 const isChannel = Boolean(chatConfig.isChannel);
 
 async function requestOk(url, options) {
+  if (options?.method === "POST") {
+    options.headers = { ...options.headers, ...window.TG.mutationHeaders };
+  }
   const response = await fetch(url, options);
   const isJson = response.headers
     .get("content-type")
@@ -65,7 +68,6 @@ function bindRuleToggle(button, ruleType, label) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
         },
         body: JSON.stringify({
           chat_id: chatId,
@@ -107,7 +109,6 @@ if (markReadBtn) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
         },
         body: JSON.stringify({ topic_id: topicId }),
       });
@@ -139,7 +140,6 @@ if (copyTopicsBtn) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
         },
         body: JSON.stringify({ forum_id: chatId, enabled: true }),
       });
@@ -467,13 +467,11 @@ document.querySelectorAll(".emoji-opt").forEach((el) => {
 });
 
 document.getElementById("custom-emoji-input").addEventListener("input", (e) => {
-  if (e.target.value) {
-    arConfig.emoji = e.target.value;
-    document.querySelectorAll(".emoji-opt").forEach((opt) => {
-      opt.classList.remove("selected");
-      opt.setAttribute("aria-pressed", "false");
-    });
-  }
+  arConfig.emoji = e.target.value;
+  document.querySelectorAll(".emoji-opt").forEach((opt) => {
+    opt.classList.remove("selected");
+    opt.setAttribute("aria-pressed", "false");
+  });
 });
 
 document
@@ -498,7 +496,6 @@ document.getElementById("save-ar-btn").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
       },
       body: JSON.stringify({
         chat_id: chatId,
@@ -578,6 +575,21 @@ let isLoading = false;
 let allLoaded = false;
 let prefetchedHistory = null;
 let eventVersion = 0;
+const MAX_RECENT_MESSAGE_CHANGES = 256;
+const recentMessageChanges = new Map(); // Missing-row edits, or null for deletions.
+const pendingMessageReactions = new Map();
+const editHistoryChecks = new WeakMap();
+
+function rememberMessageUpdate(updates, id, value) {
+  updates.delete(id);
+  updates.set(id, value);
+  if (updates.size > MAX_RECENT_MESSAGE_CHANGES)
+    updates.delete(updates.keys().next().value);
+}
+
+function editRevision(date) {
+  return Date.parse(date) || 0;
+}
 
 function nearLatest() {
   return (
@@ -597,6 +609,93 @@ function messageRow(root, id) {
   );
 }
 
+function editedMessageRow(change) {
+  const fragment = document.createElement("div");
+  fragment.innerHTML = change.rendered_html || "";
+  const row = messageRow(fragment, change.message_model.id);
+  if (row && change.edit_pts != null) row.dataset.editPts = change.edit_pts;
+  return row;
+}
+
+function keepReplyPreview(previous, replacement, change) {
+  // An edit may not carry a preview of the unchanged reply target.
+  if (change.message_model.reply_to_text != null) return;
+  const oldReply = previous.querySelector(".reply-indicator");
+  const newReply = replacement.querySelector(".reply-indicator");
+  if (
+    oldReply &&
+    newReply &&
+    oldReply.getAttribute("href") === newReply.getAttribute("href")
+  )
+    newReply.replaceWith(oldReply);
+}
+
+function replaceEditedRow(previous, replacement, msgId) {
+  const visible = visibleMessageAnchor();
+  const focused = document.activeElement;
+  const restoreFocus = previous.contains(focused);
+  // An edit contains a reaction snapshot, not a separate reaction update.
+  const reactions = previous.querySelector(
+    `#reactions-${msgId}[data-live-reactions]`,
+  );
+  if (reactions)
+    replacement.querySelector(`#reactions-${msgId}`)?.replaceWith(reactions);
+  window.parseAppleEmojis(replacement);
+  window.renderLocalTimes(replacement);
+  previous.replaceWith(replacement);
+  if (visible) {
+    if (visible.row === previous) visible.row = replacement;
+    keepVisibleAnchor(visible);
+  }
+  if (restoreFocus) {
+    replacement.tabIndex = -1;
+    (replacement.contains(focused) ? focused : replacement).focus({
+      preventScroll: true,
+    });
+  }
+}
+
+async function refreshTiedEdit(row, msgId, pts) {
+  // History rows have an edit date but no update counter. Only Telegram can resolve a tie.
+  pts ??= 0;
+  if ((editHistoryChecks.get(row) ?? -1) >= pts) return;
+  editHistoryChecks.set(row, pts);
+  const isCurrent = () =>
+    editHistoryChecks.get(row) === pts &&
+    row.parentElement === container &&
+    recentMessageChanges.get(msgId) !== null;
+  try {
+    const { html } = await fetchHistory(historyOffsetIncluding(msgId));
+    if (!isCurrent()) return;
+    const fragment = document.createElement("div");
+    fragment.innerHTML = html;
+    const replacement = messageRow(fragment, msgId);
+    if (
+      !replacement ||
+      replacement.dataset.groupedId ||
+      editRevision(replacement.dataset.editDate) <
+        editRevision(row.dataset.editDate)
+    )
+      throw new Error("Latest edit unavailable");
+    replaceEditedRow(row, replacement, msgId);
+  } catch (error) {
+    if (isCurrent()) {
+      console.error("Could not refresh edited message:", error);
+      showToast("A message changed. Reload to see its latest contents.");
+    }
+  } finally {
+    if (editHistoryChecks.get(row) === pts) editHistoryChecks.delete(row);
+  }
+}
+
+function insertMessageRow(row) {
+  const id = Number(row.dataset.id);
+  let before = container.firstElementChild;
+  while (before && Number(before.dataset.id) > id)
+    before = before.nextElementSibling;
+  container.insertBefore(row, before);
+}
+
 function historyEdge(newer = false) {
   let edge = null;
   for (const row of container.querySelectorAll("[data-oldest-id]")) {
@@ -607,18 +706,20 @@ function historyEdge(newer = false) {
 }
 
 function visibleMessageAnchor(excluded = null) {
-  let visible = null;
-  for (const row of container.querySelectorAll("[data-oldest-id]")) {
-    if (row === excluded) continue;
-    const rect = row.getBoundingClientRect();
-    if (
-      rect.bottom > 0 &&
-      rect.top < window.innerHeight &&
-      (!visible || rect.top < visible.top)
-    )
-      visible = { row, top: rect.top };
+  const rows = container.querySelectorAll(":scope > [data-oldest-id]");
+  // column-reverse lays these rows out from bottom to top in DOM order.
+  let first = 0;
+  let end = rows.length;
+  while (first < end) {
+    const middle = Math.floor((first + end) / 2);
+    if (rows[middle].getBoundingClientRect().bottom > 0) first = middle + 1;
+    else end = middle;
   }
-  return visible;
+  const index = rows[first - 1] === excluded ? first - 2 : first - 1;
+  const row = rows[index];
+  if (!row) return null;
+  const { top } = row.getBoundingClientRect();
+  return top < window.innerHeight ? { row, top } : null;
 }
 
 function keepVisibleAnchor(visible) {
@@ -646,6 +747,11 @@ function historyUrl(offsetId) {
   let url = `/api/chat/${chatId}/history?offset_id=${offsetId}`;
   if (currentTopicId != null) url += `&topic_id=${currentTopicId}`;
   return url;
+}
+
+function historyOffsetIncluding(id) {
+  // The history endpoint uses an exclusive older-message offset.
+  return id < 2 ** 31 - 1 ? id + 1 : 0;
 }
 
 async function fetchHistory(offsetId) {
@@ -747,6 +853,16 @@ function queueSplitAlbums() {
   }
 }
 
+function refreshPendingAlbumPart(msgId, options) {
+  const id = String(msgId);
+  for (const state of albumRefreshes.values()) {
+    if (state.required.has(id)) {
+      queueAlbumRefresh(state.groupId, id, options);
+      return;
+    }
+  }
+}
+
 async function refreshNextAlbum() {
   const state = Array.from(albumRefreshes.values()).find((item) => item.dirty);
   if (!state) return;
@@ -763,12 +879,13 @@ async function refreshNextAlbum() {
   const isCurrent = () =>
     albumRefreshes.get(state.groupId) === state && state.version === version;
   try {
-    // The existing history endpoint uses an exclusive older-message offset.
     const newestId = Math.max(...Array.from(state.required, Number));
-    const offset = newestId < 2 ** 31 - 1 ? newestId + 1 : 0;
-    const response = await requestOk(historyUrl(offset), {
-      signal: controller.signal,
-    });
+    const response = await requestOk(
+      historyUrl(historyOffsetIncluding(newestId)),
+      {
+        signal: controller.signal,
+      },
+    );
     const data = await response.json();
     if (!isCurrent()) return;
     const rows = albumRows(state.groupId);
@@ -802,13 +919,11 @@ async function refreshNextAlbum() {
     const restoreFocus = rows.some((row) =>
       row.contains(document.activeElement),
     );
+    for (const id of ids) applyPendingReactions(replacement, Number(id));
     window.parseAppleEmojis(replacement);
     window.renderLocalTimes(replacement);
     for (const row of rows) row.remove();
-    const before = Array.from(
-      container.querySelectorAll("[data-oldest-id]"),
-    ).find((row) => Number(row.dataset.id) < Number(replacement.dataset.id));
-    container.insertBefore(replacement, before || null);
+    insertMessageRow(replacement);
     if (visible) {
       if (rows.includes(visible.row)) visible.row = replacement;
       keepVisibleAnchor(visible);
@@ -932,7 +1047,6 @@ container.addEventListener("click", async (event) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
       },
       body: JSON.stringify({ reaction: emoji.toString() }),
     });
@@ -955,7 +1069,6 @@ window.debugProcessMessage = async function (el, msgId) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
       },
       body: JSON.stringify({
         chat_id: chatId,
@@ -979,7 +1092,8 @@ window.debugProcessMessage = async function (el, msgId) {
   }
 };
 
-function buildReactionsHtml(msgId, reactions, albumIndex = null) {
+function renderReactions(target, msgId, reactions) {
+  const albumIndex = target.dataset.albumIndex;
   let html = "";
   reactions.forEach((r) => {
     const chosenClass = r.is_chosen ? "chosen" : "";
@@ -997,13 +1111,35 @@ function buildReactionsHtml(msgId, reactions, albumIndex = null) {
             <span class="reaction-count">${window.TG.escapeHtml(r.count)}</span>
         </button>`;
   });
-  return html;
+  target.innerHTML = html;
+  target.dataset.liveReactions = "";
+}
+
+function applyPendingReactions(root, msgId) {
+  const reactions = pendingMessageReactions.get(msgId);
+  if (!reactions) return;
+  const target = root.querySelector(`#reactions-${msgId}`);
+  if (!target) return;
+  renderReactions(target, msgId, reactions);
+  pendingMessageReactions.delete(msgId);
 }
 
 document.addEventListener("tg:event", (e) => {
   const data = e.detail;
   if (data.type === "resync_required") {
     window.location.reload();
+    return;
+  }
+  if (data.type === "transcript_snapshot") {
+    const nearBottom = nearLatest();
+    eventVersion++;
+    allLoaded = false;
+    prefetchedHistory = null;
+    albumRefreshes.clear();
+    container.innerHTML = data.html;
+    window.parseAppleEmojis(container);
+    window.renderLocalTimes(container);
+    if (nearBottom) window.scrollTo(0, document.documentElement.scrollHeight);
     return;
   }
   if (data.chat_id !== chatId) return;
@@ -1038,20 +1174,21 @@ document.addEventListener("tg:event", (e) => {
   )
     return;
 
+  const msgId = data.message_model?.id;
   if (
-    ["message", "action", "edited", "deleted", "reaction_update"].includes(
-      data.type,
-    )
+    ["edited", "deleted", "reaction_update"].includes(data.type) &&
+    msgId < (historyEdge()?.id ?? 0)
   )
     eventVersion++;
+  const change = recentMessageChanges.get(msgId);
+  if (change === null) return;
 
   if (
     (data.type === "message" || data.type === "action") &&
     data.rendered_html
   ) {
-    if (data.message_model && messageRow(container, data.message_model.id))
-      return;
-    const msgId = data.message_model?.id;
+    if (change) recentMessageChanges.delete(msgId);
+    if (msgId != null && messageRow(container, msgId)) return;
     const groupedId = data.message_model?.grouped_id;
     const groupId = groupedId == null ? null : String(groupedId);
     const group = groupId && albumRows(groupId);
@@ -1063,63 +1200,82 @@ document.addEventListener("tg:event", (e) => {
       return;
     }
     const nearBottom = nearLatest();
+    const visible = !nearBottom && visibleMessageAnchor();
     const tempDiv = document.createElement("div");
     tempDiv.innerHTML = data.rendered_html;
+    let tiedRow;
+    if (change) {
+      const original = messageRow(tempDiv, msgId);
+      const replacement = editedMessageRow(change);
+      if (original && replacement) {
+        const revision = editRevision(replacement.dataset.editDate);
+        const originalRevision = editRevision(original.dataset.editDate);
+        if (revision && revision === originalRevision) tiedRow = original;
+        else if (revision >= originalRevision) {
+          keepReplyPreview(original, replacement, change);
+          original.replaceWith(replacement);
+        }
+      }
+    }
+    applyPendingReactions(tempDiv, msgId);
     window.parseAppleEmojis(tempDiv);
     window.renderLocalTimes(tempDiv);
     container.querySelector(".empty-messages")?.remove();
-    while (tempDiv.lastChild) container.prepend(tempDiv.lastChild);
-    if (nearBottom) {
-      window.scrollTo(0, document.documentElement.scrollHeight);
+    while (tempDiv.firstElementChild)
+      insertMessageRow(tempDiv.firstElementChild);
+    if (tiedRow) {
+      if (tiedRow.dataset.groupedId)
+        queueAlbumRefresh(tiedRow.dataset.groupedId, msgId);
+      else void refreshTiedEdit(tiedRow, msgId, change.edit_pts);
     }
-  } else if (data.type === "edited" && data.message_model) {
-    const msgId = data.message_model.id;
+    if (nearBottom) window.scrollTo(0, document.documentElement.scrollHeight);
+    else keepVisibleAnchor(visible);
+  } else if (data.type === "edited" && msgId != null) {
     const msgRow = messageRow(container, msgId);
-    if (msgRow) {
-      if (msgRow.dataset.groupedId || data.message_model.grouped_id) {
-        if (
-          !msgRow.dataset.groupedId ||
-          (data.message_model.grouped_id != null &&
-            msgRow.dataset.groupedId !== String(data.message_model.grouped_id))
-        )
-          showAlbumChanged();
-        else queueAlbumRefresh(msgRow.dataset.groupedId, msgId);
-        return;
-      }
-      const fragment = document.createElement("div");
-      fragment.innerHTML = data.rendered_html || "";
-      const replacement = messageRow(fragment, msgId);
-      if (!replacement) {
-        showToast("A message changed. Reload to see its latest contents.");
-        return;
-      }
-      const visible = visibleMessageAnchor();
-      const restoreFocus = msgRow.contains(document.activeElement);
-      const oldReply = msgRow.querySelector(".reply-indicator");
-      const newReply = replacement.querySelector(".reply-indicator");
-      // Live edit events do not necessarily include the replied-to message.
-      // Keep the existing preview only when the target itself is unchanged.
+    const revision = editRevision(data.message_model.edit_date);
+    if (!msgRow) {
       if (
-        data.message_model.reply_to_text == null &&
-        oldReply &&
-        newReply &&
-        oldReply.getAttribute("href") === newReply.getAttribute("href")
+        data.rendered_html &&
+        (!change ||
+          (revision - editRevision(change.message_model.edit_date) ||
+            (data.edit_pts ?? 0) - (change.edit_pts ?? 0)) >= 0)
       )
-        newReply.replaceWith(oldReply);
-      window.parseAppleEmojis(replacement);
-      window.renderLocalTimes(replacement);
-      msgRow.replaceWith(replacement);
-      if (visible) {
-        if (visible.row === msgRow) visible.row = replacement;
-        keepVisibleAnchor(visible);
-      }
-      if (restoreFocus) {
-        replacement.tabIndex = -1;
-        replacement.focus({ preventScroll: true });
+        rememberMessageUpdate(recentMessageChanges, msgId, data);
+      refreshPendingAlbumPart(msgId);
+      return;
+    }
+    const part = msgRow.querySelector(`[data-message-id="${msgId}"]`);
+    const rowRevision = editRevision((part || msgRow).dataset.editDate);
+    if (revision < rowRevision) return;
+    recentMessageChanges.delete(msgId);
+    if (msgRow.dataset.groupedId || data.message_model.grouped_id) {
+      if (
+        !msgRow.dataset.groupedId ||
+        (data.message_model.grouped_id != null &&
+          msgRow.dataset.groupedId !== String(data.message_model.grouped_id))
+      )
+        showAlbumChanged();
+      else queueAlbumRefresh(msgRow.dataset.groupedId, msgId);
+      return;
+    }
+    if (revision === rowRevision) {
+      if (msgRow.dataset.editPts != null) {
+        if ((data.edit_pts ?? 0) <= Number(msgRow.dataset.editPts)) return;
+      } else if (revision) {
+        void refreshTiedEdit(msgRow, msgId, data.edit_pts);
+        return;
       }
     }
-  } else if (data.type === "deleted" && data.message_model) {
-    const msgId = data.message_model.id;
+    const replacement = editedMessageRow(data);
+    if (!replacement) {
+      showToast("A message changed. Reload to see its latest contents.");
+      return;
+    }
+    keepReplyPreview(msgRow, replacement, data);
+    replaceEditedRow(msgRow, replacement, msgId);
+  } else if (data.type === "deleted" && msgId != null) {
+    rememberMessageUpdate(recentMessageChanges, msgId, null);
+    pendingMessageReactions.delete(msgId);
     const msgRow = messageRow(container, msgId);
     if (msgRow) {
       const part = msgRow.querySelector(`[data-message-id="${msgId}"]`);
@@ -1161,30 +1317,28 @@ document.addEventListener("tg:event", (e) => {
       }
       msgRow.style.opacity = "0";
       setTimeout(() => removeMessageRow(msgRow), 300);
+    } else refreshPendingAlbumPart(msgId, { deleted: true });
+  } else if (data.type === "reaction_update" && msgId != null) {
+    const target = document.getElementById(`reactions-${msgId}`);
+    const reactions = data.message_model.reactions;
+    const groupId = target?.closest("[data-grouped-id]")?.dataset.groupedId;
+    // An in-flight album response may contain the reaction state from before this event.
+    if (!target || albumRefreshes.has(groupId))
+      rememberMessageUpdate(pendingMessageReactions, msgId, reactions);
+    else pendingMessageReactions.delete(msgId);
+    if (!target) return;
+
+    const focused = target.contains(document.activeElement)
+      ? document.activeElement.dataset.emoji
+      : null;
+    renderReactions(target, msgId, reactions);
+    window.parseAppleEmojis(target);
+    if (focused != null) {
+      const replacement = Array.from(
+        target.querySelectorAll(".reaction-pill"),
+      ).find((button) => button.dataset.emoji === focused);
+      if (replacement) replacement.focus({ preventScroll: true });
+      else messageRow(container, msgId)?.focus({ preventScroll: true });
     }
-  } else if (data.type === "reaction_update" && data.message_model) {
-    const msgId = data.message_model.id;
-    const reactionsContainer = document.getElementById(`reactions-${msgId}`);
-    if (reactionsContainer) {
-      const focused = reactionsContainer.contains(document.activeElement)
-        ? document.activeElement.dataset.emoji
-        : null;
-      reactionsContainer.innerHTML = buildReactionsHtml(
-        msgId,
-        data.message_model.reactions,
-        reactionsContainer.dataset.albumIndex,
-      );
-      window.parseAppleEmojis(reactionsContainer);
-      if (focused != null) {
-        const replacement = Array.from(
-          reactionsContainer.querySelectorAll(".reaction-pill"),
-        ).find((button) => button.dataset.emoji === focused);
-        if (replacement) replacement.focus({ preventScroll: true });
-        else messageRow(container, msgId)?.focus({ preventScroll: true });
-      }
-    }
-    const groupId = messageRow(container, msgId)?.dataset.groupedId;
-    if (groupId && albumRefreshes.has(groupId))
-      queueAlbumRefresh(groupId, msgId);
   }
 });

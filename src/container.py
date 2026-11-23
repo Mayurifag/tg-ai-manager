@@ -102,7 +102,7 @@ async def _reload_tg_adapter(session_string: Optional[str]) -> None:
     try:
         bind_adapter_events(app, new_adapter)
         old_adapter.retire()
-        app.sse.invalidate_clients()
+        app.events.invalidate_clients()
 
         async def retire_old_adapter() -> None:
             try:

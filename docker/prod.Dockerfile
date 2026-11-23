@@ -1,6 +1,6 @@
 # Build-only sources do not remain in the runtime image.
-FROM valkey/valkey:8.1 AS valkey_source
-FROM ghcr.io/astral-sh/uv:trixie-slim AS python_builder
+FROM valkey/valkey:8.1.12-trixie AS valkey_source
+FROM ghcr.io/astral-sh/uv:0.13.9-trixie-slim AS python_builder
 ENV UV_PROJECT_ENVIRONMENT="/venv"
 WORKDIR /app
 

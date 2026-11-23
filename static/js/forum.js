@@ -118,7 +118,7 @@ if (readForumBtn) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
+          ...window.TG.mutationHeaders,
         },
         body: JSON.stringify({}),
       });
@@ -159,7 +159,7 @@ topicList.addEventListener("click", async (e) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
+          ...window.TG.mutationHeaders,
         },
         body: JSON.stringify({ topic_id: parseInt(topicId) }),
       });

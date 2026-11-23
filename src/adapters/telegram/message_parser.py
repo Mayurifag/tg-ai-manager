@@ -390,6 +390,7 @@ class MessageParser:
             date=msg.date or datetime.now(timezone.utc),
             sender_name=sender_name,
             is_outgoing=getattr(msg, "out", False),
+            edit_date=getattr(msg, "edit_date", None),
             sender_id=sender_id,
             sender_username=sender_username,
             avatar_url=avatar_url,

@@ -36,6 +36,7 @@ ci:
 	uv run --no-sync ruff check
 	node --version > /dev/null
 	for file in static/js/*.js; do node --check "$$file" || exit $$?; done
+	uv run --no-sync python -m unittest discover -s tests
 
 format:
 	uv run --no-sync ruff format

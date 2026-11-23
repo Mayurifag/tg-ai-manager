@@ -95,8 +95,7 @@ async def api_get_topic_card(chat_id: int, topic_id: int):
     check()
     if not topic:
         return "Topic not found", 404
-    result = await render_template(
-        "forum/topic_card_partial.html.j2", topic=topic, parent_id=chat_id
-    )
+    template = current_app.jinja_env.get_template("forum/topic_card_partial.html.j2")
+    result = await template.render_async(topic=topic, parent_id=chat_id)
     check()
     return result

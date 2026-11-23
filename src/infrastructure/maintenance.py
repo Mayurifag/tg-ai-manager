@@ -89,6 +89,12 @@ async def job_telegram_recovery(rule_service, user_repo, shutdown_event):
                 and adapter.is_connected()
             ):
                 session = user.session_string
+                if user.telegram_id is None:
+                    await user_repo.update_fields(
+                        user.id,
+                        {"telegram_id": adapter._self_id},
+                        expected_session=session,
+                    )
                 deadline = asyncio.get_running_loop().time() + 20
                 await run_with_task_deadline(
                     lambda: _reconcile_saved_account(

@@ -35,15 +35,6 @@
             </label>
 
             <label class="gs-card toggle-card"
-                data-tooltip="Currently inactive: outgoing messages do not trigger selective reads.">
-                <input type="checkbox" id="t-self" onchange="toggleSetting('autoread_self')" {% if settings.autoread_self %}checked{% endif %}>
-                <div class="gs-content">
-                    <span class="gs-label">My Messages (inactive)</span>
-                    <span class="gs-status-badge"></span>
-                </div>
-            </label>
-
-            <label class="gs-card toggle-card"
                 data-tooltip="Enable right sidebar with live event stream and dry-run tools.">
                 <input type="checkbox" id="t-debug" onchange="toggleSetting('debug_mode')" {% if settings.debug_mode %}checked{% endif %}>
                 <div class="gs-content">
@@ -98,19 +89,6 @@
         <p>Enabling AI Read for a chat or topic sends eligible message text to Google's Gemini API. Configure a model and API key first. Requests may incur charges; long messages, timeouts, and invalid responses are skipped. A positive result still requires the selective unread safety check.</p>
         <p>The app requests <code>store=false</code> for optional API logs, but this does not prevent Google's abuse-monitoring retention or other processing. Google may use unpaid-tier content to improve its products. See <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noopener noreferrer">Gemini API terms</a>.</p>
         <div class="gs-expanded-row">
-            <div class="gs-display-card">
-                <div class="gs-display-header">
-                    <span>AI Provider</span>
-                </div>
-                <div class="gs-display-content">
-                    <select id="select-ai-provider" aria-label="AI provider"
-                        style="background:#2a2a2c;border:1px solid #444;color:#fff;border-radius:4px;padding:6px 10px;width:100%;"
-                        onchange="patchSetting({ai_provider: this.value})">
-                        <option value="gemini" {% if not settings.ai_provider or settings.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option>
-                    </select>
-                </div>
-            </div>
-
             <div class="gs-display-card {{ 'has-content' if settings.ai_model else '' }}" id="card-ai-model">
                 <div class="gs-display-header">
                     <span>AI Model</span>
@@ -156,6 +134,10 @@
     </div>
 
     <div class="section-card">
+        {% if rules_import_configured %}
+        <button type="button" id="import-rules">Replace rules from export</button>
+        <p id="import-rules-status" role="status"></p>
+        {% endif %}
         <p id="rules-status" role="status" aria-live="polite">Loading rules…</p>
         <div id="rules-container" role="region" aria-label="Rules" tabindex="-1"></div>
     </div>

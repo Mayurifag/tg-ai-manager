@@ -1,4 +1,8 @@
 window.TG = window.TG || {};
+window.TG.mutationHeaders = {
+  "X-Requested-With": "XMLHttpRequest",
+  "X-Account-Token": window.TG_CONFIG.account,
+};
 
 window.TG.escapeHtml = function (value) {
   return String(value ?? "")
@@ -10,8 +14,7 @@ window.TG.escapeHtml = function (value) {
 };
 
 window.parseAppleEmojis = function (container) {
-  if (!window.twemoji) return;
-  twemoji.parse(container, {
+  window.twemoji?.parse(container, {
     callback: function (icon) {
       const points = icon.split("-");
       let filename = points.map((point) => point.padStart(4, "0")).join("-");
@@ -26,7 +29,7 @@ window.parseAppleEmojis = function (container) {
       if (points.length === 2 && points[1] === "20e3")
         filename = `${points[0].padStart(4, "0")}-fe0f-20e3`;
       const source =
-        "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@15.0.0/img/apple/64/" +
+        "https://cdn.jsdelivr.net/npm/emoji-datasource-apple@16.0.0/img/apple/64/" +
         filename +
         ".png";
       return `https://wsrv.nl/?url=${encodeURIComponent(source)}&output=webp&ll`;
@@ -38,6 +41,26 @@ window.parseAppleEmojis = function (container) {
     }),
   });
 };
+
+// A missing image should not hide the original character.
+document.addEventListener(
+  "error",
+  (event) => {
+    const image = event.target;
+    if (image instanceof HTMLImageElement && image.classList.contains("emoji"))
+      image.replaceWith(image.alt);
+    else if (
+      image instanceof HTMLImageElement &&
+      image.closest(".sidebar-avatar")
+    )
+      image.remove();
+  },
+  true,
+);
+
+document.getElementById("twemoji-script").addEventListener("load", () => {
+  if (document.readyState !== "loading") window.parseAppleEmojis(document.body);
+});
 
 window.renderLocalTimes = function (context) {
   const els = (context || document).querySelectorAll(
@@ -62,7 +85,6 @@ window.renderLocalTimes = function (context) {
           })
         : date.toLocaleTimeString([], options);
       el.title = date.toLocaleString([], { timeZoneName: "short" });
-      el.classList.add("rendered");
     }
   });
 };
@@ -214,49 +236,77 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   const feedContainer = document.getElementById("event-feed-list");
-  let evtSource;
+  const EVENT_RECONNECT_DELAY = 5_000;
+  let eventSource;
+  let reconnectTimer;
+  let reconnectDelay = EVENT_RECONNECT_DELAY;
 
   function connectEvents(resyncOnOpen = false) {
-    let needsResync = resyncOnOpen;
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ account: window.TG_CONFIG.account });
     if (window.TG_CHAT) {
       params.set("chat_id", window.TG_CHAT.chatId);
       if (window.TG_CHAT.topicId != null)
         params.set("topic_id", window.TG_CHAT.topicId);
     }
     if (isDebug) params.set("debug", "1");
-    evtSource = new EventSource(`/api/events/stream?${params}`);
-    evtSource.onerror = () => {
-      needsResync = true;
-    };
-    evtSource.onopen = () => {
-      if (needsResync) {
-        needsResync = false;
+    const snapshot =
+      window.TG_CHAT?.snapshot ??
+      document.getElementById("chat-list-end")?.dataset.snapshot;
+    if (!resyncOnOpen && snapshot) params.set("snapshot", snapshot);
+    const source = (eventSource = new EventSource(
+      `/api/events/stream?${params}`,
+    ));
+    function reconnect() {
+      if (eventSource !== source) return;
+      source.close();
+      eventSource = null;
+      reconnectTimer = setTimeout(() => connectEvents(true), reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 60_000);
+    }
+    source.onerror = reconnect;
+    source.onopen = () => {
+      if (eventSource !== source) return;
+      reconnectDelay = EVENT_RECONNECT_DELAY;
+      if (resyncOnOpen) {
         document.dispatchEvent(
           new CustomEvent("tg:event", { detail: { type: "resync_required" } }),
         );
       }
     };
 
-    evtSource.onmessage = function (e) {
+    source.onmessage = function (e) {
+      if (eventSource !== source) return;
       let data;
       try {
         data = JSON.parse(e.data);
         if (!data || typeof data.type !== "string")
           throw new Error("Invalid event");
       } catch (_) {
-        document.dispatchEvent(
-          new CustomEvent("tg:event", { detail: { type: "resync_required" } }),
-        );
+        reconnect();
         return;
       }
+      if (data.type === "resync_required") {
+        reconnect();
+        return;
+      }
+      if (data.type === "account_changed") {
+        source.close();
+        location.reload();
+        return;
+      }
+      if (data.type === "snapshot_stale") data.type = "resync_required";
       const customEvent = new CustomEvent("tg:event", { detail: data });
       document.dispatchEvent(customEvent);
 
       if (
-        ["read", "edited", "profile_updated", "resync_required"].includes(
-          data.type,
-        )
+        [
+          "read",
+          "edited",
+          "profile_updated",
+          "chat_list_changed",
+          "resync_required",
+          "transcript_snapshot",
+        ].includes(data.type)
       )
         return;
 
@@ -301,7 +351,11 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
   connectEvents();
-  window.addEventListener("pagehide", () => evtSource.close());
+  window.addEventListener("pagehide", () => {
+    clearTimeout(reconnectTimer);
+    eventSource?.close();
+    eventSource = null;
+  });
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) connectEvents(true);
   });

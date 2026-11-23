@@ -14,6 +14,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
         {
             "username",
             "session_string",
+            "telegram_id",
             "is_premium",
             "autoread_service_messages",
             "autoread_polls",
@@ -39,7 +40,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
             with self._connect() as conn:
                 cursor = conn.execute(
                     """
-                    SELECT id, username, session_string,
+                    SELECT id, username, session_string, telegram_id,
                            autoread_service_messages, autoread_polls, autoread_self,
                            autoread_bots, autoread_regex, is_premium, debug_mode,
                            ai_provider, ai_model, ai_api_key, ai_prompt
@@ -56,6 +57,7 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                         api_hash=self.settings.TG_API_HASH,
                         username=row["username"],
                         session_string=self.crypto.decrypt(row["session_string"]),
+                        telegram_id=row["telegram_id"],
                         autoread_service_messages=bool(
                             row["autoread_service_messages"]
                         ),
@@ -83,16 +85,17 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
                 conn.execute(
                     """
                     INSERT INTO users (
-                        id, username, session_string,
+                        id, username, session_string, telegram_id,
                         autoread_service_messages, autoread_polls, autoread_self,
                         autoread_bots, autoread_regex, is_premium, debug_mode,
                         ai_provider, ai_model, ai_api_key, ai_prompt
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user.id,
                         user.username,
                         enc_session,
+                        user.telegram_id,
                         int(user.autoread_service_messages),
                         int(user.autoread_polls),
                         int(user.autoread_self),
@@ -147,7 +150,15 @@ class SqliteUserRepository(BaseSqliteRepository, UserRepository):
         *,
         expected_session: Optional[str],
     ) -> bool:
-        allowed = self._UPDATE_FIELDS - self._SECRET_FIELDS - {"username", "is_premium"}
+        allowed = (
+            self._UPDATE_FIELDS
+            - self._SECRET_FIELDS
+            - {
+                "username",
+                "is_premium",
+                "telegram_id",
+            }
+        )
         if not fields.keys() <= allowed or any(
             rule.user_id != user_id for rule in rules
         ):

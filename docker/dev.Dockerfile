@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:trixie-slim
+FROM ghcr.io/astral-sh/uv:0.13.9-trixie-slim
 
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
@@ -12,7 +12,7 @@ COPY pyproject.toml uv.lock .python-version ./
 
 # 2. Install Python & Dependencies
 RUN uv python install
-# Install main + dev (watchfiles) dependencies
+# Install dependencies
 # We remove --frozen so it auto-updates lockfile if you changed pyproject.toml
 RUN uv sync --no-install-project
 

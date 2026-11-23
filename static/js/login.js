@@ -1,5 +1,6 @@
 let qrPollInterval = null;
 let loginAttemptId = null;
+let accountToken = document.body.dataset.account;
 
 function hideError() {
   document.getElementById("error-msg").style.display = "none";
@@ -20,6 +21,7 @@ async function generateQR() {
       headers: {
         "Content-Type": "application/json",
         "X-Requested-With": "XMLHttpRequest",
+        "X-Account-Token": accountToken,
       },
       body: JSON.stringify({}),
     });
@@ -43,6 +45,7 @@ async function generateQR() {
       });
 
       loginAttemptId = data.attempt_id;
+      accountToken = data.account_token;
       startQRPoll();
     } else {
       showError(data.error || "QR Gen Failed");
@@ -160,7 +163,10 @@ if (forgetAccount) {
     try {
       const response = await fetch("/api/settings/reset", {
         method: "POST",
-        headers: { "X-Requested-With": "XMLHttpRequest" },
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Account-Token": accountToken,
+        },
       });
       if (!response.ok) throw new Error("Reset failed");
       window.location.reload();

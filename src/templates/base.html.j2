@@ -9,8 +9,8 @@
     <title>{% block title %}Telegram Manager{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?t={{ 'static/favicon.svg' | file_mtime }}">
     <link rel="stylesheet" href="/static/css/base.css?t={{ 'static/css/base.css' | file_mtime }}">
-    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@17.0.2/dist/twemoji.min.js"
-        integrity="sha384-Pe8SdSjyHDL7CJg3xfmrIoD4qNopbel/GRj/EtoJnq+8S0HkIRilr02Y9OliMlb+"
+    <script id="twemoji-script" async src="https://cdn.jsdelivr.net/npm/@twemoji/api@17.0.3/dist/twemoji.min.js"
+        integrity="sha384-Y5xukbGJwykbHHkTbLJykYLcBPFxrwipTbEh0puxhkz9CZ90raTPGe2Ks4vCxsYU"
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     {% block head_extra %}{% endblock %}
 </head>
@@ -31,6 +31,7 @@
 
             <!-- Navigation Links -->
             <div class="sidebar-nav">
+                <a href="/stickers" class="setting-option"{% if request.path == '/stickers' %} aria-current="page"{% endif %}>Stickers</a>
                 <a href="/settings" class="setting-option">
                     ⚙️ Settings
                 </a>
@@ -42,14 +43,19 @@
             </div>
 
             <!-- User Profile Section (Pinned Bottom) -->
-            {% if current_user and current_user.username %}
+            {% set sidebar_name = profile_name or (current_user.username if current_user else '') %}
+            {% if sidebar_name %}
             <div class="user-profile-section">
-                <div class="sidebar-avatar">
-                    {{ current_user.username[1] | upper if current_user.username|length > 1 else '?' }}
+                <div class="sidebar-avatar" aria-hidden="true">
+                    <span>{{ sidebar_name.lstrip('@')[:1] | upper or '?' }}</span>
+                    {% if profile_avatar_id %}<img src="{{ url_for('media.get_avatar', chat_id=profile_avatar_id) }}" alt="">{% endif %}
                 </div>
                 <div class="sidebar-user-info">
-                    <div class="sidebar-username">{{ current_user.username }}</div>
-                    <div class="sidebar-status">{{ 'Premium' if current_user.is_premium else 'Standard' }}</div>
+                    <div class="sidebar-username" title="{{ sidebar_name }}">{{ sidebar_name }}</div>
+                    {% if current_user and current_user.username and current_user.username.startswith('@') and current_user.username != sidebar_name %}
+                    <div class="sidebar-handle" title="{{ current_user.username }}">{{ current_user.username }}</div>
+                    {% endif %}
+                    {% if current_user %}<div class="sidebar-status">{{ 'Premium' if current_user.is_premium else 'Standard' }}</div>{% endif %}
                 </div>
             </div>
             {% endif %}
@@ -67,7 +73,8 @@
                 <div class="settings-header" style="color: #6ab7ff;">Live Events (Debug)</div>
                 <p>Stored event history normally lasts about three hours, up to 10,000 events.</p>
                 <div id="event-feed-list">
-                    {% if recent_events_unavailable %}
+                    {% set recent_events = load_debug_events() %}
+                    {% if recent_events is none %}
                     <div class="event-history-warning" role="status">Event history is unavailable. Live events may still appear.</div>
                     {% elif recent_events %}
                     {% for event in recent_events %}
@@ -122,7 +129,10 @@
     </dialog>
 
     <script>
-        window.TG_CONFIG = { debug: {{ 'true' if current_user and current_user.debug_mode else 'false' }} };
+        window.TG_CONFIG = {
+            debug: {{ 'true' if current_user and current_user.debug_mode else 'false' }},
+            account: {{ account_token | tojson }}
+        };
     </script>
     <script src="/static/js/base.js?t={{ 'static/js/base.js' | file_mtime }}"></script>
     {% block scripts %}{% endblock %}

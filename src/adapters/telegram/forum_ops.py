@@ -69,8 +69,9 @@ class ForumOps:
                 raise AccountChanged()
 
         check()
+        generation = self._topic_cache_generation
         try:
-            entity = await self.client.get_entity(chat_id)
+            entity = await self.client.get_input_entity(chat_id)
             check()
             if not entity:
                 raise LookupError("Telegram did not return the forum")
@@ -85,6 +86,9 @@ class ForumOps:
                 raise RuntimeError("Forum topic pagination did not advance")
             topics = self._topic_chats(response)
             check()
+            if generation == self._topic_cache_generation:
+                for topic in topics:
+                    self._remember_topic_name(chat_id, topic.id, topic.name)
             return ForumTopicPage(topics, next_cursor)
         except AccountChanged:
             raise
@@ -111,7 +115,7 @@ class ForumOps:
 
         check()
         try:
-            entity = await self.client.get_entity(chat_id)
+            entity = await self.client.get_input_entity(chat_id)
             check()
             if not entity:
                 raise LookupError("Telegram did not return the forum")
@@ -228,7 +232,7 @@ class ForumOps:
 
         check()
         try:
-            entity = await self.client.get_entity(chat_id)
+            entity = await self.client.get_input_entity(chat_id)
             check()
             if not entity:
                 raise LookupError("Telegram did not return the forum")
@@ -292,7 +296,7 @@ class ForumOps:
                     return cached[1]
                 self._topic_name_cache.pop(key, None)
                 generation = self._topic_cache_generation
-                entity = await self.client.get_entity(chat_id)
+                entity = await self.client.get_input_entity(chat_id)
                 if not within_deadline():
                     return None
                 response = await self.client(
@@ -318,10 +322,7 @@ class ForumOps:
                 name = topic.title
                 if not within_deadline():
                     return None
-                self._topic_name_cache[key] = (time.monotonic(), name)
-                self._topic_name_cache.move_to_end(key)
-                while len(self._topic_name_cache) > MAX_TOPIC_NAMES:
-                    self._topic_name_cache.popitem(last=False)
+                self._remember_topic_name(chat_id, topic_id, name)
                 return name
         except Exception as e:
             raise_if_task_stopped()
@@ -334,6 +335,13 @@ class ForumOps:
         finally:
             raise_if_task_stopped()
         return None
+
+    def _remember_topic_name(self, chat_id: int, topic_id: int, name: str) -> None:
+        key = (chat_id, topic_id)
+        self._topic_name_cache[key] = (time.monotonic(), name)
+        self._topic_name_cache.move_to_end(key)
+        if len(self._topic_name_cache) > MAX_TOPIC_NAMES:
+            self._topic_name_cache.popitem(last=False)
 
     def invalidate_topic_name(self, chat_id: int, topic_id: int) -> None:
         self._topic_cache_generation += 1

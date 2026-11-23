@@ -11,9 +11,6 @@ from src.rules.validation import stored_autoreact_options
 
 
 class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
-    def __init__(self, db_path: str = "data.db"):
-        super().__init__(db_path)
-
     def _parse_config(
         self, config_str: Optional[str], rule_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -134,20 +131,6 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
 
         return await self._execute(_fetch)
 
-    async def get_all_for_chat(self, chat_id: int) -> List[Rule]:
-        def _fetch():
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT id, user_id, rule_type, chat_id, topic_id, config, created_at, updated_at
-                    FROM rules WHERE chat_id = ?
-                """,
-                    (chat_id,),
-                )
-                return [self._row_to_rule(row) for row in cursor]
-
-        return await self._execute(_fetch)
-
     async def get_all(self, *, rule_type: Optional[RuleType] = None) -> List[Rule]:
         def _fetch():
             with self._connect() as conn:
@@ -165,53 +148,9 @@ class SqliteRuleRepository(BaseSqliteRepository, RuleRepository):
 
         return await self._execute(_fetch)
 
-    async def add(self, rule: Rule) -> int:
-        def _insert():
-            with self._connect() as conn:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO rules (user_id, rule_type, chat_id, topic_id, config, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        rule.user_id,
-                        rule.rule_type.value,
-                        rule.chat_id,
-                        rule.topic_id,
-                        json.dumps(rule.config),
-                        rule.created_at.isoformat(),
-                        rule.updated_at.isoformat(),
-                    ),
-                )
-                if cursor.lastrowid is None:
-                    raise ValueError("Database insert failed: no ID returned")
-                return cursor.lastrowid
-
-        return await self._execute(_insert)
-
-    async def update(self, rule: Rule) -> None:
-        def _update():
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    UPDATE rules SET updated_at = ?, config = ?
-                    WHERE id = ?
-                """,
-                    (datetime.now().isoformat(), json.dumps(rule.config), rule.id),
-                )
-
-        await self._execute(_update)
-
     async def delete(self, rule_id: int) -> None:
         def _delete():
             with self._connect() as conn:
                 conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
 
         await self._execute(_delete)
-
-    async def delete_all(self) -> None:
-        def _delete_all():
-            with self._connect() as conn:
-                conn.execute("DELETE FROM rules")
-
-        await self._execute(_delete_all)

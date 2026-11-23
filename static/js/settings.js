@@ -34,7 +34,7 @@ async function patchSetting(payload) {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        "X-Requested-With": "XMLHttpRequest",
+        ...window.TG.mutationHeaders,
       },
       body: JSON.stringify(payload),
     });
@@ -76,7 +76,6 @@ window.toggleSetting = async function (key) {
   const idMap = {
     autoread_service_messages: "t-service",
     autoread_polls: "t-polls",
-    autoread_self: "t-self",
     debug_mode: "t-debug",
   };
   const checkbox = document.getElementById(idMap[key] || key);
@@ -250,6 +249,34 @@ document.querySelectorAll(".modal-overlay").forEach((overlay) => {
 
 const rulesContainer = document.getElementById("rules-container");
 const rulesStatus = document.getElementById("rules-status");
+const importRules = document.getElementById("import-rules");
+importRules?.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Replace all local chat and topic rules with the configured export? Settings included in the export will also be replaced. Your Telegram session and Gemini key will not change.",
+    )
+  )
+    return;
+  const status = document.getElementById("import-rules-status");
+  importRules.disabled = true;
+  status.textContent = "Importing rules…";
+  try {
+    const response = await fetch("/api/rules/import", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...window.TG.mutationHeaders,
+      },
+      body: JSON.stringify({ replace: true }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Could not import rules.");
+    window.location.reload();
+  } catch (error) {
+    status.textContent = error.message;
+    importRules.disabled = false;
+  }
+});
 const RULES_LOAD_TIMEOUT = 15_000;
 const RULES_RETRY_INTERVAL = 5_000;
 const RULES_RETRY_MAX_INTERVAL = 60_000;
@@ -502,7 +529,7 @@ window.deleteRule = async function (ruleId) {
   try {
     const res = await fetch(`/api/rules/${ruleId}`, {
       method: "DELETE",
-      headers: { "X-Requested-With": "XMLHttpRequest" },
+      headers: window.TG.mutationHeaders,
     });
     if (res.ok) {
       setRuleDeleteState(id, "confirmed");
@@ -540,7 +567,7 @@ if (resetBtn) {
     try {
       const res = await fetch("/api/settings/reset", {
         method: "POST",
-        headers: { "X-Requested-With": "XMLHttpRequest" },
+        headers: window.TG.mutationHeaders,
       });
       if (res.ok) {
         window.location.href = "/login";

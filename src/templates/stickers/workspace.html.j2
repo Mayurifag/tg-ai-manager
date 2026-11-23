@@ -1,0 +1,62 @@
+{% extends "base.html.j2" %}
+{% block title %}Stickers · Telegram Manager{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/stickers.css?t={{ 'static/css/stickers.css' | file_mtime }}">
+{% endblock %}
+{% block sidebar_back %}<a class="back-link" href="/">← Chats</a>{% endblock %}
+{% block content %}
+<div class="stickers" id="stickers">
+    <header class="st-header">
+        <h1>Stickers</h1>
+        <nav id="st-views" aria-label="Sticker views">
+            <button data-view="installed" aria-current="page">Installed</button>
+            <button data-view="owned">Owned</button>
+            <button data-view="favorites">Favorites</button>
+            <button data-view="recent">Recent</button>
+        </nav>
+    </header>
+    <div id="st-error" role="alert" hidden></div>
+    <div id="st-job" class="st-status" role="status" hidden></div>
+    <div id="st-scan" class="st-status" role="status" hidden></div>
+    <div class="st-layout">
+        <section class="st-library" id="st-library" aria-label="Sticker packs">
+            <input type="search" id="st-search" placeholder="Search packs" aria-label="Search pack names">
+            <div id="st-pack-actions" class="st-actions" hidden></div>
+            <div id="st-packs"></div>
+        </section>
+        <section class="st-artwork" aria-labelledby="st-heading">
+            <div class="st-art-header">
+                <div>
+                    <h2 id="st-heading">Choose a pack</h2>
+                    <p id="st-detail">Open a pack to see its stickers.</p>
+                </div>
+                <button id="st-pack-menu" aria-label="Pack actions" aria-haspopup="true" hidden>⋯</button>
+                <button id="st-results-close" hidden>Back to stickers</button>
+            </div>
+            <div id="st-selection" class="st-actions st-selection" aria-label="Actions for selected stickers" hidden></div>
+            <div id="st-grid" class="st-grid" aria-label="Sticker artwork"></div>
+        </section>
+    </div>
+    <div id="st-marquee" hidden></div>
+    <div id="st-menu" class="st-menu" aria-label="Actions" hidden></div>
+    <dialog id="st-dialog" class="st-dialog" aria-labelledby="st-dialog-title">
+        <form>
+            <h2 id="st-dialog-title"></h2>
+            <div id="st-dialog-body"></div>
+            <div id="st-dialog-actions" class="st-actions"></div>
+        </form>
+    </dialog>
+    <dialog id="st-preview" class="st-dialog st-preview" aria-label="Sticker preview">
+        <div class="st-preview-head"><span id="st-preview-label" aria-live="polite"></span><button id="st-preview-close" aria-label="Close preview">×</button></div>
+        <div id="st-preview-art"></div>
+        <div class="st-actions">
+            <button id="st-prev" aria-label="Previous sticker">←</button>
+            <button id="st-preview-select" aria-pressed="false">Select</button>
+            <button id="st-next" aria-label="Next sticker">→</button>
+        </div>
+    </dialog>
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="module" src="/static/js/stickers.js?t={{ 'static/js/stickers.js' | file_mtime }}"></script>
+{% endblock %}

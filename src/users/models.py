@@ -9,6 +9,7 @@ class User:
     api_hash: Optional[str] = None
     username: Optional[str] = None
     session_string: Optional[str] = None
+    telegram_id: Optional[int] = None
     is_premium: bool = False
 
     # Settings (Strict Booleans)

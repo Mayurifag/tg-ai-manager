@@ -1,4 +1,4 @@
-from typing import Any, Optional, Dict
+from typing import Any, Optional
 from telethon.tl.types import (
     MessageService,
     MessageMediaPhoto,
@@ -68,9 +68,7 @@ def get_message_action_text(message: Any) -> Optional[str]:
     return "Service message"
 
 
-def format_message_preview(
-    message: Any, chat_type: ChatType, topic_map: Optional[Dict[int, str]] = None
-) -> str:
+def format_message_preview(message: Any, chat_type: ChatType) -> str:
     if not message:
         return "No messages"
 
@@ -132,40 +130,11 @@ def format_message_preview(
                 if not media_text:
                     media_text = "📄 Document"
 
-    # If text is present, show text. If text is empty, show media description.
-    if not text and media_text:
-        text = media_text
-    elif text and media_text:
-        # We now keep the text as is, even if media is present
-        pass
-    elif not text and not media_text:
-        text = "Media/Sticker"
-
-    text = text.replace("\n", " ")
-
-    # Removed MAX_LENGTH truncation to allow full message on frontend
-
-    prefix = ""
-    if chat_type == ChatType.GROUP:
+    text = (text or media_text or "Media/Sticker").replace("\n", " ")
+    if chat_type in (ChatType.GROUP, ChatType.TOPIC):
         sender = getattr(message, "sender", None)
         if sender:
-            name = utils.get_display_name(sender)
-            prefix = f"{name}: "
-    elif chat_type == ChatType.FORUM and topic_map and message:
-        reply_to = getattr(message, "reply_to", None)
-        if reply_to:
-            tid = getattr(reply_to, "reply_to_msg_id", None) or getattr(
-                reply_to, "reply_to_top_id", None
-            )
-            if tid is not None:
-                topic_name = topic_map.get(tid)
-                if topic_name:
-                    prefix = f"{topic_name}: "
-    elif chat_type == ChatType.TOPIC:
-        sender = getattr(message, "sender", None)
-        if sender:
-            name = utils.get_display_name(sender)
-            prefix = f"{name}: "
+            return f"{utils.get_display_name(sender)}: {text}"
 
     # Previews are plain Telegram text, not HTML. The card template escapes them.
-    return f"{prefix}{text}"
+    return text

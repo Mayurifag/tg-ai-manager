@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -17,6 +18,9 @@ logger = get_logger(__name__)
 ReadKey = tuple[int, Optional[int]]
 DispatchFn = Callable[[SystemEvent], Awaitable[None]]
 MAX_PENDING_READ_KEYS = 512
+MAX_DELAYED_AUTOMATIC_READS = 256
+MAX_CONFIRMED_READ_KEYS = 512
+MAX_READ_ATTEMPTS = 4
 # shortcut: allow 10 seconds per best-effort post-read lookup or notification;
 # revisit if legitimate operations routinely take longer.
 POST_READ_UPDATE_TIMEOUT = 10
@@ -30,6 +34,10 @@ class PendingRead:
 
 class ReadNotConfirmed(RuntimeError):
     """Telegram did not return a confirmed read result."""
+
+    def __init__(self, *, response: Any):
+        super().__init__("Telegram did not confirm the read")
+        self.outcome = "false" if response is False else type(response).__name__
 
 
 async def _run_queued_read(
@@ -51,25 +59,15 @@ class ReadOps:
         client: Any,
         write_queue: Any,
         dispatch_fn: Optional[DispatchFn],
-        get_topic_name_fn: Callable[[int, int], Awaitable[Optional[str]]],
-        coalesce_delay: float = 0,
-        *,
-        get_topic_name_before_fn: Optional[
-            Callable[[int, int, float], Awaitable[Optional[str]]]
-        ] = None,
     ) -> None:
         self.client = client
         self._write_queue = write_queue
         self._dispatch_fn = dispatch_fn
-        self._get_topic_name_fn = get_topic_name_fn
-        self._get_topic_name_before_fn = get_topic_name_before_fn
-        self._coalesce_delay = coalesce_delay
         self._pending: dict[ReadKey, PendingRead] = {}
         self._active_keys: set[ReadKey] = set()
-        self._inflight_keys: set[ReadKey] = set()
-        self._following_reads: dict[ReadKey, PendingRead] = {}
-        self._enqueue_tasks: set[asyncio.Task[None]] = set()
-        self._retry_counts: dict[ReadKey, int] = {}
+        self._delayed_automatic_reads = 0
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._confirmed_reads: OrderedDict[ReadKey, int] = OrderedDict()
         self._closed = False
 
     def set_dispatch_fn(self, dispatch_fn: Optional[DispatchFn]) -> None:
@@ -90,26 +88,16 @@ class ReadOps:
         ):
             raise WriteQueueFull("Too many pending Telegram reads; try again later")
         self._pending[key] = self._merge_pending(self._pending.get(key), max_id)
-        if key in self._inflight_keys:
-            # Later reads must not inherit the in-flight bound once that
-            # attempt completes, whether it succeeds or fails.
-            self._following_reads[key] = self._merge_pending(
-                self._following_reads.get(key), max_id
-            )
-
         if key in self._active_keys:
             return
 
         self._active_keys.add(key)
-        if self._coalesce_delay > 0:
-            self._schedule_enqueue(key)
-        else:
-            try:
-                await self._enqueue_key(key)
-            except BaseException:
-                self._pending.pop(key, None)
-                self._active_keys.discard(key)
-                raise
+        try:
+            await self._enqueue_key(key)
+        except BaseException:
+            self._pending.pop(key, None)
+            self._active_keys.discard(key)
+            raise
 
     async def mark_automatic_as_read(
         self,
@@ -120,17 +108,25 @@ class ReadOps:
         on_success: Callable[[], Awaitable[None]],
         *,
         selective: bool,
-    ) -> None:
+        chat_name: str,
+        topic_name: Optional[str],
+    ) -> bool:
         """Queue a bounded automatic read separately from coalesced manual reads."""
         if self._closed:
             raise RuntimeError("Read operations are closed")
         if type(max_id) is not int or max_id <= 0:
             raise ValueError("Automatic reads require a positive message bound")
+        key = (chat_id, topic_id)
+        if self._confirmed_reads.get(key, 0) >= max_id:
+            return False
+        queued_at = time.monotonic()
 
         async def perform() -> None:
             raise_if_task_stopped()
-            if self._closed:
+            # A preceding write may have confirmed this bound while we waited.
+            if self._closed or self._confirmed_reads.get(key, 0) >= max_id:
                 return
+            queue_seconds = time.monotonic() - queued_at
             valid = await validate()
             raise_if_task_stopped()
             if self._closed or not valid:
@@ -140,32 +136,61 @@ class ReadOps:
                 raise_if_task_stopped()
                 if self._closed or not allowed:
                     return
-            # Network state queries and flood waits may have yielded to rule changes.
-            valid = await validate()
-            raise_if_task_stopped()
-            if self._closed or not valid:
-                return
+            # _send_mark_as_read revalidates after any network state lookup.
             sent = await self._send_mark_as_read(
-                chat_id, topic_id, max_id, origin="automatic", validate=validate
+                chat_id,
+                topic_id,
+                max_id,
+                origin="automatic",
+                validate=validate,
+                chat_name=chat_name,
+                topic_name=topic_name,
+                queue_seconds=queue_seconds,
             )
             if not sent:
                 return
-            # An observer failure must not retry an already completed Telegram write.
+            self._start_task(self._notify(on_success))
+
+        async def retry_after(delay: int) -> None:
             try:
-                await on_success()
-            except Exception as error:
-                raise_if_task_stopped()
-                logger.error(
-                    "automatic_read_completion_failed",
+                await asyncio.sleep(delay)
+                if not self._closed:
+                    await self._write_queue.enqueue(attempt_read, automatic=True)
+            except RuntimeError as error:
+                logger.warning(
+                    "automatic_read_retry_not_queued",
                     chat_id=chat_id,
+                    topic_id=topic_id,
                     category=type(error).__name__,
                 )
-            raise_if_task_stopped()
+            finally:
+                self._delayed_automatic_reads -= 1
 
-        async def _do() -> None:
-            await _run_queued_read(perform, name="queued_automatic_read")
+        attempts = 0
 
-        await self._write_queue.enqueue(_do, automatic=True)
+        async def attempt_read() -> None:
+            nonlocal attempts
+            attempts += 1
+            try:
+                await _run_queued_read(perform, name="queued_automatic_read")
+            except (errors.FloodWaitError, errors.FloodPremiumWaitError) as error:
+                if (
+                    attempts >= MAX_READ_ATTEMPTS
+                    or self._delayed_automatic_reads >= MAX_DELAYED_AUTOMATIC_READS
+                ):
+                    raise
+                delay = max(1, error.seconds)
+                logger.warning(
+                    "automatic_read_flood_wait",
+                    chat_id=chat_id,
+                    topic_id=topic_id,
+                    seconds=delay,
+                )
+                self._delayed_automatic_reads += 1
+                self._start_task(retry_after(delay))
+
+        await self._write_queue.enqueue(attempt_read, automatic=True)
+        return True
 
     async def can_selectively_read(
         self,
@@ -252,60 +277,61 @@ class ReadOps:
             return None
         return max(existing, incoming)
 
-    def _schedule_enqueue(self, key: ReadKey, delay: Optional[float] = None) -> None:
-        if self._closed:
-            return
-        task = asyncio.create_task(self._enqueue_after_delay(key, delay))
-        self._enqueue_tasks.add(task)
-        task.add_done_callback(self._enqueue_tasks.discard)
+    def _start_task(self, operation) -> None:
+        task = asyncio.create_task(operation)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _enqueue_after_delay(
-        self, key: ReadKey, delay: Optional[float] = None
+        self, key: ReadKey, pending: PendingRead, attempt: int, delay: float
     ) -> None:
         try:
-            await asyncio.sleep(self._coalesce_delay if delay is None else delay)
-            await self._enqueue_key(key)
-        except Exception as e:
-            self._active_keys.discard(key)
-            pending = self._pending.pop(key, None)
-            self._retry_counts.pop(key, None)
-            logger.error(
-                "mark_as_read_enqueue_failed",
-                chat_id=key[0],
-                topic_id=key[1],
-                category=type(e).__name__,
-            )
-            if pending and self._dispatch_fn:
-                try:
-                    await self._dispatch_read_failure(
-                        SystemEvent(
-                            type="read_failed",
-                            text="Read could not be queued. Try again.",
-                            chat_name="",
-                            chat_id=key[0],
-                            topic_id=key[1],
-                            read_origin="manual",
-                            read_through=pending.max_id,
-                        )
-                    )
-                except Exception as error:
-                    logger.error(
-                        "read_failure_dispatch_failed",
-                        chat_id=key[0],
-                        category=type(error).__name__,
-                    )
+            await asyncio.sleep(delay)
+            if not self._closed:
+                await self._enqueue_key(key, pending, attempt)
+        except Exception as error:
+            self._report_manual_failure(key, pending, error)
+            await self._finish_manual_read(key)
 
-    async def _enqueue_key(self, key: ReadKey) -> None:
+    async def _enqueue_key(
+        self, key: ReadKey, pending: PendingRead | None = None, attempt: int = 1
+    ) -> None:
         async def _do() -> None:
-            await _run_queued_read(lambda: self._drain(key), name="queued_manual_read")
+            await _run_queued_read(
+                lambda: self._drain(key, pending, attempt), name="queued_manual_read"
+            )
 
         await self._write_queue.enqueue(_do)
 
-    async def _drain(self, key: ReadKey) -> None:
+    async def _finish_manual_read(self, key: ReadKey) -> None:
+        if self._closed or key not in self._pending:
+            self._active_keys.discard(key)
+            return
+        try:
+            await self._enqueue_key(key)
+        except Exception as error:
+            self._active_keys.discard(key)
+            self._report_manual_failure(key, self._pending.pop(key), error)
+
+    def _report_manual_failure(
+        self, key: ReadKey, pending: PendingRead, error: Exception
+    ) -> None:
+        logger.warning(
+            "manual_read_failed",
+            chat_id=key[0],
+            topic_id=key[1],
+            category=type(error).__name__,
+        )
+        self._emit_read(key, pending.max_id, "manual", failed=True)
+
+    async def _drain(
+        self, key: ReadKey, pending: PendingRead | None, attempt: int
+    ) -> None:
         raise_if_task_stopped()
         if self._closed:
             return
-        pending = self._pending.get(key)
+        if pending is None:
+            pending = self._pending.pop(key, None)
         if pending is None:
             self._active_keys.discard(key)
             return
@@ -318,102 +344,64 @@ class ReadOps:
             queue_seconds=round(time.monotonic() - pending.queued_at, 3),
         )
         try:
-            self._inflight_keys.add(key)
-            try:
-                await self._send_mark_as_read(key[0], key[1], pending.max_id)
-            finally:
-                self._inflight_keys.discard(key)
-        except errors.FloodWaitError:
-            raise_if_task_stopped()
-            # The write queue owns Telegram's mandatory flood-wait backoff.
-            self._following_reads.pop(key, None)
-            raise
-        except (OSError, asyncio.TimeoutError, errors.ServerError):
-            raise_if_task_stopped()
-            self._following_reads.pop(key, None)
-            attempt = min(self._retry_counts.get(key, 0) + 1, 6)
-            self._retry_counts[key] = attempt
-            delay = min(2 ** (attempt - 1), 30)
-            logger.warning(
-                "mark_as_read_retry",
-                chat_id=key[0],
-                topic_id=key[1],
-                max_id=pending.max_id,
-                delay_seconds=delay,
-            )
-            self._schedule_enqueue(key, delay=delay)
-            return
-        except Exception:
-            raise_if_task_stopped()
-            # A newer accepted read is independent of the failed write; keep
-            # its own bound rather than dropping it or inheriting the old one.
-            following = self._following_reads.pop(key, None)
-            if following is None:
-                self._pending.pop(key, None)
-                self._active_keys.discard(key)
-            else:
-                self._pending[key] = following
-            self._retry_counts.pop(key, None)
-            try:
-                if self._dispatch_fn:
-                    await self._dispatch_read_failure(
-                        SystemEvent(
-                            type="read_failed",
-                            text="Read was not confirmed. Refresh before retrying.",
-                            chat_name="",
-                            chat_id=key[0],
-                            topic_id=key[1],
-                            read_origin="manual",
-                            read_through=pending.max_id,
-                        )
-                    )
-            except Exception as error:
-                logger.error(
-                    "read_failure_dispatch_failed",
-                    chat_id=key[0],
-                    category=type(error).__name__,
+            if pending.max_id is None:
+                _, state = await self._scope_unread_state(
+                    *key, check=raise_if_task_stopped
                 )
-            finally:
-                if following is not None:
-                    self._schedule_enqueue(key)
-            raise
-        except BaseException:
-            self._following_reads.pop(key, None)
-            raise
-
-        following = self._following_reads.pop(key, None)
-        self._retry_counts.pop(key, None)
-
-        if following is None:
-            self._pending.pop(key, None)
-            self._active_keys.discard(key)
-            return
-
-        self._pending[key] = following
-        self._schedule_enqueue(key)
+                if state is None:
+                    raise LookupError("Telegram did not return a read bound")
+                pending = PendingRead(state[2], pending.queued_at)
+            if pending.max_id > 0:
+                await self._send_mark_as_read(*key, pending.max_id)
+            else:
+                self._emit_read(key, pending.max_id, "manual")
+        except asyncio.CancelledError:
+            raise_if_task_stopped()
+            self._report_manual_failure(
+                key, pending, ConnectionError("Read interrupted")
+            )
+        except Exception as error:
+            raise_if_task_stopped()
+            flood = isinstance(
+                error, (errors.FloodWaitError, errors.FloodPremiumWaitError)
+            )
+            if attempt < MAX_READ_ATTEMPTS and (
+                flood
+                or isinstance(
+                    error, (OSError, errors.ServerError, errors.TimedOutError)
+                )
+            ):
+                delay = error.seconds if flood else 2 ** (attempt - 1)
+                self._start_task(
+                    self._enqueue_after_delay(key, pending, attempt + 1, max(1, delay))
+                )
+                return
+            self._report_manual_failure(key, pending, error)
+        await self._finish_manual_read(key)
 
     async def close(self) -> None:
         self._closed = True
-        tasks = list(self._enqueue_tasks)
+        tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        self._enqueue_tasks.clear()
+        self._tasks.clear()
         self._pending.clear()
         self._active_keys.clear()
-        self._inflight_keys.clear()
-        self._following_reads.clear()
-        self._retry_counts.clear()
+        self._confirmed_reads.clear()
 
     async def _send_mark_as_read(
         self,
         chat_id: int,
         topic_id: Optional[int],
-        max_id: Optional[int],
+        max_id: int,
         *,
         origin: str = "manual",
         validate: Optional[Callable[[], Awaitable[bool]]] = None,
+        chat_name: Optional[str] = None,
+        topic_name: Optional[str] = None,
+        queue_seconds: Optional[float] = None,
     ) -> bool:
         started = time.monotonic()
         try:
@@ -432,12 +420,9 @@ class ReadOps:
                 if self._closed or not valid:
                     return False
             if topic_id is None:
-                topic_name = None
                 await self._read_chat(input_peer, max_id)
             else:
-                topic_name = await self._read_topic(
-                    input_peer, chat_id, topic_id, max_id
-                )
+                await self._read_topic(input_peer, topic_id, max_id)
             raise_if_task_stopped()
 
         except errors.FloodWaitError:
@@ -449,166 +434,91 @@ class ReadOps:
                 "mark_as_read_failed",
                 chat_id=chat_id,
                 topic_id=topic_id,
+                origin=origin,
+                max_id=max_id,
+                response=e.outcome if isinstance(e, ReadNotConfirmed) else None,
                 category=type(e).__name__,
             )
             raise
 
+        key = (chat_id, topic_id)
+        self._confirmed_reads[key] = max(max_id, self._confirmed_reads.get(key, 0))
+        self._confirmed_reads.move_to_end(key)
+        if len(self._confirmed_reads) > MAX_CONFIRMED_READ_KEYS:
+            self._confirmed_reads.popitem(last=False)
         logger.info(
             "mark_as_read_completed",
             chat_id=chat_id,
             topic_id=topic_id,
             max_id=max_id,
+            origin=origin,
+            queue_seconds=round(queue_seconds, 3)
+            if queue_seconds is not None
+            else None,
             rpc_seconds=round(time.monotonic() - started, 3),
         )
-        try:
-            await self._dispatch_read_event(
-                chat_id, topic_id, topic_name, input_peer, origin, max_id
-            )
-        except Exception as error:
-            logger.error(
-                "read_event_dispatch_failed",
-                chat_id=chat_id,
-                category=type(error).__name__,
-            )
+        self._emit_read(
+            key,
+            max_id,
+            origin,
+            chat_name=chat_name,
+            topic_name=topic_name,
+        )
         raise_if_task_stopped()
         return True
 
-    async def _read_chat(self, input_peer: Any, max_id: Optional[int]) -> None:
-        if max_id is None:
-            result = await self.client.send_read_acknowledge(input_peer)
-        else:
-            result = await self.client.send_read_acknowledge(input_peer, max_id=max_id)
+    async def _read_chat(self, input_peer: Any, max_id: int) -> None:
+        result = await self.client.send_read_acknowledge(input_peer, max_id=max_id)
         raise_if_task_stopped()
         if result is not True and not isinstance(
             result, types.messages.AffectedMessages
         ):
-            raise ReadNotConfirmed("Telegram did not confirm the read")
+            raise ReadNotConfirmed(response=result)
 
     async def _read_topic(
         self,
         input_peer: Any,
-        chat_id: int,
         topic_id: int,
-        max_id: Optional[int],
-    ) -> Optional[str]:
-        try:
-            read_max_id = max_id
-            if read_max_id is None:
-                read_max_id = await self._latest_topic_message_id(input_peer, topic_id)
-                raise_if_task_stopped()
-                if self._closed:
-                    raise ReadNotConfirmed("Read operations are closed")
-
-            result = await self.client(
-                functions.messages.ReadDiscussionRequest(
-                    peer=input_peer,
-                    msg_id=topic_id,
-                    read_max_id=read_max_id,
-                )
-            )
-            raise_if_task_stopped()
-            if result is not True:
-                raise ReadNotConfirmed("Telegram did not confirm the topic read")
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + POST_READ_UPDATE_TIMEOUT
-
-            async def topic_name() -> Optional[str]:
-                if self._get_topic_name_before_fn:
-                    return await self._get_topic_name_before_fn(
-                        chat_id, topic_id, deadline
-                    )
-                return await self._get_topic_name_fn(chat_id, topic_id)
-
-            try:
-                return await run_with_task_deadline(
-                    topic_name, deadline, name="post_read_topic_name"
-                )
-            except Exception as error:
-                raise_if_task_stopped()
-                logger.warning(
-                    "topic_name_after_read_failed",
-                    chat_id=chat_id,
-                    topic_id=topic_id,
-                    category=type(error).__name__,
-                )
-                return None
-            finally:
-                raise_if_task_stopped()
-        except Exception as e:
-            raise_if_task_stopped()
-            if "TOPIC_ID_INVALID" in str(e):
-                logger.warning(
-                    "mark_read_topic_invalid",
-                    chat_id=chat_id,
-                    topic_id=topic_id,
-                )
-            raise
-
-    async def _latest_topic_message_id(self, input_peer: Any, topic_id: int) -> int:
-        msgs = await self.client.get_messages(input_peer, limit=1, reply_to=topic_id)
-        return msgs[0].id if msgs else topic_id
-
-    async def _dispatch_read_failure(self, event: SystemEvent) -> None:
-        dispatch_fn = self._dispatch_fn
-        if dispatch_fn is None:
-            return
-        deadline = asyncio.get_running_loop().time() + POST_READ_UPDATE_TIMEOUT
-        await run_with_task_deadline(
-            lambda: dispatch_fn(event), deadline, name="read_failure_notification"
-        )
-
-    async def _dispatch_read_event(
-        self,
-        chat_id: int,
-        topic_id: Optional[int],
-        topic_name: Optional[str],
-        input_peer: Any,
-        origin: str,
-        max_id: Optional[int],
+        max_id: int,
     ) -> None:
+        result = await self.client(
+            functions.messages.ReadDiscussionRequest(
+                peer=input_peer, msg_id=topic_id, read_max_id=max_id
+            )
+        )
         raise_if_task_stopped()
-        if not self._dispatch_fn:
-            return
+        if result is not True:
+            raise ReadNotConfirmed(response=result)
 
-        chat_name = f"Chat {chat_id}"
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + POST_READ_UPDATE_TIMEOUT
-
-        async def resolve_chat_name() -> str:
-            entity = await self.client.get_entity(input_peer)
-            raise_if_task_stopped()
-            return utils.get_display_name(entity)
-
+    async def _notify(self, operation) -> None:
         try:
-            chat_name = await run_with_task_deadline(
-                resolve_chat_name, deadline, name="post_read_chat_name"
-            )
+            deadline = asyncio.get_running_loop().time() + POST_READ_UPDATE_TIMEOUT
+            await run_with_task_deadline(operation, deadline, name="read_notification")
         except Exception as error:
-            raise_if_task_stopped()
-            logger.warning(
-                "read_event_chat_name_failed",
-                chat_id=chat_id,
-                category=type(error).__name__,
-            )
-        finally:
-            raise_if_task_stopped()
+            logger.warning("read_notification_failed", category=type(error).__name__)
 
+    def _emit_read(
+        self, key, max_id, origin, *, chat_name=None, topic_name=None, failed=False
+    ) -> None:
         dispatch_fn = self._dispatch_fn
-        if dispatch_fn is None:
+        if self._closed or dispatch_fn is None:
             return
+        chat_id, topic_id = key
+        link = f"/chat/{chat_id}"
+        if topic_id is not None:
+            link += f"/topic/{topic_id}"
         event = SystemEvent(
-            type="read",
-            text="Marked as read",
-            chat_name=chat_name,
+            type="read_failed" if failed else "read",
+            text="Read was not confirmed. Refresh before retrying."
+            if failed
+            else "Marked as read",
+            chat_name=chat_name or f"Chat {chat_id}",
             topic_name=topic_name,
             chat_id=chat_id,
             topic_id=topic_id,
-            is_read=True,
+            is_read=not failed,
             read_origin=origin,
             read_through=max_id,
-            link=f"/chat/{chat_id}",
+            link=link,
         )
-        deadline = loop.time() + POST_READ_UPDATE_TIMEOUT
-        await run_with_task_deadline(
-            lambda: dispatch_fn(event), deadline, name="post_read_notification"
-        )
+        self._start_task(self._notify(lambda: dispatch_fn(event)))

@@ -8,13 +8,15 @@ from src.infrastructure.logging import get_logger
 from src.infrastructure.security import SecretStorageError
 from src.requests import BadRequest, require_int
 from src.rules.ports import InvalidRuleConfiguration
+from src.web.requests import require_account_token
 from src.web.routes.auth import auth_bp
 from src.web.routes.chat import chat_bp
 from src.web.routes.forum import forum_bp
 from src.web.routes.health import health_bp
 from src.web.routes.media import media_bp
 from src.web.routes.settings import settings_bp
-from src.web.routes.sse import sse_bp
+from src.web.routes.stickers import stickers_bp
+from src.web.routes.events import events_bp
 
 logger = get_logger(__name__)
 
@@ -24,8 +26,9 @@ def register_routes(app: Quart):
     app.register_blueprint(chat_bp)
     app.register_blueprint(forum_bp)
     app.register_blueprint(media_bp)
-    app.register_blueprint(sse_bp)
+    app.register_blueprint(events_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(stickers_bp)
     app.register_blueprint(health_bp)
 
     @app.errorhandler(SecretStorageError)
@@ -168,13 +171,14 @@ def register_routes(app: Quart):
 
     @app.before_request
     async def protect_account_mutations():
-        if request.method in {"GET", "HEAD", "OPTIONS"} or request.endpoint == (
-            "settings.api_debug_process"
-        ):
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
             return
         adapter = getattr(request, "_account_adapter", None)
         if adapter is None:
             # Login and reset own the lifecycle lock themselves.
+            return
+        require_account_token(adapter)
+        if request.endpoint == "settings.api_debug_process":
             return
         # Receive the body before taking the lock so a slow client cannot
         # hold up account retirement while uploading a request.
@@ -182,7 +186,7 @@ def register_routes(app: Quart):
         await app.login_lock.acquire()
         request._account_mutation_lock = True
         if _get_tg_adapter() is not adapter or not adapter.is_connected():
-            return jsonify({"error": "Account changed; retry the request"}), 409
+            raise AccountChanged()
 
     @app.after_request
     async def discard_retired_account_response(response):
@@ -196,7 +200,7 @@ def register_routes(app: Quart):
             else:
                 return response
         else:
-            if adapter is None or request.endpoint == "sse.event_stream":
+            if adapter is None or request.endpoint == "events.event_stream":
                 return response
             if (
                 _get_tg_adapter() is adapter

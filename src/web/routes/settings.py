@@ -16,6 +16,7 @@ from src.container import (
 from src.domain.errors import AccountChanged
 from src.rules.models import DEFAULT_AUTOREACT_EMOJI, RuleType
 from src.rules.ports import InheritedRuleError
+from src.rules.sync import RulesImportError, import_rules_from_remote
 from src.infrastructure.logging import get_logger
 from src.users.models import User
 from src.requests import optional_int, require_int
@@ -28,6 +29,7 @@ from src.web.requests import (
     ToggleRuleRequest,
     optional_empty_json_body,
     query_values,
+    require_account_token,
 )
 
 settings_bp = Blueprint("settings", __name__)
@@ -79,7 +81,11 @@ async def settings_view():
         check()
         if not user:
             user = User()
-        return await render_template("settings/settings.html.j2", settings=user)
+        return await render_template(
+            "settings/settings.html.j2",
+            settings=user,
+            rules_import_configured=bool(get_settings().RULES_SYNC_URL),
+        )
 
     return await _account_bound_read(render_page)
 
@@ -119,10 +125,13 @@ async def reset_account():
         return bad_request(error)
     try:
         async with current_app.login_lock:
+            require_account_token(_get_tg_adapter())
             with account_transition():
                 await reload_tg_adapter(session_string=None)
                 repo = get_user_repo()
                 await repo.delete_user(1)
+    except AccountChanged:
+        raise
     except Exception as error:
         logger.error("account_reset_failed", category=type(error).__name__)
         return jsonify(
@@ -324,6 +333,35 @@ async def api_export_rules():
     )
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@settings_bp.post("/api/rules/import")
+async def api_import_rules():
+    body = await request.get_json()
+    if (
+        not isinstance(body, dict)
+        or body.keys() != {"replace"}
+        or body["replace"] is not True
+    ):
+        return bad_request(BadRequest("Confirm that the import replaces local rules."))
+    settings = get_settings()
+    if not settings.RULES_SYNC_URL:
+        return jsonify(error="No rules export server is configured."), 400
+    adapter = _get_tg_adapter()
+    try:
+        imported = await import_rules_from_remote(
+            settings.RULES_SYNC_URL,
+            get_user_repo(),
+            expected_account_id=adapter._self_id,
+            token=settings.RULES_SYNC_TOKEN,
+            ai_policy_change=get_rule_service().ai_policy_change,
+            is_current=lambda: (
+                not current_app.shutdown_event.is_set() and adapter.is_connected()
+            ),
+        )
+    except RulesImportError as error:
+        return jsonify(error=str(error)), 400
+    return jsonify(imported=imported)
 
 
 @settings_bp.route("/api/rules", methods=["GET"])

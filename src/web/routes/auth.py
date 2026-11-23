@@ -28,13 +28,13 @@ from src.infrastructure.tasks import (
     raise_if_task_stopped,
     run_with_task_deadline,
 )
-from src.rules.sync import sync_rules_from_remote
 from src.users.models import User
 from src.web.requests import (
     BadRequest,
     PasswordRequest,
     optional_empty_json_body,
     query_values,
+    require_account_token,
 )
 
 logger = get_logger(__name__)
@@ -115,15 +115,20 @@ async def qr_start():
         async with current_app.login_lock:
             if current_app.shutdown_event.is_set():
                 return jsonify({"error": "Application is shutting down"}), 503
+            current = _get_tg_adapter()
+            require_account_token(current)
+            if current.is_connected():
+                return jsonify({"status": "authorized"})
             user = await run_with_task_deadline(
                 lambda: get_user_repo().get_user(1), None, name="qr_saved_account"
             )
-            current = _get_tg_adapter()
             expected_account_id = None
             if user and user.session_string:
-                if current._login_attempt_id:
-                    expected_account_id = current._expected_login_account_id
-                elif current._source_session_string == user.session_string:
+                expected_account_id = user.telegram_id
+                if (
+                    expected_account_id is None
+                    and current._source_session_string == user.session_string
+                ):
                     expected_account_id = current._self_id
                 if type(expected_account_id) is not int or expected_account_id <= 0:
                     return jsonify(
@@ -152,13 +157,18 @@ async def qr_start():
                 return jsonify({"status": "authorized"})
 
             return jsonify(
-                {"status": "ok", "url": url, "attempt_id": adapter._login_attempt_id}
+                {
+                    "status": "ok",
+                    "url": url,
+                    "attempt_id": adapter._login_attempt_id,
+                    "account_token": adapter.account_token,
+                }
             )
     except AccountMismatchError:
         return _account_mismatch_response()
     except FloodWaitError as error:
         raise unavailable(error) from error
-    except (TelegramUnavailable, SecretStorageError):
+    except TelegramUnavailable, SecretStorageError, AccountChanged:
         raise
     except sqlite3.Error as error:
         return _account_storage_unavailable(error)
@@ -191,7 +201,7 @@ async def qr_status():
                 return _account_mismatch_response()
             except FloodWaitError as error:
                 raise unavailable(error) from error
-            except (TelegramUnavailable, SecretStorageError):
+            except TelegramUnavailable, SecretStorageError:
                 raise
             except sqlite3.Error as error:
                 return _account_storage_unavailable(error)
@@ -263,7 +273,7 @@ async def login_2fa():
         return _account_mismatch_response()
     except FloodWaitError as error:
         raise unavailable(error) from error
-    except (TelegramUnavailable, SecretStorageError):
+    except TelegramUnavailable, SecretStorageError:
         raise
     except sqlite3.Error as error:
         return _account_storage_unavailable(error)
@@ -324,8 +334,7 @@ async def _finalize_login_locked(adapter):
     session_string = adapter.get_session_string()
     settings = get_settings()
 
-    me = await adapter.client.get_me()
-    _ensure_login_active(adapter)
+    me = adapter.self_profile
     if not me or type(getattr(me, "id", None)) is not int or me.id <= 0:
         raise RuntimeError("Could not identify the Telegram account")
     username = getattr(me, "username", None)
@@ -349,6 +358,7 @@ async def _finalize_login_locked(adapter):
             {
                 "username": username,
                 "session_string": session_string,
+                "telegram_id": me.id,
                 "is_premium": is_premium,
             },
             expected_session=existing_user.session_string,
@@ -363,6 +373,7 @@ async def _finalize_login_locked(adapter):
                 api_hash=settings.TG_API_HASH,
                 username=username,
                 session_string=session_string,
+                telegram_id=me.id,
                 is_premium=is_premium,
             )
         )
@@ -375,23 +386,6 @@ async def _finalize_login_locked(adapter):
     logger.info("auth_login_completed", premium=is_premium)
 
     rule_service = get_rule_service()
-    if settings.RULES_SYNC_URL:
-
-        def sync_is_current() -> bool:
-            raise_if_task_stopped()
-            return _login_is_active(adapter)
-
-        await sync_rules_from_remote(
-            settings.RULES_SYNC_URL,
-            rule_service.rule_repo,
-            repo,
-            expected_account_id=getattr(me, "id", None),
-            token=getattr(settings, "RULES_SYNC_TOKEN", None),
-            ai_policy_change=rule_service.ai_policy_change,
-            is_current=sync_is_current,
-        )
-        _ensure_login_active(adapter)
-
     # Trigger a startup scan now that we are connected,
     # to catch any unread messages that existed before/during login.
     current_app.managed_tasks.create(

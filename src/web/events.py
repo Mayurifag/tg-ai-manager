@@ -1,6 +1,6 @@
 import asyncio
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from types import SimpleNamespace
 from typing import Optional
 
@@ -11,8 +11,8 @@ from src.infrastructure.html import html_to_text
 from src.infrastructure.tasks import raise_if_task_stopped
 from src.web.serializers import json_serializer
 
-MAX_SSE_CLIENTS = 50
-SSE_QUEUE_SIZE = 128
+MAX_EVENT_CLIENTS = 50
+EVENT_QUEUE_SIZE = 128
 RESYNC = json.dumps({"type": "resync_required"})
 
 
@@ -26,10 +26,10 @@ class Subscription:
 
 
 class EventBroadcaster:
-    """App-owned, bounded SSE subscriptions with explicit overflow recovery."""
+    """App-owned, bounded subscriptions with explicit overflow recovery."""
 
     def __init__(
-        self, max_clients: int = MAX_SSE_CLIENTS, queue_size: int = SSE_QUEUE_SIZE
+        self, max_clients: int = MAX_EVENT_CLIENTS, queue_size: int = EVENT_QUEUE_SIZE
     ):
         self._clients: set[Subscription] = set()
         self._max_clients = max_clients
@@ -78,31 +78,19 @@ class EventBroadcaster:
         raise_if_task_stopped()
         if event.type == "resync_required":
             # Do not deliver queued events from a state that is no longer known
-            # to be current. Each stream reconnects after receiving the marker.
+            # to be current. Wake the stream handlers so clients can reconnect.
             self.invalidate_clients()
             return
         clients = tuple(client for client in self._clients if not client.stale)
         if not clients:
             return
 
-        payload = asdict(event)
+        payload = asdict(replace(event, message_model=None, rendered_html=None))
         if event.chat_id is not None:
             payload["chat_id"] = str(event.chat_id)
         payload["text_plain"] = html_to_text(event.text)
-        message = payload.get("message_model")
-        if message:
-            if message["grouped_id"] is not None:
-                # Telegram's 64-bit album IDs cannot be represented exactly
-                # by JavaScript numbers.
-                message["grouped_id"] = str(message["grouped_id"])
-            for reaction in message["reactions"]:
-                if reaction["custom_emoji_id"] is not None:
-                    reaction["custom_emoji_id"] = str(reaction["custom_emoji_id"])
-        # List/debug views need only enough information to update their cards.
-        summary = dict(payload, rendered_html=None)
-        if message:
-            summary["message_model"] = {"is_outgoing": message["is_outgoing"]}
-        serialized_summary = json.dumps(summary, default=json_serializer)
+        serialized_summary = None
+        message = None
         serialized_full: dict[tuple[bool, bool], str] = {}
 
         for client in clients:
@@ -124,6 +112,18 @@ class EventBroadcaster:
                 }
             )
             if not full:
+                if serialized_summary is None:
+                    summary = payload
+                    if event.message_model is not None:
+                        summary = dict(
+                            payload,
+                            message_model={
+                                "id": event.message_model.id,
+                                "date": event.message_model.date,
+                                "is_outgoing": event.message_model.is_outgoing,
+                            },
+                        )
+                    serialized_summary = json.dumps(summary, default=json_serializer)
                 data = serialized_summary
             else:
                 render = (
@@ -134,7 +134,17 @@ class EventBroadcaster:
                 )
                 key = (render, client.debug if render else False)
                 if key not in serialized_full:
-                    full_payload = dict(payload, rendered_html=None)
+                    if message is None and event.message_model is not None:
+                        message = asdict(event.message_model)
+                        # These Telegram IDs exceed JavaScript's safe integer range.
+                        if message["grouped_id"] is not None:
+                            message["grouped_id"] = str(message["grouped_id"])
+                        for reaction in message["reactions"]:
+                            if reaction["custom_emoji_id"] is not None:
+                                reaction["custom_emoji_id"] = str(
+                                    reaction["custom_emoji_id"]
+                                )
+                    full_payload = dict(payload, message_model=message)
                     if render:
                         template = current_app.jinja_env.get_template(
                             "chat/messages_partial.html.j2"

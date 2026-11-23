@@ -1,14 +1,18 @@
-"""Startup rules sync: fetches production rules export and applies them locally."""
+"""Explicitly import a rules export from the configured server."""
 
 import asyncio
 import ipaddress
+import os
+import ssl
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from urllib.parse import urlsplit
 
-import httpx
+import certifi
+import httpx2
 
 from src.infrastructure.json_data import load_json
+from src.domain.errors import AccountChanged
 from src.infrastructure.logging import get_logger
 from src.infrastructure.tasks import (
     raise_if_cancelled,
@@ -16,7 +20,6 @@ from src.infrastructure.tasks import (
     run_with_task_deadline,
 )
 from src.rules.models import Rule, RuleType
-from src.rules.ports import RuleRepository
 from src.users.ports import UserRepository
 from src.requests import AutoreactConfigRequest, SettingsPatch
 
@@ -30,76 +33,84 @@ _MAX_IMPORT_BYTES = 2 * 1024 * 1024
 _MAX_RULES = 10_000
 
 
+class RulesImportError(ValueError):
+    pass
+
+
 def _reject_import_constant(_value: str) -> None:
     # json.loads otherwise accepts NaN and infinities, which are not JSON.
     raise ValueError("Invalid import JSON")
 
 
-async def sync_rules_from_remote(
+async def import_rules_from_remote(
     url: str,
-    rule_repo: RuleRepository,
     user_repo: UserRepository,
     *,
     expected_account_id: int | None = None,
     token: str | None = None,
     is_current: Callable[[], bool] | None = None,
     ai_policy_change: Callable[[], AbstractContextManager[None]],
-) -> None:
-    """Fetch the production rules export and full-replace local rules.
-
-    Parameters are explicit rather than read from cached global settings.
-    The policy guard must belong to the RuleService using these repositories.
-
-    On any error the function logs a structured warning and returns —
-    startup continues normally (R011).  The full URL is never logged
-    because it may contain auth tokens.
-    """
+) -> int:
+    """Replace local rules only after validating the entire export."""
     raise_if_cancelled()
     if type(expected_account_id) is not int or expected_account_id <= 0:
-        logger.info("rules_sync_skipped", reason="account_identity_unavailable")
-        return
+        raise RulesImportError("Telegram account identity is unavailable.")
     try:
-        await _do_sync(
+        return await _do_sync(
             url,
-            rule_repo,
             user_repo,
             expected_account_id,
             token,
             is_current,
             ai_policy_change,
         )
-    except httpx.HTTPStatusError as exc:
+    except httpx2.HTTPStatusError as exc:
         logger.warning(
             "rules_sync_failed", category="http_status", status=exc.response.status_code
         )
-    except httpx.RequestError:
-        logger.warning("rules_sync_failed", category="network")
-    except TimeoutError:
-        logger.warning("rules_sync_failed", category="timeout")
+        raise RulesImportError(
+            f"The export server returned HTTP {exc.response.status_code}."
+        ) from None
+    except AccountChanged, RulesImportError:
+        raise
+    except ValueError:
+        raise RulesImportError(
+            "The export is invalid or belongs to another account. No rules changed."
+        ) from None
     except Exception as exc:
         # Exception strings may contain request URLs, tokens, or response bodies.
         logger.warning("rules_sync_failed", category=type(exc).__name__)
+        raise RulesImportError(
+            "Could not confirm the import. Reload and check your rules."
+        ) from None
     finally:
         raise_if_cancelled()
 
 
-def _sync_is_current(is_current: Callable[[], bool] | None) -> bool:
+def _check_current(is_current: Callable[[], bool] | None) -> None:
     raise_if_cancelled()
     if is_current is not None and not is_current():
-        logger.info("rules_sync_skipped", reason="account_changed")
-        return False
-    return True
+        raise AccountChanged()
+
+
+def _export_tls_context(*, trust_env: bool) -> ssl.SSLContext:
+    if trust_env:
+        if cafile := os.environ.get("SSL_CERT_FILE"):
+            return ssl.create_default_context(cafile=cafile)
+        if capath := os.environ.get("SSL_CERT_DIR"):
+            return ssl.create_default_context(capath=capath)
+    # Keep the export endpoint's existing CA bundle rather than HTTPX2's system default.
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 async def _do_sync(
     url: str,
-    rule_repo: RuleRepository,
     user_repo: UserRepository,
     expected_account_id: int,
     token: str | None,
     is_current: Callable[[], bool] | None,
     ai_policy_change: Callable[[], AbstractContextManager[None]],
-) -> None:
+) -> int:
     # Only explicitly local endpoints may use HTTP or omit a bearer token.
     # An account ID in the export does not authenticate its source.
     parsed = urlsplit(url)
@@ -109,30 +120,26 @@ async def _do_sync(
     except ValueError:
         local = False
     if parsed.scheme not in {"http", "https"} or not host:
-        logger.warning("rules_sync_skipped", reason="invalid_url")
-        return
+        raise RulesImportError("The configured export URL is invalid.")
     if not local and (parsed.scheme != "https" or not token or not token.strip()):
-        logger.warning("rules_sync_skipped", reason="remote_requires_https_and_token")
-        return
+        raise RulesImportError("A remote export requires HTTPS and an export token.")
     if (
         token
         and token.strip()
         and (parsed.username is not None or parsed.password is not None)
     ):
-        # HTTPX gives URL credentials precedence over an Authorization header.
-        logger.warning("rules_sync_skipped", reason="url_credentials_override_token")
-        return
-    if not _sync_is_current(is_current):
-        return
+        # HTTPX2 gives URL credentials precedence over an Authorization header.
+        raise RulesImportError(
+            "Remove credentials from the export URL when using a token."
+        )
+    _check_current(is_current)
 
     # Bind the import to the account that initiated it, not whichever user
     # happens to exist after a potentially slow network request.
     user = await user_repo.get_user(1)
     if not user or not user.is_authenticated():
-        logger.info("rules_sync_skipped", reason="no_authenticated_account")
-        return
-    if not _sync_is_current(is_current):
-        return
+        raise AccountChanged()
+    _check_current(is_current)
     expected_session = user.session_string
 
     # Phase: fetch
@@ -140,18 +147,19 @@ async def _do_sync(
     if token and token.strip():
         headers["Authorization"] = f"Bearer {token}"
     # Never route the loopback HTTP exception through an environment proxy.
+    trust_env = not (local and parsed.scheme == "http")
     deadline = asyncio.get_running_loop().time() + _FETCH_TIMEOUT
 
-    async def fetch() -> bytearray | None:
+    async def fetch() -> bytearray:
         content = bytearray()
-        async with httpx.AsyncClient(
+        async with httpx2.AsyncClient(
             timeout=_TIMEOUT,
             follow_redirects=False,
-            trust_env=not (local and parsed.scheme == "http"),
+            trust_env=trust_env,
+            verify=_export_tls_context(trust_env=trust_env),
         ) as client:
             raise_if_task_stopped()
-            if not _sync_is_current(is_current):
-                return None
+            _check_current(is_current)
             raise_if_task_stopped()
             async with client.stream("GET", url, headers=headers) as response:
                 raise_if_task_stopped()
@@ -162,7 +170,7 @@ async def _do_sync(
                     "identity",
                 ):
                     raise ValueError("Encoded imports are not supported")
-                # Enforce the limit before HTTPX can expand a compressed body.
+                # Enforce the limit before the client can expand a compressed body.
                 async for chunk in response.aiter_raw():
                     raise_if_task_stopped()
                     if len(content) + len(chunk) > _MAX_IMPORT_BYTES:
@@ -173,8 +181,6 @@ async def _do_sync(
         return content
 
     content = await run_with_task_deadline(fetch, deadline, name="rules_sync_fetch")
-    if content is None:
-        return
 
     # Validate the entire document before touching storage.
     data = load_json(content, parse_constant=_reject_import_constant)
@@ -241,18 +247,17 @@ async def _do_sync(
             )
         )
 
-    if not _sync_is_current(is_current):
-        return
+    _check_current(is_current)
     with ai_policy_change():
         replaced = await user_repo.replace_rules_and_settings(
             user.id, rules, settings, expected_session=expected_session
         )
     if not replaced:
-        logger.warning("rules_sync_skipped", reason="account_changed")
-        return
+        raise AccountChanged()
 
     logger.info(
         "rules_sync_completed",
         rule_count=len(rules),
         settings_synced=bool(settings),
     )
+    return len(rules)

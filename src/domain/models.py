@@ -32,6 +32,9 @@ class Chat:
     icon_emoji: Optional[str] = None
     is_pinned: bool = False
     last_message_id: Optional[int] = None
+    last_message_date: Optional[datetime] = None
+    # Available for one-unread dialogs when Telegram supplied decision metadata.
+    unread_message: Optional["Message"] = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,7 @@ class Message:
     album_parts: Optional[List["Message"]] = None  # Holds other messages in the group
     # Raw Telegram text is for decisions; text contains sanitized presentation HTML.
     raw_text: Optional[str] = None
+    edit_date: Optional[datetime] = None
 
     @property
     def media_geometry(self) -> tuple[int, int, int]:
@@ -175,6 +179,7 @@ class SystemEvent:
     scope_known: bool = True
     read_origin: Optional[str] = None
     read_through: Optional[int] = None
+    edit_pts: Optional[int] = None
 
 
 @dataclass

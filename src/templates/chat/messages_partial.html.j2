@@ -25,12 +25,12 @@
 
 {% for msg in messages %}
 {% if msg.is_service %}
-<div class="service-message-row" id="msg-{{ msg.id }}" data-id="{{ msg.id }}" data-oldest-id="{{ msg.id }}">
+<div class="service-message-row" id="msg-{{ msg.id }}" data-id="{{ msg.id }}" data-oldest-id="{{ msg.id }}"{% if msg.edit_date %} data-edit-date="{{ msg.edit_date.isoformat() }}"{% endif %}>
     <div class="service-message-bubble">{{ msg.sender_name }} {{ msg.text | safe }}</div>
 </div>
 {% else %}
 <article class="message-row {{ 'outgoing' if msg.is_outgoing else 'incoming' }}" id="msg-{{ msg.id }}"
-    data-id="{{ msg.id }}" data-oldest-id="{{ msg.album_parts[0].id if msg.album_parts else msg.id }}"{% if msg.grouped_id %} data-grouped-id="{{ msg.grouped_id }}"{% endif %}>
+    data-id="{{ msg.id }}" data-oldest-id="{{ msg.album_parts[0].id if msg.album_parts else msg.id }}"{% if msg.edit_date %} data-edit-date="{{ msg.edit_date.isoformat() }}"{% endif %}{% if msg.grouped_id %} data-grouped-id="{{ msg.grouped_id }}"{% endif %}>
     {% if not msg.is_outgoing %}
     <div class="message-avatar">
         {% if msg.avatar_url %}
@@ -55,7 +55,7 @@
         {% set count = msg.album_parts | length %}
         <div class="media-content album-grid {{ 'items-' ~ count if count <= 4 else 'items-more' }}">
             {% for part in msg.album_parts %}
-            <div class="album-item"{% if part.id != msg.id %} id="msg-{{ part.id }}"{% endif %} data-message-id="{{ part.id }}">
+            <div class="album-item"{% if part.id != msg.id %} id="msg-{{ part.id }}"{% endif %} data-message-id="{{ part.id }}"{% if part.edit_date %} data-edit-date="{{ part.edit_date.isoformat() }}"{% endif %}>
                 {% if part.is_video or part.is_photo %}
                 {{ render_visual(part) }}
                 {% elif part.is_audio %}

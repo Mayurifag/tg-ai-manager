@@ -94,9 +94,6 @@ class SettingsPatch:
                 raise BadRequest("Invalid regular expression") from exc
         return cls(dict(values))
 
-    def get(self, key: str, default: Any) -> Any:
-        return self.values[key] if key in self.values else default
-
 
 @dataclass(frozen=True)
 class ToggleRuleRequest:

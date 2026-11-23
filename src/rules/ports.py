@@ -38,27 +38,10 @@ class RuleRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_all_for_chat(self, chat_id: int) -> List[Rule]:
-        pass
-
-    @abstractmethod
     async def get_all(self, *, rule_type: Optional[RuleType] = None) -> List[Rule]:
         """Retrieve rules, optionally limited to one type."""
         pass
 
     @abstractmethod
-    async def add(self, rule: Rule) -> int:
-        pass
-
-    @abstractmethod
-    async def update(self, rule: Rule) -> None:
-        pass
-
-    @abstractmethod
     async def delete(self, rule_id: int) -> None:
-        pass
-
-    @abstractmethod
-    async def delete_all(self) -> None:
-        """Delete all rules from the database."""
         pass

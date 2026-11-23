@@ -5,6 +5,7 @@ from typing import Any
 from quart import Request, request
 from quart.json.provider import DefaultJSONProvider
 
+from src.domain.errors import AccountChanged
 from src.infrastructure.json_data import load_json
 from src.requests import (
     ApplyAllTopicsRequest as ApplyAllTopicsRequest,
@@ -17,6 +18,11 @@ from src.requests import (
     SettingsPatch as SettingsPatch,
     ToggleRuleRequest as ToggleRuleRequest,
 )
+
+
+def require_account_token(adapter) -> None:
+    if request.headers.get("X-Account-Token") != adapter.account_token:
+        raise AccountChanged()
 
 
 class ValidatedRequest(Request):
