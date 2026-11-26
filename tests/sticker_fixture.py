@@ -4,6 +4,7 @@ import asyncio
 from collections import Counter
 from copy import copy
 from datetime import UTC, datetime
+from functools import cache
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ NOW = datetime.now(UTC)
 BASE_ID = 7200000000000000000
 
 
+@cache
 def art(index, text=None, size=96, quality=90):
     image = Image.new("RGBA", (96, 96))
     pen = ImageDraw.Draw(image)

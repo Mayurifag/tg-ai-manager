@@ -79,6 +79,15 @@ class AccountScope(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image.status_code, 200)
         self.assertEqual(await image.get_data(), b"avatar")
 
+    async def test_asset_version_updates_without_recompiling_template(self):
+        with patch("src.jinja_filters.os.path.getmtime", return_value=100) as mtime:
+            template = self.app.jinja_env.from_string(
+                '{{ "static/js/stickers.js" | file_mtime }}'
+            )
+            self.assertEqual(await template.render_async(), "100")
+            mtime.return_value = 200
+            self.assertEqual(await template.render_async(), "200")
+
     async def test_rule_import_requires_explicit_confirmation(self):
         with patch("src.web.routes.settings.import_rules_from_remote") as importer:
             result = await self.client.post(

@@ -81,14 +81,21 @@ class StickerWorkspace:
         if self._closed:
             raise AccountChanged()
 
+    async def _read(self, operation):
+        try:
+            return await operation
+        finally:
+            # A retired account can cancel the shared lookup or download.
+            self.check()
+
     async def summaries(self):
-        return await self._catalog.summaries()
+        return await self._read(self._catalog.summaries())
 
     async def items(self, source):
-        return await self._catalog.items(source)
+        return await self._read(self._catalog.items(source))
 
     async def artwork(self, source, doc_id, mode):
-        return await self._media.artwork(source, doc_id, mode)
+        return await self._read(self._media.artwork(source, doc_id, mode))
 
     def operation(self, op_id):
         self.check()

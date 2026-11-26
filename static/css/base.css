@@ -12,6 +12,11 @@
   --quote-surface: rgba(255, 255, 255, 0.04);
   --surface-inset: rgba(0, 0, 0, 0.2);
   --surface-hover: rgba(255, 255, 255, 0.08);
+  --left-sidebar-width: 280px;
+}
+
+.sidebar-collapsed {
+  --left-sidebar-width: 56px;
 }
 
 body {
@@ -39,7 +44,6 @@ img.emoji {
 
 /* --- SIDEBARS --- */
 .sidebar {
-  width: 280px;
   background-color: #1a1a1c;
   padding: 20px;
   display: flex;
@@ -53,7 +57,56 @@ img.emoji {
 
 .left-sidebar {
   left: 0;
+  width: var(--left-sidebar-width);
   border-right: 1px solid #333;
+}
+
+.sidebar-collapsed .left-sidebar {
+  padding: 12px 8px;
+}
+
+.sidebar-collapsed
+  .left-sidebar
+  :is(
+    .sidebar-label,
+    .sidebar-content,
+    .sidebar-context,
+    .user-profile-section
+  ) {
+  display: none;
+}
+
+.sidebar-collapsed .left-sidebar .sidebar-top {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.sidebar-collapsed .sidebar-top .back-link {
+  position: relative;
+  width: 39px;
+  height: 38px;
+  padding: 0;
+  font-size: 0;
+}
+
+.sidebar-collapsed .sidebar-top .back-link::before {
+  content: "←" / "";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+}
+
+.sidebar-collapsed .sidebar-nav {
+  flex: 1;
+  margin: 0;
+}
+
+.sidebar-collapsed .sidebar-link {
+  justify-content: center;
+  padding-inline: 0;
 }
 
 .right-sidebar {
@@ -65,7 +118,7 @@ img.emoji {
 /* --- MAIN CONTENT --- */
 .main-content {
   flex: 1;
-  margin-left: 280px;
+  margin-left: var(--left-sidebar-width);
   padding: 20px;
   max-width: 1200px;
   background-color: var(--page-bg);
@@ -104,8 +157,31 @@ dialog#lightbox::backdrop {
 
 /* Common Sidebar Styles */
 .sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 20px;
   min-height: 40px;
+}
+
+#sidebar-toggle:not([hidden]) {
+  display: grid;
+  place-items: center;
+  flex: none;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+
+#sidebar-toggle:hover,
+.sidebar-link[aria-current] {
+  color: var(--text-accent);
+  background: var(--surface-raised);
 }
 
 .back-link {
@@ -139,6 +215,21 @@ dialog#lightbox::backdrop {
   gap: 5px;
   border-top: 1px solid #333;
   padding-top: 15px;
+}
+
+.sidebar-context {
+  display: contents;
+}
+
+.setting-option.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-link svg {
+  width: 1.2em;
+  height: 1.2em;
 }
 
 .setting-option {
@@ -488,6 +579,23 @@ button.setting-option {
     flex-direction: row;
     flex-wrap: wrap;
     padding-top: 8px;
+  }
+  .sidebar-collapsed .left-sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-collapsed .left-sidebar .sidebar-top {
+    flex-direction: row;
+    align-items: center;
+    margin: 0;
+  }
+  .sidebar-collapsed .sidebar-nav {
+    border: 0;
+    padding: 0;
+  }
+  .sidebar-collapsed .sidebar-link {
+    width: 38px;
   }
   .main-content,
   .debug-layout .main-content {

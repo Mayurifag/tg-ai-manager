@@ -43,7 +43,7 @@ export function createStickerJobs({ refresh, onRemoved, showResults }) {
   let writing = false;
   let scanning = false;
 
-  async function write(body, { path = "operations", after } = {}) {
+  async function write(operation, { path, after } = {}) {
     if (writing) {
       error("Wait for the current sticker change to finish.");
       return;
@@ -54,13 +54,13 @@ export function createStickerJobs({ refresh, onRemoved, showResults }) {
     const actions = [];
     paintStatus(status, { message: "Starting…" });
     try {
-      const { id } = await json(path, body);
+      const { id } = await json(path ?? "operations", path ? {} : operation);
       const state = await poll(id, (value) => paintStatus(status, value));
       if (state.removed?.length) onRemoved(state.removed);
       if (state.retry)
         actions.push(
           button("Retry failed items", () =>
-            write({}, { path: `operations/${id}/retry` }),
+            write(operation, { path: `operations/${id}/retry` }),
           ),
         );
       if (state.can_install)
@@ -85,7 +85,7 @@ export function createStickerJobs({ refresh, onRemoved, showResults }) {
       paintStatus(status, { message: e.message });
     } finally {
       try {
-        await refresh();
+        await refresh(operation);
         after?.();
       } catch (e) {
         error(`Refresh needed: ${e.message}`);

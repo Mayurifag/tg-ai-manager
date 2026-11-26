@@ -1,19 +1,19 @@
 import { $, button, key, node, showMenu } from "./stickers-controls.js";
-import { createStickerMedia } from "./stickers-media.js";
 
-export function createStickerGrid(actions) {
+export function createStickerGrid(actions, media) {
   const grid = $("grid");
   const preview = $("preview");
-  const media = createStickerMedia(preview, $("preview-art"));
+  const marquee = $("marquee");
   let tiles = [];
   let selected = new Set();
   let focused = 0;
-  let previewIndex = 0;
+  let previewTile = null;
   let gesture = null;
 
   function render({ items, results, message, emptyMessage, moveHandle }) {
+    if (gesture) clearRectangle();
     if (preview.open) preview.close();
-    media.resetGrid();
+    for (const { open } of tiles) media.unwatchThumbnail(open);
     tiles = [];
 
     function tile(item, showPack) {
@@ -30,15 +30,16 @@ export function createStickerGrid(actions) {
       );
       open.tabIndex = index === focused ? 0 : -1;
       open.id = `st-tile-${index}`;
-      open.dataset.art = key(item);
       open.dataset.index = index;
       open.setAttribute(
         "aria-label",
         `Sticker ${index + 1}${item.emoji ? ` ${item.emoji}` : ""}${showPack ? ` from ${item.pack}` : ""}`,
       );
       open.setAttribute("aria-pressed", String(selected.has(key(item))));
-      open.append(
-        node("small", item.thumb ? item.emoji || "Still" : "No Telegram still"),
+      media.placeholder(
+        open,
+        item,
+        item.thumb ? item.emoji || "Loading still…" : "No Telegram still",
       );
       open.addEventListener("focus", () => focusTile(index, false));
       open.addEventListener("contextmenu", (event) => {
@@ -47,7 +48,6 @@ export function createStickerGrid(actions) {
       });
       card.dataset.sticker = item.id;
       card.append(open);
-      if (moveHandle) card.append(moveHandle(index));
       if (showPack) card.append(node("small", item.pack));
       tiles.push({ item, card, open });
       return card;
@@ -76,15 +76,33 @@ export function createStickerGrid(actions) {
       );
     } else {
       grid.replaceChildren(...items.map((item) => tile(item, false)));
-      if (!items.length && (message || emptyMessage))
-        grid.append(node("p", message || emptyMessage));
+      if (!items.length && !message && emptyMessage)
+        grid.append(node("p", emptyMessage));
     }
-    for (const { item, open } of tiles) media.watchThumbnail(open, item.thumb);
+    const artwork = new Set();
+    for (const { item, open } of tiles) {
+      if (!item.thumb) continue;
+      const ref = key(item);
+      artwork.add(ref);
+      media.watchThumbnail(open, ref);
+    }
+    media.retainGrid(artwork);
     if (!message) {
       const visible = new Set(tiles.map(({ item }) => key(item)));
       for (const id of selected) if (!visible.has(id)) selected.delete(id);
     }
     focusTile(Math.min(focused, tiles.length - 1), false);
+    updateView(moveHandle);
+  }
+
+  function updateView(moveHandle) {
+    for (const [index, tile] of tiles.entries()) {
+      if (moveHandle && !tile.handle) {
+        tile.handle = moveHandle(index);
+        tile.card.append(tile.handle);
+      }
+      if (tile.handle) tile.handle.hidden = !moveHandle;
+    }
     updateSelection();
   }
 
@@ -107,8 +125,11 @@ export function createStickerGrid(actions) {
   }
 
   function updateSelection(showBar = true) {
-    for (const { open, item } of tiles)
-      open.setAttribute("aria-pressed", String(selected.has(key(item))));
+    for (const { open, item } of tiles) {
+      const pressed = String(selected.has(key(item)));
+      if (open.getAttribute("aria-pressed") !== pressed)
+        open.setAttribute("aria-pressed", pressed);
+    }
     if (!showBar) return;
     const batch = selection();
     const bar = $("selection");
@@ -162,9 +183,12 @@ export function createStickerGrid(actions) {
       selected.clear();
       updateSelection();
     }
-    const columns = getComputedStyle(
-      tiles[index].card.parentElement,
-    ).gridTemplateColumns.split(" ").length;
+    const columns =
+      event.key === "ArrowUp" || event.key === "ArrowDown"
+        ? getComputedStyle(
+            tiles[index].card.parentElement,
+          ).gridTemplateColumns.split(" ").length
+        : 0;
     const next = {
       ArrowLeft: index - 1,
       ArrowRight: index + 1,
@@ -197,22 +221,21 @@ export function createStickerGrid(actions) {
   });
   window.addEventListener("pointermove", (event) => {
     if (!gesture || event.pointerId !== gesture.pointer) return;
-    const { x, y, seed } = gesture;
+    const { x, y } = gesture;
     if (!gesture.active && Math.hypot(event.clientX - x, event.clientY - y) < 6)
       return;
     if (!gesture.active) grid.setPointerCapture(event.pointerId);
     gesture.active = true;
-    const left = Math.min(x, event.clientX),
-      right = Math.max(x, event.clientX);
-    const top = Math.min(y, event.clientY),
-      bottom = Math.max(y, event.clientY);
-    Object.assign($("marquee").style, {
-      left: `${left}px`,
-      top: `${top}px`,
-      width: `${right - left}px`,
-      height: `${bottom - top}px`,
-    });
-    $("marquee").hidden = false;
+    gesture.point = event;
+    if (!gesture.frame) gesture.frame = requestAnimationFrame(paintRectangle);
+  });
+  function paintRectangle() {
+    const { x, y, seed, point } = gesture;
+    gesture.frame = 0;
+    const left = Math.min(x, point.clientX),
+      right = Math.max(x, point.clientX);
+    const top = Math.min(y, point.clientY),
+      bottom = Math.max(y, point.clientY);
     const next = new Set(seed);
     for (const { item, open } of tiles) {
       const r = open.getBoundingClientRect();
@@ -226,21 +249,40 @@ export function createStickerGrid(actions) {
       selected = next;
       updateSelection(false);
     }
-  });
+    // Read tile geometry before changing styles to avoid a synchronous layout.
+    Object.assign(marquee.style, {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${right - left}px`,
+      height: `${bottom - top}px`,
+    });
+    marquee.hidden = false;
+  }
   function stopRectangle(event) {
     if (!gesture || event.pointerId !== gesture.pointer) return;
     if (gesture.active) {
+      if (gesture.frame) {
+        cancelAnimationFrame(gesture.frame);
+        paintRectangle();
+      }
       suppressClick = true;
       setTimeout(() => {
         suppressClick = false;
       }, 0);
       updateSelection();
     }
+    clearRectangle();
+  }
+  function clearRectangle() {
+    const { pointer, frame } = gesture;
     gesture = null;
-    $("marquee").hidden = true;
+    if (frame) cancelAnimationFrame(frame);
+    if (grid.hasPointerCapture(pointer)) grid.releasePointerCapture(pointer);
+    marquee.hidden = true;
   }
   window.addEventListener("pointerup", stopRectangle);
   window.addEventListener("pointercancel", stopRectangle);
+  grid.addEventListener("lostpointercapture", stopRectangle);
 
   function openPreview(index) {
     if (!preview.open) preview.showModal();
@@ -248,34 +290,42 @@ export function createStickerGrid(actions) {
   }
 
   function paintPreview(index) {
-    if (!tiles[index]) return;
-    previewIndex = index;
-    const { item, open } = tiles[index];
+    const tile = tiles[index];
+    if (!tile) return;
+    previewTile = tile;
+    const { item } = tile;
     $("preview-label").textContent =
       `${index + 1} / ${tiles.length}${item.emoji ? ` · ${item.emoji}` : ""}${item.pack ? ` · ${item.pack}` : ""}`;
     $("prev").disabled = index === 0;
     $("next").disabled = index === tiles.length - 1;
     updatePreviewSelection();
-    media.showPreview(item, open);
+    media.showPreview(item, key(item));
   }
 
   function updatePreviewSelection() {
-    const has = selected.has(key(tiles[previewIndex].item));
+    const has = selected.has(key(previewTile.item));
     $("preview-select").textContent = has ? "Deselect" : "Select";
     $("preview-select").setAttribute("aria-pressed", String(has));
   }
 
   $("preview-close").onclick = () => preview.close();
-  $("preview-select").onclick = () => toggle(tiles[previewIndex].item);
-  $("prev").onclick = () => paintPreview(previewIndex - 1);
-  $("next").onclick = () => paintPreview(previewIndex + 1);
+  $("preview-select").onclick = () => toggle(previewTile.item);
+  function stepPreview(step) {
+    paintPreview(Number(previewTile.open.dataset.index) + step);
+  }
+  $("prev").onclick = () => stepPreview(-1);
+  $("next").onclick = () => stepPreview(1);
   preview.addEventListener("close", () => {
-    if (!preview.open) focusTile(previewIndex, true);
+    if (!preview.open) {
+      if (previewTile?.open.isConnected) previewTile.open.focus();
+      previewTile = null;
+    }
   });
   preview.addEventListener("keydown", (event) => {
+    if (event.target instanceof HTMLVideoElement) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      paintPreview(previewIndex + (event.key === "ArrowLeft" ? -1 : 1));
+      stepPreview(event.key === "ArrowLeft" ? -1 : 1);
     }
   });
 
@@ -284,5 +334,5 @@ export function createStickerGrid(actions) {
     focused = 0;
   }
 
-  return { render, resetSelection };
+  return { render, resetSelection, updateView };
 }

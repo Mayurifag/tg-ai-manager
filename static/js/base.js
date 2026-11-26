@@ -4,6 +4,27 @@ window.TG.mutationHeaders = {
   "X-Account-Token": window.TG_CONFIG.account,
 };
 
+const sidebarToggle = document.getElementById("sidebar-toggle");
+if (sidebarToggle) {
+  const sidebar = document.documentElement.classList;
+  function updateSidebarToggle() {
+    const collapsed = sidebar.contains("sidebar-collapsed");
+    const label = collapsed ? "Expand navigation" : "Collapse navigation";
+    sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+    sidebarToggle.setAttribute("aria-label", label);
+    sidebarToggle.title = label;
+  }
+  sidebarToggle.addEventListener("click", () => {
+    const collapsed = sidebar.toggle("sidebar-collapsed");
+    updateSidebarToggle();
+    try {
+      localStorage.setItem("tg-sidebar-collapsed", String(collapsed));
+    } catch {}
+  });
+  updateSidebarToggle();
+  sidebarToggle.hidden = false;
+}
+
 window.TG.escapeHtml = function (value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")

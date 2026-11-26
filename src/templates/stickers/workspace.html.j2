@@ -7,7 +7,10 @@
 {% block content %}
 <div class="stickers" id="stickers">
     <header class="st-header">
-        <h1>Stickers</h1>
+        <div class="st-title">
+            <h1>Stickers</h1>
+            <button type="button" id="st-packs-toggle" aria-expanded="true" aria-controls="st-library">Hide packs</button>
+        </div>
         <nav id="st-views" aria-label="Sticker views">
             <button data-view="installed" aria-current="page">Installed</button>
             <button data-view="owned">Owned</button>
@@ -28,7 +31,7 @@
             <div class="st-art-header">
                 <div>
                     <h2 id="st-heading">Choose a pack</h2>
-                    <p id="st-detail">Open a pack to see its stickers.</p>
+                    <p id="st-detail" role="status">Open a pack to see its stickers.</p>
                 </div>
                 <button id="st-pack-menu" aria-label="Pack actions" aria-haspopup="true" hidden>⋯</button>
                 <button id="st-results-close" hidden>Back to stickers</button>
@@ -58,5 +61,13 @@
 </div>
 {% endblock %}
 {% block scripts %}
+<script type="importmap">
+    {"imports": {
+        {% for name in ("api", "controls", "grid", "jobs", "media") %}
+        {% set path = "static/js/stickers-" ~ name ~ ".js" %}
+        {{ ("/" ~ path) | tojson }}: {{ ("/" ~ path ~ "?t=" ~ (path | file_mtime)) | tojson }}{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }}
+</script>
 <script type="module" src="/static/js/stickers.js?t={{ 'static/js/stickers.js' | file_mtime }}"></script>
 {% endblock %}

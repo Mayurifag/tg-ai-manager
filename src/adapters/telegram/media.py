@@ -173,10 +173,13 @@ class MediaManager:
         self._cache[key] = (time.monotonic(), item)
         self._cache_size += len(item.data)
 
-    async def _shared(self, key: tuple, download) -> Optional[MediaContent]:
+    async def _shared(
+        self, key: tuple, download, *, immutable_cache_key: tuple | None = None
+    ) -> Optional[MediaContent]:
         if self._closed:
             raise RuntimeError("Media manager is closed")
-        cached = self._get(key)
+        cache_key = immutable_cache_key if immutable_cache_key is not None else key
+        cached = self._get(cache_key)
         if cached is not None:
             return cached
         task = self._downloads.get(key)
@@ -191,7 +194,7 @@ class MediaManager:
                     and not self._closed
                     and self._downloads.get(key) is asyncio.current_task()
                 ):
-                    self._put(key, item)
+                    self._put(cache_key, item)
                 return item
 
             def finished(completed: asyncio.Task[Optional[MediaContent]]) -> None:

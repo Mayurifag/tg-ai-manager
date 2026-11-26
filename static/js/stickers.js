@@ -13,9 +13,11 @@ import {
 } from "./stickers-controls.js";
 import { createStickerGrid } from "./stickers-grid.js";
 import { createStickerJobs } from "./stickers-jobs.js";
+import { createStickerMedia } from "./stickers-media.js";
 
 const dialog = $("dialog");
-const grid = createStickerGrid(stickerActions);
+const media = createStickerMedia($("preview"), $("preview-art"));
+const grid = createStickerGrid(stickerActions, media);
 const jobs = createStickerJobs({
   refresh: refreshAfterWrite,
   onRemoved: removeScanMatches,
@@ -25,18 +27,33 @@ const labels = { favorites: "Favorites", recent: "Recent" };
 const listView = () => view in labels;
 const pack = (id = source) => packs.find((item) => item.id === id);
 let packs = [],
-  items = [],
+  items = null,
   view = "installed",
   source = null,
   results = null;
 let checkedPacks = new Set();
-let loading = 0;
+let itemLoad = null;
+let packsCollapsed = false;
+let packRows = [];
+const noMatchingPacks = node("p", "No matching packs.");
 
-function visiblePacks() {
+function filterPacks() {
+  const libraryVisible = !$("library").hidden;
   const query = $("search").value.trim().toLocaleLowerCase();
-  return packs.filter(
-    (item) => item[view] && item.name.toLocaleLowerCase().includes(query),
-  );
+  const hideReorder = view !== "installed" || Boolean(query);
+  const keep = new Set();
+  for (const { item, name, row, cover, reorder } of packRows) {
+    const hidden = !item[view] || !name.includes(query);
+    if (row.hidden !== hidden) row.hidden = hidden;
+    if (reorder && reorder.hidden !== hideReorder) reorder.hidden = hideReorder;
+    if (!hidden && libraryVisible) {
+      keep.add(item.id);
+      if (item.count && !cover.dataset.art && !cover.firstElementChild)
+        media.watchThumbnail(cover, item.id);
+    } else if (cover.dataset.art) media.unwatchThumbnail(cover);
+  }
+  noMatchingPacks.hidden = keep.size > 0;
+  media.retainCovers(keep);
 }
 
 function packActions() {
@@ -57,53 +74,124 @@ function packActions() {
   bar.lastElementChild.setAttribute("aria-label", "Selected pack actions");
 }
 
-function renderPacks() {
-  $("library").hidden = listView();
-  if (listView()) return;
-  const visible = visiblePacks();
-  const order =
-    view === "installed" && !$("search").value.trim()
-      ? visible.map(({ id }) => id)
-      : null;
-  const rows = visible.map((item, index) => {
-    const row = node("div", null, "st-pack");
-    row.dataset.pack = item.id;
-    const check = node("input");
-    check.type = "checkbox";
-    check.checked = checkedPacks.has(item.id);
-    check.setAttribute("aria-label", `Select pack ${item.name}`);
-    check.addEventListener("change", () => {
-      if (check.checked) checkedPacks.add(item.id);
-      else checkedPacks.delete(item.id);
-      packActions();
-    });
-    const open = button(null, () => void openSource(item.id), "st-pack-open");
-    open.append(
-      node("span", item.name),
-      node(
-        "small",
-        `${item.count} stickers · ${item.owned ? "Owned" : "Third-party"}`,
-      ),
-    );
-    if (item.id === source && !results)
-      open.setAttribute("aria-current", "true");
-    row.append(check, open);
-    if (order) row.append(handle("installed", order, index, item.name));
-    row.addEventListener("contextmenu", (event) => {
-      if (event.target === check) return;
-      event.preventDefault();
-      showMenu(packMenu(item), open, event);
-    });
-    return row;
+function updatePackVisibility() {
+  const toggle = $("packs-toggle");
+  $("library").hidden = listView() || packsCollapsed;
+  toggle.hidden = listView();
+  toggle.setAttribute("aria-expanded", String(!packsCollapsed));
+  toggle.textContent = packsCollapsed ? "Show packs" : "Hide packs";
+}
+
+function packRow(item, order, index, cover) {
+  const row = node("div", null, "st-pack");
+  row.dataset.pack = item.id;
+  const check = node("input");
+  check.type = "checkbox";
+  check.checked = checkedPacks.has(item.id);
+  check.setAttribute("aria-label", `Select pack ${item.name}`);
+  check.addEventListener("change", () => {
+    if (check.checked) checkedPacks.add(item.id);
+    else checkedPacks.delete(item.id);
+    packActions();
   });
-  $("packs").replaceChildren(
-    ...(rows.length ? rows : [node("p", "No matching packs.")]),
+  const open = button(null, () => void openSource(item.id), "st-pack-open");
+  cover ??= node("span", null, "st-pack-preview");
+  cover.setAttribute("aria-hidden", "true");
+  const text = node("span");
+  text.append(
+    node("span", item.name, "st-pack-name"),
+    node(
+      "small",
+      `${item.count} stickers · ${item.owned ? "Owned" : "Third-party"}`,
+    ),
   );
+  open.append(cover, text);
+  row.append(check, open);
+  const reorder =
+    item.installed && handle("installed", order, index, item.name);
+  if (reorder) row.append(reorder);
+  row.addEventListener("contextmenu", (event) => {
+    if (event.target === check) return;
+    event.preventDefault();
+    showMenu(packMenu(item), open, event);
+  });
+  return { item, name: item.name.toLocaleLowerCase(), row, cover, reorder };
+}
+
+function renderPacks() {
+  const sameOrder =
+    noMatchingPacks.isConnected &&
+    packs.length === packRows.length &&
+    packs.every(
+      ({ id, installed }, index) =>
+        id === packRows[index].item.id &&
+        installed === packRows[index].item.installed,
+    );
+  if (!sameOrder)
+    for (const { cover } of packRows) media.unwatchThumbnail(cover);
+  const order = packs.filter(({ installed }) => installed).map(({ id }) => id);
+  let installedIndex = 0;
+  packRows = packs.map((item, index) => {
+    const position = item.installed ? installedIndex++ : -1;
+    if (!sameOrder) return packRow(item, order, position);
+    const previous = packRows[index];
+    if (sameFields(item, previous.item)) return previous;
+    const sameCover = item.cover_version === previous.item.cover_version;
+    if (!sameCover) media.unwatchThumbnail(previous.cover);
+    const next = packRow(
+      item,
+      order,
+      position,
+      sameCover ? previous.cover : undefined,
+    );
+    previous.row.replaceWith(next.row);
+    return next;
+  });
+  if (!sameOrder)
+    $("packs").replaceChildren(
+      ...packRows.map(({ row }) => row),
+      noMatchingPacks,
+    );
+  updatePackView();
+}
+
+function sameFields(next, previous) {
+  const keys = Object.keys(next);
+  return (
+    keys.length === Object.keys(previous).length &&
+    keys.every((key) => next[key] === previous[key])
+  );
+}
+
+function updatePackView() {
+  updatePackVisibility();
+  filterPacks();
   packActions();
+  markOpenPack();
+}
+
+function markOpenPack() {
+  const list = $("packs");
+  const current = list.querySelector(".st-pack-open[aria-current]");
+  const next =
+    source && !results
+      ? list.querySelector(`[data-pack="${CSS.escape(source)}"] .st-pack-open`)
+      : null;
+  if (current === next) return;
+  current?.removeAttribute("aria-current");
+  next?.setAttribute("aria-current", "true");
 }
 
 async function refreshPacks() {
-  packs = await json("packs");
+  const updated = await json("packs");
+  const versions = new Map(
+    packs.map(({ id, cover_version }) => [id, cover_version]),
+  );
+  const keep = new Set();
+  for (const { id, cover_version } of updated)
+    if (versions.get(id) === cover_version) keep.add(id);
+  packs = updated;
+  media.invalidateCovers(keep);
 }
 
 function packMenu(item) {
@@ -113,7 +201,7 @@ function packMenu(item) {
       async () => {
         try {
           const all =
-            source === item.id && !results && items.length
+            source === item.id && !results && items?.length
               ? items
               : await json(`items/${item.id}`);
           if (!all.length) throw new Error("There are no stickers to copy.");
@@ -170,25 +258,43 @@ function uninstall(chosen) {
   );
 }
 
+function stopItemLoad() {
+  itemLoad?.abort();
+  itemLoad = null;
+}
+
 async function openSource(next, { keep = false } = {}) {
-  const revision = ++loading;
+  stopItemLoad();
+  const previous = keep && next === source && !results ? items : null;
   results = null;
   source = next;
   if (!keep) grid.resetSelection();
-  items = [];
-  renderPacks();
-  renderGrid(next ? "Loading stickers…" : null);
+  items = previous;
+  markOpenPack();
+  if (!previous) renderGrid(next ? "Loading stickers…" : null);
   if (!next) return;
+  const controller = (itemLoad = new AbortController());
+  const { signal } = controller;
   try {
-    const data = await json(`items/${next}`);
-    if (revision !== loading) return;
+    const data = await json(`items/${next}`, undefined, signal);
+    if (signal.aborted) return;
     items = data;
-    renderGrid();
+    if (
+      previous &&
+      data.length === previous.length &&
+      data.every((item, index) => sameFields(item, previous[index]))
+    ) {
+      closeMenu(false);
+      renderGridHeading();
+      grid.updateView(stickerMoveHandle());
+    } else renderGrid();
   } catch (e) {
-    if (revision === loading) {
-      error(e.message);
-      renderGrid("Could not load stickers.");
+    if (!signal.aborted) {
+      items = null;
+      renderGrid(`Could not load stickers: ${e.message}`);
     }
+  } finally {
+    if (itemLoad === controller) itemLoad = null;
   }
 }
 
@@ -198,43 +304,62 @@ $("views").addEventListener("click", (event) => {
   $("views").querySelector("[aria-current]")?.removeAttribute("aria-current");
   event.target.setAttribute("aria-current", "page");
   view = next;
+  for (const check of $("packs").querySelectorAll("input:checked"))
+    check.checked = false;
   checkedPacks.clear();
   $("search").value = "";
   const retained = !listView() && source && pack()?.[view] ? source : null;
-  if (retained && !results) {
-    renderPacks();
-    renderGrid();
-  } else void openSource(listView() ? view : retained);
+  updatePackView();
+  if (!retained || results || (!items && !itemLoad)) {
+    void openSource(listView() ? view : retained);
+  } else if (items) {
+    closeMenu(false);
+    grid.updateView(stickerMoveHandle());
+  }
 });
-$("search").addEventListener("input", renderPacks);
+$("packs-toggle").addEventListener("click", () => {
+  packsCollapsed = !packsCollapsed;
+  updatePackVisibility();
+  filterPacks();
+});
+$("search").addEventListener("input", filterPacks);
 $("pack-menu").onclick = (event) => {
   if (pack()) showMenu(packMenu(pack()), event.currentTarget);
 };
 $("results-close").onclick = () => void openSource(source);
 
-function renderGrid(message) {
-  closeMenu(false);
+function stickerMoveHandle() {
+  if (!items?.length || results || view !== "owned" || !pack()?.owned) return;
+  const order = items.map(({ id }) => id);
+  const collection = source;
+  return (index) => handle(collection, order, index, `sticker ${index + 1}`);
+}
+
+function renderGridHeading(message) {
   const info = pack();
   $("heading").textContent = results
     ? "Duplicate scan"
     : labels[source] || info?.name || "Choose a pack";
-  $("detail").textContent = results
-    ? results.message
-    : source
-      ? "Drag to select · Shift-drag to add · Space selects the focused sticker"
-      : "Open a pack to see its stickers.";
+  $("detail").textContent =
+    message ??
+    (results
+      ? results.message
+      : source
+        ? "Drag to select · Shift-drag to add · Space selects the focused sticker"
+        : "Open a pack to see its stickers.");
   $("pack-menu").hidden = !info || Boolean(results);
   $("results-close").hidden = !results;
-  const move = !results && view === "owned" && info?.owned;
-  const itemIds = move ? items.map(({ id }) => id) : [];
+}
+
+function renderGrid(message) {
+  closeMenu(false);
+  renderGridHeading(message);
   grid.render({
-    items,
+    items: items ?? [],
     results,
     message,
     emptyMessage: source ? "No stickers in this view." : "",
-    moveHandle: move
-      ? (index) => handle(source, itemIds, index, `sticker ${index + 1}`)
-      : null,
+    moveHandle: stickerMoveHandle(),
   });
 }
 
@@ -306,8 +431,9 @@ function handle(collection, before, index, name) {
 function moveItem(collection, before, index, to, keyboard = false) {
   if (jobs.writing || to < 0 || to >= before.length || index === to) return;
   if (
-    collection === "installed" &&
-    (view !== "installed" || $("search").value.trim())
+    collection === "installed"
+      ? view !== "installed" || $("search").value.trim()
+      : view !== "owned" || source !== collection || results || !items
   )
     return;
   const order = before.slice(),
@@ -452,11 +578,17 @@ function newPack(batch) {
   );
 }
 
-async function refreshAfterWrite() {
+async function refreshAfterWrite({ kind, action }) {
+  if (kind === "edit" && action !== "remove") {
+    const changed = action === "forget" ? "recent" : "favorites";
+    if (source === changed && !results)
+      await openSource(changed, { keep: true });
+    return;
+  }
   await refreshPacks();
   checkedPacks = new Set([...checkedPacks].filter((id) => pack(id)?.[view]));
-  if (results) renderPacks();
-  else
+  renderPacks();
+  if (!results)
     await openSource(listView() ? view : pack()?.[view] ? source : null, {
       keep: true,
     });
@@ -478,10 +610,10 @@ function removeScanMatches(ids) {
 }
 
 function showScanResults(state) {
-  ++loading;
+  stopItemLoad();
   results = state;
   grid.resetSelection();
-  renderPacks();
+  markOpenPack();
   renderGrid();
 }
 

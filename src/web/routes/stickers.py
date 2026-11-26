@@ -142,10 +142,19 @@ async def items(source):
 
 
 @stickers_bp.get("/api/stickers/art/<source>/<sticker>/<mode>")
+@stickers_bp.get(
+    "/api/stickers/art/<source>/display", defaults={"sticker": None, "mode": "display"}
+)
 async def art(source, sticker, mode):
-    if mode not in ("thumb", "full"):
+    if mode not in ("thumb", "full", "display"):
         abort(404)
-    item = await workspace().artwork(source_id(source), int(pack_id(sticker)), mode)
+    service = workspace()
+    source, doc_id = (
+        (pack_id(source), None)
+        if sticker is None
+        else (source_id(source), int(pack_id(sticker)))
+    )
+    item = await service.artwork(source, doc_id, mode)
     if not item:
         abort(404)
     response = await make_response(item.data)

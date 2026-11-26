@@ -23,8 +23,8 @@ async function request(path, body, signal) {
   return response;
 }
 
-export async function json(path, body) {
-  return (await request(path, body)).json();
+export async function json(path, body, signal) {
+  return (await request(path, body, signal)).json();
 }
 
 export async function artwork(ref, mode, signal) {
