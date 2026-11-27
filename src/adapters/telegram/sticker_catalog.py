@@ -92,6 +92,7 @@ def sticker_tile(source, doc):
         "id": str(doc.id),
         "source": source,
         "emoji": (attr.alt if attr else "") or "",
+        "size_bytes": doc.size,
         "format": FORMATS.get(doc.mime_type, "unsupported"),
         "thumb": doc.mime_type == "image/webp" or bool(sticker_thumbnail(doc)),
     }

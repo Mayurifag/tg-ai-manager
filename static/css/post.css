@@ -120,6 +120,10 @@
   max-width: min(100%, 240px);
   max-height: 240px;
 }
+video.message-sticker {
+  aspect-ratio: 1;
+  object-fit: contain;
+}
 .album-grid {
   width: min(100%, 500px);
   min-width: min(55vw, 320px);

@@ -13,7 +13,7 @@ export function createStickerGrid(actions, media) {
   function render({ items, results, message, emptyMessage, moveHandle }) {
     if (gesture) clearRectangle();
     if (preview.open) preview.close();
-    for (const { open } of tiles) media.unwatchThumbnail(open);
+    media.stopVideo();
     tiles = [];
 
     function tile(item, showPack) {
@@ -48,8 +48,20 @@ export function createStickerGrid(actions, media) {
       });
       card.dataset.sticker = item.id;
       card.append(open);
+      let play;
+      if (item.format === "webm") {
+        play = button(
+          "Play",
+          () => void media.toggleVideo(key(item), card, play),
+          "st-play",
+        );
+        play.tabIndex = open.tabIndex;
+        play.setAttribute("aria-label", "Play animated sticker");
+        play.addEventListener("focus", () => focusTile(index, false));
+        card.append(play);
+      }
       if (showPack) card.append(node("small", item.pack));
-      tiles.push({ item, card, open });
+      tiles.push({ item, card, open, play });
       return card;
     }
     if (results) {
@@ -79,14 +91,11 @@ export function createStickerGrid(actions, media) {
       if (!items.length && !message && emptyMessage)
         grid.append(node("p", emptyMessage));
     }
-    const artwork = new Set();
-    for (const { item, open } of tiles) {
-      if (!item.thumb) continue;
-      const ref = key(item);
-      artwork.add(ref);
-      media.watchThumbnail(open, ref);
-    }
-    media.retainGrid(artwork);
+    media.watchGrid(
+      tiles
+        .filter(({ item }) => item.thumb)
+        .map(({ item, open }) => [key(item), open]),
+    );
     if (!message) {
       const visible = new Set(tiles.map(({ item }) => key(item)));
       for (const id of selected) if (!visible.has(id)) selected.delete(id);
@@ -108,9 +117,13 @@ export function createStickerGrid(actions, media) {
 
   function focusTile(index, moveFocus) {
     if (!tiles[index]) return;
-    if (tiles[focused]) tiles[focused].open.tabIndex = -1;
+    if (tiles[focused]) {
+      tiles[focused].open.tabIndex = -1;
+      if (tiles[focused].play) tiles[focused].play.tabIndex = -1;
+    }
     focused = index;
     tiles[index].open.tabIndex = 0;
+    if (tiles[index].play) tiles[index].play.tabIndex = 0;
     if (moveFocus) tiles[index].open.focus();
   }
 
@@ -208,7 +221,7 @@ export function createStickerGrid(actions, media) {
     if (
       event.pointerType !== "mouse" ||
       event.button !== 0 ||
-      event.target.closest(".st-handle") ||
+      event.target.closest(".st-handle, .st-play") ||
       !tiles.length
     )
       return;
@@ -285,6 +298,7 @@ export function createStickerGrid(actions, media) {
   grid.addEventListener("lostpointercapture", stopRectangle);
 
   function openPreview(index) {
+    media.stopVideo();
     if (!preview.open) preview.showModal();
     paintPreview(index);
   }

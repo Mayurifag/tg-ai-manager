@@ -9,8 +9,10 @@ from telethon import utils
 from telethon.extensions import html
 from telethon.tl import types
 from telethon.tl.types import (
+    DocumentAttributeAnimated,
     DocumentAttributeAudio,
     DocumentAttributeFilename,
+    DocumentAttributeImageSize,
     DocumentAttributeSticker,
     DocumentAttributeVideo,
     MessageMediaDocument,
@@ -218,6 +220,8 @@ class MessageParser:
         media = getattr(msg, "media", None)
         has_media = bool(media)
         is_video = False
+        is_gif = False
+        is_animation = False
         is_sticker = False
         sticker_emoji = None
 
@@ -278,10 +282,16 @@ class MessageParser:
                     webpage_description = getattr(webpage, "description", None)
             elif isinstance(media, MessageMediaDocument):
                 document = media.document
+                mime_type = getattr(document, "mime_type", "") or ""
+                is_gif = mime_type == "image/gif"
                 file_size = getattr(document, "size", None)
                 for attr in getattr(document, "attributes", []):
                     if isinstance(attr, DocumentAttributeVideo):
                         is_video = True
+                        media_width, media_height = media_dimensions(attr)
+                    elif isinstance(attr, DocumentAttributeAnimated):
+                        is_animation = True
+                    elif isinstance(attr, DocumentAttributeImageSize) and is_gif:
                         media_width, media_height = media_dimensions(attr)
                     elif isinstance(attr, DocumentAttributeSticker):
                         is_sticker = True
@@ -294,7 +304,12 @@ class MessageParser:
                         audio_duration = getattr(attr, "duration", None)
                     elif isinstance(attr, DocumentAttributeFilename):
                         file_name = attr.file_name
-                is_document = not (is_video or is_sticker or is_audio)
+                is_video = not is_gif and (
+                    is_video
+                    or ((is_animation or is_sticker) and mime_type.startswith("video/"))
+                )
+                is_animation = is_animation and is_video
+                is_document = not (is_video or is_gif or is_sticker or is_audio)
 
         forwarded_from = None
         forward = getattr(msg, "fwd_from", None)
@@ -402,6 +417,8 @@ class MessageParser:
             has_media=has_media,
             is_photo=is_photo,
             is_video=is_video,
+            is_gif=is_gif,
+            is_animation=is_animation,
             media_width=media_width,
             media_height=media_height,
             is_sticker=is_sticker,

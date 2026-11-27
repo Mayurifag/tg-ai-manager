@@ -77,6 +77,8 @@ class Message:
     has_media: bool = False
     is_photo: bool = False
     is_video: bool = False
+    is_gif: bool = False
+    is_animation: bool = False
     media_width: Optional[int] = None
     media_height: Optional[int] = None
     is_sticker: bool = False
@@ -133,6 +135,8 @@ class Message:
         if self.has_media:
             if self.is_sticker:
                 return f"{html_escape(self.sticker_emoji or '')} Sticker"
+            elif self.is_gif or self.is_animation:
+                return "GIF"
             elif self.is_video:
                 return "📹 Video"
             elif self.is_audio:

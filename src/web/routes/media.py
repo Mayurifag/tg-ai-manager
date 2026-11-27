@@ -106,7 +106,8 @@ async def stream_document(chat_id: int, msg_id: int):
     mime_type = getattr(document, "mime_type", "") or "application/octet-stream"
     response_mimetype = (
         mime_type
-        if re.fullmatch(r"(?:video|audio)/[a-zA-Z0-9!#$&^_.+-]+", mime_type)
+        if mime_type == "image/gif"
+        or re.fullmatch(r"(?:video|audio)/[a-zA-Z0-9!#$&^_.+-]+", mime_type)
         else "application/octet-stream"
     )
     content_disposition = None

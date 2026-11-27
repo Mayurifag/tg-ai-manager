@@ -15,6 +15,7 @@ from src.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
 STATUS_TTL = 900
+PREFETCH_INTERVAL = 300
 
 
 @dataclass
@@ -46,6 +47,8 @@ class StickerWorkspace:
         self.token = secrets.token_urlsafe(18)
         self._closed = False
         self._operations = {}
+        self._prefetch_task = None
+        self._prefetch_after = 0.0
         rpc = StickerRPC(client, queue, self.check)
         self._catalog = StickerCatalog(rpc)
         self._media = StickerMedia(client, media, self._catalog, self.check)
@@ -64,6 +67,8 @@ class StickerWorkspace:
 
     def retire(self):
         self._closed = True
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
         self._catalog.retire()
         for op in self._operations.values():
             if op.task and not op.task.done():
@@ -71,6 +76,7 @@ class StickerWorkspace:
 
     async def close(self):
         await asyncio.gather(
+            *((self._prefetch_task,) if self._prefetch_task else ()),
             *(op.task for op in self._operations.values() if op.task),
             return_exceptions=True,
         )
@@ -80,6 +86,24 @@ class StickerWorkspace:
     def check(self):
         if self._closed:
             raise AccountChanged()
+
+    def prefetch(self):
+        self.check()
+        now = time.monotonic()
+        if now < self._prefetch_after or (
+            self._prefetch_task and not self._prefetch_task.done()
+        ):
+            return
+        self._prefetch_after = now + PREFETCH_INTERVAL
+        self._prefetch_task = asyncio.create_task(self._prefetch())
+
+    async def _prefetch(self):
+        try:
+            await self._media.prefetch()
+        except AccountChanged:
+            pass
+        except Exception as error:
+            logger.warning("sticker_prefetch_failed", category=type(error).__name__)
 
     async def _read(self, operation):
         try:
@@ -96,6 +120,9 @@ class StickerWorkspace:
 
     async def artwork(self, source, doc_id, mode):
         return await self._read(self._media.artwork(source, doc_id, mode))
+
+    def grid_artwork(self, entries):
+        return self._media.grid_artwork(entries)
 
     def operation(self, op_id):
         self.check()

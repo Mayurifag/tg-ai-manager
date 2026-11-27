@@ -14,13 +14,23 @@
 {% set frame_width, media_width, media_height = msg.media_geometry %}
 <div class="media-preview-frame" style="--media-width: {{ frame_width }}px; --media-ratio: {{ media_width }} / {{ media_height }}">
     {% if msg.is_video %}
-    <video controls preload="none" class="message-video"><source src="/media/{{ chat_id }}/{{ msg.id }}"></video>
+    <video controls playsinline preload="none"{% if msg.is_animation %} muted loop aria-label="GIF"{% endif %} class="message-video" src="/media/stream/{{ chat_id }}/{{ msg.id }}"></video>
+    {% elif msg.is_gif %}
+    <img src="/media/stream/{{ chat_id }}/{{ msg.id }}" class="inline-media" loading="lazy" alt="GIF">
     {% else %}
     <button type="button" class="media-image-button" aria-label="Open photo" onclick="openLightbox(this.firstElementChild)">
         <img src="/media/{{ chat_id }}/{{ msg.id }}" class="inline-media lightbox-trigger" data-full-src="/media/{{ chat_id }}/{{ msg.id }}/full" loading="lazy" alt="Photo">
     </button>
     {% endif %}
 </div>
+{% endmacro %}
+
+{% macro render_sticker(msg) %}
+    {% if msg.is_video %}
+    <video class="message-sticker" width="240" controls playsinline muted loop preload="none" aria-label="{{ msg.sticker_emoji or 'Animated sticker' }}" src="/media/stream/{{ chat_id }}/{{ msg.id }}"></video>
+    {% else %}
+    <img class="message-sticker" src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" alt="{{ msg.sticker_emoji or 'Sticker' }}">
+    {% endif %}
 {% endmacro %}
 
 {% for msg in messages %}
@@ -56,7 +66,9 @@
         <div class="media-content album-grid {{ 'items-' ~ count if count <= 4 else 'items-more' }}">
             {% for part in msg.album_parts %}
             <div class="album-item"{% if part.id != msg.id %} id="msg-{{ part.id }}"{% endif %} data-message-id="{{ part.id }}"{% if part.edit_date %} data-edit-date="{{ part.edit_date.isoformat() }}"{% endif %}>
-                {% if part.is_video or part.is_photo %}
+                {% if part.is_sticker %}
+                {{ render_sticker(part) }}
+                {% elif part.is_video or part.is_gif or part.is_photo %}
                 {{ render_visual(part) }}
                 {% elif part.is_audio %}
                 <div class="audio-player">
@@ -71,11 +83,9 @@
             </div>
             {% endfor %}
         </div>
-        {% elif msg.is_video %}
-        <div class="media-content">{{ render_visual(msg) }}</div>
         {% elif msg.is_sticker %}
-        <div class="media-content"><img class="message-sticker" src="/media/{{ chat_id }}/{{ msg.id }}" loading="lazy" alt="{{ msg.sticker_emoji or 'Sticker' }}"></div>
-        {% elif msg.is_photo %}
+        <div class="media-content">{{ render_sticker(msg) }}</div>
+        {% elif msg.is_video or msg.is_gif or msg.is_photo %}
         <div class="media-content">{{ render_visual(msg) }}</div>
         {% elif msg.is_audio %}
         <div class="audio-player">

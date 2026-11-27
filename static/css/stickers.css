@@ -228,6 +228,23 @@
   object-fit: contain;
   pointer-events: none;
 }
+.st-tile-video {
+  position: absolute;
+  inset: 8px 6px auto;
+  width: calc(100% - 12px);
+  height: 94px;
+  object-fit: contain;
+  background: var(--surface-inset);
+  pointer-events: none;
+}
+.stickers .st-play {
+  position: absolute;
+  inset: 2px auto auto 2px;
+  z-index: 1;
+  min-height: 25px;
+  padding: 2px 5px;
+  background: var(--surface-bg);
+}
 .st-tile-open > *,
 #st-preview-art > * {
   grid-area: 1 / 1;
@@ -256,6 +273,7 @@
 .st-tile .st-handle {
   position: absolute;
   inset: 2px 2px auto auto;
+  z-index: 1;
   min-height: 25px;
   min-width: 25px;
   opacity: 0;

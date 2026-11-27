@@ -1,11 +1,22 @@
 import re
+from base64 import b64encode
+from contextlib import aclosing
 
-from quart import Blueprint, abort, jsonify, make_response, render_template, request
+from quart import (
+    Blueprint,
+    abort,
+    current_app,
+    jsonify,
+    make_response,
+    render_template,
+    request,
+)
 
 from src.adapters.telegram.media import MediaBusy, MediaTooLarge
 from src.adapters.telegram.sticker_catalog import LISTS
 from src.adapters.telegram.sticker_rpc import StickerError
 from src.container import _get_tg_adapter
+from src.domain.errors import AccountChanged
 from src.web.requests import require_account_token
 
 stickers_bp = Blueprint("stickers", __name__)
@@ -127,7 +138,7 @@ async def media_unavailable(_error):
 
 @stickers_bp.get("/stickers")
 async def page():
-    workspace()
+    workspace().prefetch()
     return await render_template("stickers/workspace.html.j2")
 
 
@@ -139,6 +150,28 @@ async def packs():
 @stickers_bp.get("/api/stickers/items/<source>")
 async def items(source):
     return jsonify(await workspace().items(source_id(source)))
+
+
+@stickers_bp.post("/api/stickers/art/grid")
+async def grid_art():
+    service = workspace()
+    entries = list_of(await request.get_json(silent=True), entry, 1000)
+    dumps = current_app.json.dumps
+
+    async def stream():
+        try:
+            async with aclosing(service.grid_artwork(entries)) as results:
+                async for source, doc_id, image in results:
+                    data = b64encode(image.data).decode() if image else None
+                    yield dumps([f"{source}/{doc_id}", data]) + "\n"
+        except AccountChanged:
+            return
+
+    response = current_app.response_class(stream(), mimetype="application/x-ndjson")
+    response.headers["X-Accel-Buffering"] = "no"
+    # The Telegram deadlines apply per lookup or download, not to the batch.
+    response.timeout = None
+    return response
 
 
 @stickers_bp.get("/api/stickers/art/<source>/<sticker>/<mode>")

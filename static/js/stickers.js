@@ -24,6 +24,9 @@ const jobs = createStickerJobs({
   showResults: showScanResults,
 });
 const labels = { favorites: "Favorites", recent: "Recent" };
+const sizeFormat = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
 const listView = () => view in labels;
 const pack = (id = source) => packs.find((item) => item.id === id);
 let packs = [],
@@ -337,6 +340,18 @@ function stickerMoveHandle() {
 
 function renderGridHeading(message) {
   const info = pack();
+  const size = $("pack-size");
+  size.hidden = !info || Boolean(results) || !items;
+  if (!size.hidden) {
+    const bytes = items.reduce((total, item) => total + item.size_bytes, 0);
+    const total =
+      bytes >= 1_000_000
+        ? `${sizeFormat.format(bytes / 1_000_000)} MB`
+        : bytes >= 1_000
+          ? `${sizeFormat.format(bytes / 1_000)} kB`
+          : `${sizeFormat.format(bytes)} B`;
+    size.textContent = `${items.length} ${items.length === 1 ? "sticker" : "stickers"} · ${total} total`;
+  }
   $("heading").textContent = results
     ? "Duplicate scan"
     : labels[source] || info?.name || "Choose a pack";

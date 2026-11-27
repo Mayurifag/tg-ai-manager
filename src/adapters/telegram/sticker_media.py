@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 from io import BytesIO
+from itertools import islice
 
 from PIL import Image
 from telethon import errors
@@ -13,9 +14,13 @@ from src.adapters.telegram.sticker_rpc import (
     rpc_error,
 )
 from src.domain.models import MediaContent
+from src.infrastructure.logging import get_logger
 
+logger = get_logger(__name__)
 MAX_STICKER_BYTES = 1024 * 1024
 DISPLAY_EDGE = 192
+GRID_DOWNLOADS = 6
+PREFETCH_PER_LIST = 24
 
 
 def display_key(doc_id):
@@ -57,6 +62,7 @@ class StickerMedia:
         self.catalog = catalog
         self.check = check
         self.downloads = asyncio.Semaphore(8)
+        self.grid_downloads = asyncio.Semaphore(GRID_DOWNLOADS)
 
     async def transfer(self, source, doc, mode):
         async def download():
@@ -172,6 +178,53 @@ class StickerMedia:
         if mode == "display":
             return await self.display(source, doc)
         return await self.transfer(source, doc, mode)
+
+    async def grid_artwork(self, entries):
+        async def load(source, doc_id):
+            async with self.grid_downloads:
+                try:
+                    image = await self.artwork(source, doc_id, "display")
+                except StickerError, MediaBusy, MediaTooLarge, OSError:
+                    image = None
+                return source, doc_id, image
+
+        remaining = iter(entries)
+        pending, done = set(), set()
+
+        def start_next():
+            if entry := next(remaining, None):
+                pending.add(asyncio.create_task(load(*entry)))
+
+        try:
+            for _ in range(GRID_DOWNLOADS):
+                start_next()
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED
+                )
+                while done:
+                    self.check()
+                    yield done.pop().result()
+                    start_next()
+        finally:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, *done, return_exceptions=True)
+
+    async def prefetch(self):
+        for source in ("recent", "favorites"):
+            try:
+                collection = await self.catalog.for_artwork(source)
+                for doc in islice(collection.docs.values(), PREFETCH_PER_LIST):
+                    self.check()
+                    async with self.grid_downloads:
+                        await self.display(source, doc)
+            except (StickerError, MediaBusy, MediaTooLarge, OSError) as error:
+                logger.info(
+                    "sticker_prefetch_skipped",
+                    source=source,
+                    category=type(error).__name__,
+                )
 
     async def original(self, source, doc):
         try:

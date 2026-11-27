@@ -69,7 +69,9 @@ class AccountScope(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await result.get_json())["account_token"], "new-attempt")
 
     async def test_sidebar_profile(self):
-        self.adapter.stickers = SimpleNamespace(check=lambda: None)
+        self.adapter.stickers = SimpleNamespace(
+            check=lambda: None, prefetch=lambda: None
+        )
         page = await self.client.get("/stickers")
         html = await page.get_data(as_text=True)
         self.assertEqual(page.status_code, 200)

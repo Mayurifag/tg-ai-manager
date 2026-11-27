@@ -31,6 +31,33 @@ export async function artwork(ref, mode, signal) {
   return (await request(`art/${ref}/${mode}`, undefined, signal)).blob();
 }
 
+export async function gridArtwork(refs, signal, onImage) {
+  const response = await request(
+    "art/grid",
+    refs.map((ref) => ref.split("/")),
+    signal,
+  );
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let partial = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      const lines = (partial + value).split("\n");
+      partial = lines.pop();
+      for (const line of lines) {
+        const [ref, data] = JSON.parse(line);
+        const bytes =
+          data && Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+        onImage(ref, bytes && new Blob([bytes], { type: "image/webp" }));
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 export async function poll(id, onUpdate) {
   let last;
   let backoff = 500;
