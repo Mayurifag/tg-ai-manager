@@ -16,7 +16,11 @@ import { createStickerJobs } from "./stickers-jobs.js";
 import { createStickerMedia } from "./stickers-media.js";
 
 const dialog = $("dialog");
-const media = createStickerMedia($("preview"), $("preview-art"));
+const media = createStickerMedia(
+  $("preview"),
+  $("preview-art"),
+  $("animations"),
+);
 const grid = createStickerGrid(stickerActions, media);
 const jobs = createStickerJobs({
   refresh: refreshAfterWrite,

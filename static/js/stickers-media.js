@@ -1,8 +1,9 @@
 import { artwork, gridArtwork } from "./stickers-api.js";
 
 const GRID_BATCH_SIZE = 48;
+const GRID_VIDEO_LOADS = 2;
 
-export function createStickerMedia(preview, art) {
+export function createStickerMedia(preview, art, animations) {
   const gridCache = new Map();
   const coverCache = new Map();
   const covers = new Set();
@@ -11,7 +12,12 @@ export function createStickerMedia(preview, art) {
   let stopGrid;
   let stillRequest = null;
   let fullRequest = null;
-  let playing = null;
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  let animate = !reducedMotion.matches;
+  let videoLoads = 0;
+  let videoCards = new Map();
+  const visibleVideos = new Set();
+  const activeVideos = new Map();
 
   const observer = new IntersectionObserver(
     (entries) => {
@@ -243,54 +249,94 @@ export function createStickerMedia(preview, art) {
     };
   }
 
-  function stopVideo() {
-    if (!playing) return;
-    const { controller, control, video } = playing;
-    playing = null;
-    controller.abort();
-    video.pause();
-    video.removeAttribute("src");
-    video.load();
-    video.remove();
-    control.textContent = "Play";
-    control.setAttribute("aria-label", "Play animated sticker");
+  const videoObserver = new IntersectionObserver(
+    (entries) => {
+      for (const { target, isIntersecting, intersectionRatio } of entries) {
+        if (isIntersecting && intersectionRatio > 0 && videoCards.has(target))
+          visibleVideos.add(target);
+        else visibleVideos.delete(target);
+      }
+      syncVideos();
+    },
+    { threshold: 0.01 },
+  );
+
+  function setAnimation(enabled) {
+    animate = enabled;
+    animations.textContent = animate ? "Pause animations" : "Resume animations";
+    syncVideos();
   }
 
-  async function toggleVideo(ref, card, control) {
-    const alreadyPlaying = playing?.control === control;
-    stopVideo();
-    if (alreadyPlaying) return;
+  animations.addEventListener("click", () => setAnimation(!animate));
+  reducedMotion.addEventListener("change", () =>
+    setAnimation(!reducedMotion.matches),
+  );
+  document.addEventListener("visibilitychange", syncVideos);
+  setAnimation(animate);
 
-    const controller = new AbortController();
+  function watchVideos(entries) {
+    videoObserver.disconnect();
+    visibleVideos.clear();
+    videoCards = new Map(entries);
+    animations.hidden = !videoCards.size;
+    syncVideos();
+    for (const card of videoCards.keys()) videoObserver.observe(card);
+  }
+
+  function syncVideos() {
+    const allowed = animate && !preview.open && !document.hidden;
+    for (const [card, controller] of activeVideos) {
+      if (allowed && visibleVideos.has(card)) continue;
+      controller.abort();
+      activeVideos.delete(card);
+    }
+    if (!allowed) return;
+    for (const card of visibleVideos) {
+      if (videoLoads >= GRID_VIDEO_LOADS) return;
+      if (activeVideos.has(card)) continue;
+      const controller = new AbortController();
+      activeVideos.set(card, controller);
+      videoLoads++;
+      void playVideo(videoCards.get(card), card, controller);
+    }
+  }
+
+  async function playVideo(ref, card, controller) {
     const { signal } = controller;
-    const video = document.createElement("video");
-    video.className = "st-tile-video";
-    video.setAttribute("aria-hidden", "true");
-    video.muted = video.loop = video.playsInline = true;
-    video.hidden = true;
-    playing = { controller, control, video };
-    control.textContent = "Stop";
-    control.setAttribute("aria-label", "Stop animated sticker");
-    const unavailable = () => {
-      if (signal.aborted) return;
-      stopVideo();
-      control.textContent = "Retry";
-      control.setAttribute("aria-label", "Retry animated sticker");
-    };
     try {
       const blob = await artwork(ref, "full", signal);
       if (signal.aborted) return;
       const url = URL.createObjectURL(blob);
-      signal.addEventListener("abort", () => URL.revokeObjectURL(url), {
+      const video = document.createElement("video");
+      video.className = "st-tile-video";
+      video.setAttribute("aria-hidden", "true");
+      video.muted = video.loop = video.playsInline = true;
+      video.hidden = true;
+      signal.addEventListener(
+        "abort",
+        () => {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+          URL.revokeObjectURL(url);
+        },
+        { once: true },
+      );
+      video.addEventListener("error", () => controller.abort(), {
         once: true,
+        signal,
       });
-      video.addEventListener("error", unavailable, { once: true, signal });
       video.src = url;
       card.append(video);
       await video.play();
       if (!signal.aborted) video.hidden = false;
     } catch {
-      unavailable();
+      // Leave the still in place if the original cannot play.
+      controller.abort();
+    } finally {
+      videoLoads--;
+      syncVideos();
     }
   }
 
@@ -304,6 +350,7 @@ export function createStickerMedia(preview, art) {
   }
 
   function showPreview(item, ref) {
+    syncVideos();
     releaseFull();
     art.dataset.art = ref;
     const showStill = () => {
@@ -387,6 +434,7 @@ export function createStickerMedia(preview, art) {
     if (preview.open) return;
     releaseFull();
     art.replaceChildren();
+    syncVideos();
   });
 
   return {
@@ -394,10 +442,9 @@ export function createStickerMedia(preview, art) {
     placeholder,
     retainCovers,
     watchGrid,
+    watchVideos,
     watchThumbnail,
     unwatchThumbnail,
     showPreview,
-    stopVideo,
-    toggleVideo,
   };
 }

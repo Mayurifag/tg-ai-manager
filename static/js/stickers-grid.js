@@ -13,7 +13,6 @@ export function createStickerGrid(actions, media) {
   function render({ items, results, message, emptyMessage, moveHandle }) {
     if (gesture) clearRectangle();
     if (preview.open) preview.close();
-    media.stopVideo();
     tiles = [];
 
     function tile(item, showPack) {
@@ -48,20 +47,8 @@ export function createStickerGrid(actions, media) {
       });
       card.dataset.sticker = item.id;
       card.append(open);
-      let play;
-      if (item.format === "webm") {
-        play = button(
-          "Play",
-          () => void media.toggleVideo(key(item), card, play),
-          "st-play",
-        );
-        play.tabIndex = open.tabIndex;
-        play.setAttribute("aria-label", "Play animated sticker");
-        play.addEventListener("focus", () => focusTile(index, false));
-        card.append(play);
-      }
       if (showPack) card.append(node("small", item.pack));
-      tiles.push({ item, card, open, play });
+      tiles.push({ item, card, open });
       return card;
     }
     if (results) {
@@ -96,6 +83,11 @@ export function createStickerGrid(actions, media) {
         .filter(({ item }) => item.thumb)
         .map(({ item, open }) => [key(item), open]),
     );
+    media.watchVideos(
+      tiles
+        .filter(({ item }) => item.format === "webm")
+        .map(({ item, card }) => [card, key(item)]),
+    );
     if (!message) {
       const visible = new Set(tiles.map(({ item }) => key(item)));
       for (const id of selected) if (!visible.has(id)) selected.delete(id);
@@ -117,13 +109,9 @@ export function createStickerGrid(actions, media) {
 
   function focusTile(index, moveFocus) {
     if (!tiles[index]) return;
-    if (tiles[focused]) {
-      tiles[focused].open.tabIndex = -1;
-      if (tiles[focused].play) tiles[focused].play.tabIndex = -1;
-    }
+    if (tiles[focused]) tiles[focused].open.tabIndex = -1;
     focused = index;
     tiles[index].open.tabIndex = 0;
-    if (tiles[index].play) tiles[index].play.tabIndex = 0;
     if (moveFocus) tiles[index].open.focus();
   }
 
@@ -221,7 +209,7 @@ export function createStickerGrid(actions, media) {
     if (
       event.pointerType !== "mouse" ||
       event.button !== 0 ||
-      event.target.closest(".st-handle, .st-play") ||
+      event.target.closest(".st-handle") ||
       !tiles.length
     )
       return;
@@ -298,7 +286,6 @@ export function createStickerGrid(actions, media) {
   grid.addEventListener("lostpointercapture", stopRectangle);
 
   function openPreview(index) {
-    media.stopVideo();
     if (!preview.open) preview.showModal();
     paintPreview(index);
   }
